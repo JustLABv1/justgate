@@ -39,10 +39,10 @@ func newSQLStore(databaseURL, headerName string) (string, *sqlStore, error) {
 	if err := store.db.Ping(); err != nil {
 		return "", nil, err
 	}
-	if err := store.ensureSchema(context.Background()); err != nil {
+	if err := store.runMigrations(context.Background()); err != nil {
 		return "", nil, err
 	}
-	if err := store.seed(context.Background(), headerName); err != nil {
+	if err := store.seedReferenceData(context.Background(), headerName); err != nil {
 		return "", nil, err
 	}
 
@@ -70,64 +70,7 @@ func databaseConfig(databaseURL string) (string, string, string) {
 	return "sqlite", trimmed, "sqlite"
 }
 
-func (store *sqlStore) ensureSchema(ctx context.Context) error {
-	statements := []string{
-		`CREATE TABLE IF NOT EXISTS tenants (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			tenant_id TEXT NOT NULL UNIQUE,
-			upstream_url TEXT NOT NULL,
-			auth_mode TEXT NOT NULL,
-			header_name TEXT NOT NULL,
-			created_at TIMESTAMP NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS routes (
-			id TEXT PRIMARY KEY,
-			slug TEXT NOT NULL UNIQUE,
-			target_path TEXT NOT NULL,
-			tenant_id TEXT NOT NULL,
-			required_scope TEXT NOT NULL,
-			methods_json TEXT NOT NULL,
-			upstream_url TEXT NOT NULL,
-			created_at TIMESTAMP NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS tokens (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			tenant_id TEXT NOT NULL,
-			scopes_json TEXT NOT NULL,
-			expires_at TIMESTAMP NOT NULL,
-			last_used_at TIMESTAMP NOT NULL,
-			preview TEXT NOT NULL,
-			active BOOLEAN NOT NULL,
-			token_hash TEXT NOT NULL UNIQUE,
-			created_at TIMESTAMP NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS audits (
-			id TEXT PRIMARY KEY,
-			timestamp TIMESTAMP NOT NULL,
-			route_slug TEXT NOT NULL,
-			tenant_id TEXT NOT NULL,
-			token_id TEXT NOT NULL,
-			method TEXT NOT NULL,
-			status INTEGER NOT NULL,
-			upstream_url TEXT NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_routes_slug ON routes (slug)`,
-		`CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens (token_hash)`,
-		`CREATE INDEX IF NOT EXISTS idx_audits_timestamp ON audits (timestamp DESC)`,
-	}
-
-	for _, statement := range statements {
-		if _, err := store.execContext(ctx, statement); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (store *sqlStore) seed(ctx context.Context, headerName string) error {
+func (store *sqlStore) seedReferenceData(ctx context.Context, headerName string) error {
 	var tenantCount int
 	if err := store.queryRowContext(ctx, `SELECT COUNT(*) FROM tenants`).Scan(&tenantCount); err != nil {
 		return err
@@ -291,6 +234,26 @@ func (store *sqlStore) seed(ctx context.Context, headerName string) error {
 	}
 
 	return nil
+}
+
+func (store *sqlStore) CreateLocalAdmin(ctx context.Context, account localAdminRecord) (localAdminRecord, error) {
+	_, err := store.execContext(ctx, `INSERT INTO local_admin_users (id, email, name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)`, account.ID, account.Email, account.Name, account.PasswordHash, account.CreatedAt)
+	if err != nil {
+		return localAdminRecord{}, translateDBError(err, "email already exists")
+	}
+	return account, nil
+}
+
+func (store *sqlStore) GetLocalAdminByEmail(ctx context.Context, email string) (localAdminRecord, bool, error) {
+	row := store.queryRowContext(ctx, `SELECT id, email, name, password_hash, created_at FROM local_admin_users WHERE email = ? LIMIT 1`, email)
+	var account localAdminRecord
+	if err := row.Scan(&account.ID, &account.Email, &account.Name, &account.PasswordHash, &account.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return localAdminRecord{}, false, nil
+		}
+		return localAdminRecord{}, false, err
+	}
+	return account, true, nil
 }
 
 func (store *sqlStore) ListTenants(ctx context.Context) ([]tenantRecord, error) {

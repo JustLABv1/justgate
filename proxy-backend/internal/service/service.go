@@ -15,7 +15,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -32,6 +31,8 @@ type dataStore interface {
 	ListRoutes(ctx context.Context) ([]routeRecord, error)
 	ListTokens(ctx context.Context) ([]tokenRecord, error)
 	ListAudits(ctx context.Context) ([]auditRecord, error)
+	CreateLocalAdmin(ctx context.Context, account localAdminRecord) (localAdminRecord, error)
+	GetLocalAdminByEmail(ctx context.Context, email string) (localAdminRecord, bool, error)
 	CreateTenant(ctx context.Context, payload createTenantRequest) (tenantRecord, error)
 	CreateRoute(ctx context.Context, payload createRouteRequest, methods []string) (routeRecord, error)
 	UpdateRoute(ctx context.Context, routeID string, payload createRouteRequest, methods []string) (routeRecord, error)
@@ -134,6 +135,17 @@ type updateTokenRequest struct {
 	Active *bool `json:"active"`
 }
 
+type registerLocalAdminRequest struct {
+	Email    string `json:"email"`
+	Name     string `json:"name"`
+	Password string `json:"password"`
+}
+
+type verifyLocalAdminRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
 type issuedTokenResponse struct {
 	Token  tokenSummary `json:"token"`
 	Secret string       `json:"secret"`
@@ -181,13 +193,12 @@ type auditRecord struct {
 	Upstream  string
 }
 
-type memoryStore struct {
-	mu      sync.RWMutex
-	tenants []tenantRecord
-	routes  []routeRecord
-	tokens  []tokenRecord
-	audits  []auditRecord
-	nextID  int
+type localAdminRecord struct {
+	ID           string
+	Email        string
+	Name         string
+	PasswordHash string
+	CreatedAt    time.Time
 }
 
 func New(config Config) (*Service, error) {
@@ -219,6 +230,8 @@ func New(config Config) (*Service, error) {
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/api/v1/auth/local/register", s.handleRegisterLocalAdmin)
+	mux.HandleFunc("/api/v1/auth/local/verify", s.handleVerifyLocalAdmin)
 	mux.HandleFunc("/api/v1/admin/overview", s.withAdminAuth(s.handleOverview))
 	mux.HandleFunc("/api/v1/admin/routes", s.withAdminAuth(s.handleRoutes))
 	mux.HandleFunc("/api/v1/admin/routes/", s.withAdminAuth(s.handleRouteByID))
@@ -258,6 +271,83 @@ func (s *Service) handleHealth(writer http.ResponseWriter, _ *http.Request) {
 		"status":    "ok",
 		"version":   s.config.Version,
 		"startedAt": s.start.Format(time.RFC3339),
+	})
+}
+
+func (s *Service) handleRegisterLocalAdmin(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var payload registerLocalAdminRequest
+	if err := decodeJSON(request, &payload); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	payload.Email = normalizeLocalAccountEmail(payload.Email)
+	payload.Name = strings.TrimSpace(payload.Name)
+	if payload.Email == "" || payload.Name == "" || payload.Password == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "email, name, and password are required"})
+		return
+	}
+	if err := validateLocalAccountPassword(payload.Password); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	passwordHash, err := hashLocalAccountPassword(payload.Password)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to store password"})
+		return
+	}
+
+	account, err := s.store.CreateLocalAdmin(request.Context(), localAdminRecord{
+		ID:           newResourceID("admin"),
+		Email:        payload.Email,
+		Name:         payload.Name,
+		PasswordHash: passwordHash,
+		CreatedAt:    time.Now().UTC(),
+	})
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(writer, http.StatusCreated, map[string]string{
+		"id":    account.ID,
+		"email": account.Email,
+		"name":  account.Name,
+	})
+}
+
+func (s *Service) handleVerifyLocalAdmin(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var payload verifyLocalAdminRequest
+	if err := decodeJSON(request, &payload); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	account, ok, err := s.store.GetLocalAdminByEmail(request.Context(), normalizeLocalAccountEmail(payload.Email))
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to verify account"})
+		return
+	}
+	if !ok || verifyLocalAccountPassword(account.PasswordHash, payload.Password) != nil {
+		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, map[string]string{
+		"id":    account.ID,
+		"email": account.Email,
+		"name":  account.Name,
 	})
 }
 
@@ -805,268 +895,6 @@ func (s *Service) recordAudit(ctx context.Context, routeSlug, tenantID, tokenID,
 		Status:    status,
 		Upstream:  upstreamURL,
 	})
-}
-
-func seedStore(headerName string) *memoryStore {
-	primaryUpstream := getenvOrDefault("MIMIR_PRIMARY_UPSTREAM", "http://localhost:9009")
-	secondaryUpstream := getenvOrDefault("MIMIR_SECONDARY_UPSTREAM", "http://localhost:9010")
-	now := time.Now().UTC()
-
-	seedTokens := []struct {
-		id        string
-		name      string
-		tenantID  string
-		scopes    []string
-		expiresAt time.Time
-		lastUsed  time.Time
-		preview   string
-		secret    string
-		active    bool
-	}{
-		{
-			id:        "tok_ops_reader",
-			name:      "ops-reader",
-			tenantID:  "acme-prod",
-			scopes:    []string{"metrics:read", "rules:read"},
-			expiresAt: now.Add(120 * 24 * time.Hour),
-			lastUsed:  now.Add(-64 * time.Minute),
-			preview:   "jpg_ops_reader_...d3f",
-			secret:    "jpg_ops_reader_secret_local",
-			active:    true,
-		},
-		{
-			id:        "tok_agent_push",
-			name:      "agent-push",
-			tenantID:  "northstar-int",
-			scopes:    []string{"metrics:write"},
-			expiresAt: now.Add(90 * 24 * time.Hour),
-			lastUsed:  now.Add(-3 * time.Hour),
-			preview:   "jpg_agent_push_...7ab",
-			secret:    "jpg_agent_push_secret_local",
-			active:    true,
-		},
-	}
-
-	tokens := make([]tokenRecord, 0, len(seedTokens))
-	for _, token := range seedTokens {
-		tokens = append(tokens, tokenRecord{
-			ID:         token.id,
-			Name:       token.name,
-			TenantID:   token.tenantID,
-			Scopes:     token.scopes,
-			ExpiresAt:  token.expiresAt,
-			LastUsedAt: token.lastUsed,
-			Preview:    token.preview,
-			Active:     token.active,
-			Hash:       hashToken(token.secret),
-		})
-	}
-
-	return &memoryStore{
-		tenants: []tenantRecord{
-			{
-				ID:         "tenant-acme",
-				Name:       "Acme Observability",
-				TenantID:   "acme-prod",
-				Upstream:   primaryUpstream,
-				AuthMode:   "header",
-				HeaderName: headerName,
-			},
-			{
-				ID:         "tenant-northstar",
-				Name:       "Northstar Platform",
-				TenantID:   "northstar-int",
-				Upstream:   secondaryUpstream,
-				AuthMode:   "header",
-				HeaderName: headerName,
-			},
-		},
-		routes: []routeRecord{
-			{
-				ID:            "route-mimir",
-				Slug:          "mimir",
-				TargetPath:    "/api/v1",
-				TenantID:      "acme-prod",
-				RequiredScope: "metrics:read",
-				Methods:       []string{http.MethodGet},
-				UpstreamURL:   primaryUpstream,
-			},
-			{
-				ID:            "route-rules",
-				Slug:          "rules",
-				TargetPath:    "/prometheus/config/v1/rules",
-				TenantID:      "acme-prod",
-				RequiredScope: "rules:read",
-				Methods:       []string{http.MethodGet},
-				UpstreamURL:   primaryUpstream,
-			},
-			{
-				ID:            "route-team-a",
-				Slug:          "team-a-metrics",
-				TargetPath:    "/api/v1/push",
-				TenantID:      "northstar-int",
-				RequiredScope: "metrics:write",
-				Methods:       []string{http.MethodPost},
-				UpstreamURL:   secondaryUpstream,
-			},
-		},
-		tokens: tokens,
-		audits: []auditRecord{
-			{
-				ID:        "audit-001",
-				Timestamp: now.Add(-64 * time.Minute),
-				RouteSlug: "mimir",
-				TenantID:  "acme-prod",
-				TokenID:   "tok_ops_reader",
-				Method:    http.MethodGet,
-				Status:    http.StatusOK,
-				Upstream:  primaryUpstream + "/api/v1/query",
-			},
-			{
-				ID:        "audit-002",
-				Timestamp: now.Add(-3 * time.Hour),
-				RouteSlug: "team-a-metrics",
-				TenantID:  "northstar-int",
-				TokenID:   "tok_agent_push",
-				Method:    http.MethodPost,
-				Status:    http.StatusAccepted,
-				Upstream:  secondaryUpstream + "/api/v1/push",
-			},
-			{
-				ID:        "audit-003",
-				Timestamp: now.Add(-4 * time.Hour),
-				RouteSlug: "rules",
-				TenantID:  "acme-prod",
-				TokenID:   "tok_ops_reader",
-				Method:    http.MethodGet,
-				Status:    http.StatusUnauthorized,
-				Upstream:  primaryUpstream + "/prometheus/config/v1/rules",
-			},
-		},
-		nextID: 3,
-	}
-}
-
-func (store *memoryStore) routeBySlug(slug string) (routeRecord, bool) {
-	store.mu.RLock()
-	defer store.mu.RUnlock()
-
-	for _, route := range store.routes {
-		if route.Slug == slug {
-			return route, true
-		}
-	}
-
-	return routeRecord{}, false
-}
-
-func (store *memoryStore) validateToken(secret string) (tokenRecord, bool) {
-	hashed := hashToken(secret)
-	now := time.Now().UTC()
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	for index, token := range store.tokens {
-		if token.Hash == hashed && token.Active && token.ExpiresAt.After(now) {
-			store.tokens[index].LastUsedAt = now
-			return store.tokens[index], true
-		}
-	}
-
-	return tokenRecord{}, false
-}
-
-func (store *memoryStore) createTenant(payload createTenantRequest) (tenantRecord, error) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	for _, tenant := range store.tenants {
-		if tenant.TenantID == payload.TenantID {
-			return tenantRecord{}, fmt.Errorf("tenantID already exists")
-		}
-	}
-
-	tenant := tenantRecord{
-		ID:         store.nextResourceID("tenant"),
-		Name:       payload.Name,
-		TenantID:   payload.TenantID,
-		Upstream:   payload.Upstream,
-		AuthMode:   payload.AuthMode,
-		HeaderName: payload.HeaderName,
-	}
-	store.tenants = append([]tenantRecord{tenant}, store.tenants...)
-	return tenant, nil
-}
-
-func (store *memoryStore) createRoute(payload createRouteRequest, methods []string) (routeRecord, error) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	var tenant tenantRecord
-	tenantFound := false
-	for _, existingTenant := range store.tenants {
-		if existingTenant.TenantID == payload.TenantID {
-			tenant = existingTenant
-			tenantFound = true
-			break
-		}
-	}
-	if !tenantFound {
-		return routeRecord{}, fmt.Errorf("tenantID does not exist")
-	}
-	for _, route := range store.routes {
-		if route.Slug == payload.Slug {
-			return routeRecord{}, fmt.Errorf("slug already exists")
-		}
-	}
-
-	route := routeRecord{
-		ID:            store.nextResourceID("route"),
-		Slug:          payload.Slug,
-		TargetPath:    payload.TargetPath,
-		TenantID:      payload.TenantID,
-		RequiredScope: payload.RequiredScope,
-		Methods:       methods,
-		UpstreamURL:   tenant.Upstream,
-	}
-	store.routes = append([]routeRecord{route}, store.routes...)
-	return route, nil
-}
-
-func (store *memoryStore) createToken(payload createTokenRequest, scopes []string, expiresAt time.Time, secret string) (tokenRecord, error) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	tenantFound := false
-	for _, tenant := range store.tenants {
-		if tenant.TenantID == payload.TenantID {
-			tenantFound = true
-			break
-		}
-	}
-	if !tenantFound {
-		return tokenRecord{}, fmt.Errorf("tenantID does not exist")
-	}
-
-	token := tokenRecord{
-		ID:         store.nextResourceID("tok"),
-		Name:       payload.Name,
-		TenantID:   payload.TenantID,
-		Scopes:     scopes,
-		ExpiresAt:  expiresAt,
-		LastUsedAt: time.Now().UTC(),
-		Preview:    previewSecret(secret),
-		Active:     true,
-		Hash:       hashToken(secret),
-	}
-	store.tokens = append([]tokenRecord{token}, store.tokens...)
-	return token, nil
-}
-
-func (store *memoryStore) nextResourceID(prefix string) string {
-	store.nextID++
-	return fmt.Sprintf("%s-%03d", prefix, store.nextID)
 }
 
 func hashToken(secret string) string {

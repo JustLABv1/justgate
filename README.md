@@ -9,6 +9,7 @@ The admin surface is a Next.js 16 app using HeroUI. All control-plane reads and 
 - Frontend: authenticated admin UI for tenants, routes, tokens, and audit state.
 - Backend: Go control plane and `/proxy/{slug}/...` runtime surface.
 - Persistence: SQLite by default, PostgreSQL when `JUST_PROXY_GUARD_DATABASE_URL` uses a Postgres DSN.
+- Migrations: versioned backend migrations tracked in `schema_migrations`.
 - Admin auth: NextAuth on the frontend, then a short-lived signed admin JWT passed to Go.
 
 ## Local development
@@ -59,19 +60,18 @@ JUST_PROXY_GUARD_OIDC_CLIENT_SECRET=client-secret
 JUST_PROXY_GUARD_OIDC_NAME=Corporate SSO
 ```
 
-Local fallback admin login:
+Local accounts:
 
 ```bash
-JUST_PROXY_GUARD_DEV_ADMIN_PASSWORD=dev-admin
-JUST_PROXY_GUARD_DEV_ADMIN_EMAIL=admin@local.dev
-JUST_PROXY_GUARD_DEV_ADMIN_NAME=Local Admin
+JUST_PROXY_GUARD_LOCAL_ACCOUNTS_ENABLED=true
+JUST_PROXY_GUARD_LOCAL_REGISTRATION_ENABLED=true
 ```
 
-If no OIDC values are set outside production, the UI exposes the local password fallback.
+When local accounts are enabled, the sign-in page supports both registration and credential login backed by the Go service.
 
 ## Runtime model
 
-1. A browser admin signs in through OIDC or the local development fallback.
+1. A browser admin signs in through OIDC or a backend-managed local account.
 2. Next.js mints a short-lived backend admin JWT.
 3. Go validates that JWT for every admin API call.
 4. Runtime clients use bearer tokens against `/proxy/{slug}/...`.
@@ -89,6 +89,7 @@ cd proxy-backend && go test ./...
 Smoke-tested flows:
 
 - admin overview read with signed admin JWT
+- local admin account registration and verification
 - tenant creation
 - route creation and route update
 - token issuance and token revoke

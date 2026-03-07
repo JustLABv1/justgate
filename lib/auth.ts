@@ -5,17 +5,23 @@ import CredentialsProvider from "next-auth/providers/credentials";
 const oidcIssuer = process.env.JUST_PROXY_GUARD_OIDC_ISSUER?.replace(/\/$/, "");
 const oidcClientId = process.env.JUST_PROXY_GUARD_OIDC_CLIENT_ID;
 const oidcClientSecret = process.env.JUST_PROXY_GUARD_OIDC_CLIENT_SECRET;
-const devAdminPassword =
-  process.env.JUST_PROXY_GUARD_DEV_ADMIN_PASSWORD ||
-  (process.env.NODE_ENV === "production" ? undefined : "dev-admin");
+const backendUrl =
+  process.env.JUST_PROXY_GUARD_BACKEND_URL?.replace(/\/$/, "") ||
+  "http://localhost:9090";
+const localAccountsEnabled = process.env.JUST_PROXY_GUARD_LOCAL_ACCOUNTS_ENABLED !== "false";
+const localRegistrationEnabled = process.env.JUST_PROXY_GUARD_LOCAL_REGISTRATION_ENABLED !== "false";
 const authSecret = process.env.NEXTAUTH_SECRET || "just-proxy-guard-local-auth-secret";
 
 export function isOIDCEnabled() {
   return Boolean(oidcIssuer && oidcClientId && oidcClientSecret);
 }
 
-export function isDevAuthEnabled() {
-  return Boolean(devAdminPassword);
+export function isLocalAccountsEnabled() {
+  return localAccountsEnabled;
+}
+
+export function isLocalRegistrationEnabled() {
+  return localAccountsEnabled && localRegistrationEnabled;
 }
 
 const providers: NonNullable<NextAuthOptions["providers"]> = [];
@@ -51,26 +57,48 @@ if (isOIDCEnabled()) {
   } as NextAuthOptions["providers"][number]);
 }
 
-if (isDevAuthEnabled()) {
+if (isLocalAccountsEnabled()) {
   providers.push(
     CredentialsProvider({
       id: "credentials",
-      name: "Local Admin",
+      name: "Local Account",
       credentials: {
+        email: {
+          label: "Email",
+          type: "email",
+        },
         password: {
           label: "Password",
           type: "password",
         },
       },
       async authorize(credentials) {
-        if (!devAdminPassword || credentials?.password !== devAdminPassword) {
+        const response = await fetch(`${backendUrl}/api/v1/auth/local/verify`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            email: credentials?.email,
+            password: credentials?.password,
+          }),
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
           return null;
         }
 
+        const account = (await response.json()) as {
+          id: string;
+          name: string;
+          email: string;
+        };
+
         return {
-          id: "dev-admin",
-          name: process.env.JUST_PROXY_GUARD_DEV_ADMIN_NAME || "Local Admin",
-          email: process.env.JUST_PROXY_GUARD_DEV_ADMIN_EMAIL || "admin@local.dev",
+          id: account.id,
+          name: account.name,
+          email: account.email,
         };
       },
     }),
