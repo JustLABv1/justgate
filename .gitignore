@@ -19,6 +19,8 @@
 
 # production
 /build
+proxy-backend/*.db
+proxy-backend/*.sqlite
 
 # misc
 .DS_Store

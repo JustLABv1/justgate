@@ -1,36 +1,95 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# just-proxy-guard
 
-## Getting Started
+Multi-tenant proxy guard for agent and observability traffic.
 
-First, run the development server:
+The admin surface is a Next.js 16 app using HeroUI. All control-plane reads and writes flow through the Go backend. The Go backend owns persistence, validates admin identity, issues runtime proxy behavior, and records audit activity.
+
+## Architecture
+
+- Frontend: authenticated admin UI for tenants, routes, tokens, and audit state.
+- Backend: Go control plane and `/proxy/{slug}/...` runtime surface.
+- Persistence: SQLite by default, PostgreSQL when `JUST_PROXY_GUARD_DATABASE_URL` uses a Postgres DSN.
+- Admin auth: NextAuth on the frontend, then a short-lived signed admin JWT passed to Go.
+
+## Local development
+
+Frontend:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Backend:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cd proxy-backend
+go run ./cmd/server
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Default local URLs:
 
-## Learn More
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:9090`
 
-To learn more about Next.js, take a look at the following resources:
+## Required environment
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Frontend:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+NEXTAUTH_SECRET=replace-me
+JUST_PROXY_GUARD_BACKEND_URL=http://localhost:9090
+JUST_PROXY_GUARD_BACKEND_JWT_SECRET=replace-me
+```
 
-## Deploy on Vercel
+Backend:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+JUST_PROXY_GUARD_BACKEND_JWT_SECRET=replace-me
+JUST_PROXY_GUARD_DATABASE_URL=sqlite://just-proxy-guard.db
+MIMIR_TENANT_HEADER=X-Scope-OrgID
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Optional OIDC configuration:
+
+```bash
+JUST_PROXY_GUARD_OIDC_ISSUER=https://issuer.example.com
+JUST_PROXY_GUARD_OIDC_CLIENT_ID=client-id
+JUST_PROXY_GUARD_OIDC_CLIENT_SECRET=client-secret
+JUST_PROXY_GUARD_OIDC_NAME=Corporate SSO
+```
+
+Local fallback admin login:
+
+```bash
+JUST_PROXY_GUARD_DEV_ADMIN_PASSWORD=dev-admin
+JUST_PROXY_GUARD_DEV_ADMIN_EMAIL=admin@local.dev
+JUST_PROXY_GUARD_DEV_ADMIN_NAME=Local Admin
+```
+
+If no OIDC values are set outside production, the UI exposes the local password fallback.
+
+## Runtime model
+
+1. A browser admin signs in through OIDC or the local development fallback.
+2. Next.js mints a short-lived backend admin JWT.
+3. Go validates that JWT for every admin API call.
+4. Runtime clients use bearer tokens against `/proxy/{slug}/...`.
+5. Go validates tenant, route, scope, expiry, and audit state before proxying upstream.
+
+## Validation
+
+Verified in this repository with:
+
+```bash
+pnpm build
+cd proxy-backend && go test ./...
+```
+
+Smoke-tested flows:
+
+- admin overview read with signed admin JWT
+- tenant creation
+- route creation and route update
+- token issuance and token revoke
+- revoked token rejection on the proxy surface
