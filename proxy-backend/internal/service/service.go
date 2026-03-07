@@ -34,10 +34,14 @@ type dataStore interface {
 	CreateLocalAdmin(ctx context.Context, account localAdminRecord) (localAdminRecord, error)
 	GetLocalAdminByEmail(ctx context.Context, email string) (localAdminRecord, bool, error)
 	CreateTenant(ctx context.Context, payload createTenantRequest) (tenantRecord, error)
+	UpdateTenant(ctx context.Context, tenantID string, payload createTenantRequest) (tenantRecord, error)
+	DeleteTenant(ctx context.Context, tenantID string) error
 	CreateRoute(ctx context.Context, payload createRouteRequest, methods []string) (routeRecord, error)
 	UpdateRoute(ctx context.Context, routeID string, payload createRouteRequest, methods []string) (routeRecord, error)
+	DeleteRoute(ctx context.Context, routeID string) error
 	CreateToken(ctx context.Context, payload createTokenRequest, scopes []string, expiresAt time.Time, secret string) (tokenRecord, error)
 	SetTokenActive(ctx context.Context, tokenID string, active bool) (tokenRecord, error)
+	DeleteToken(ctx context.Context, tokenID string) error
 	RouteBySlug(ctx context.Context, slug string) (routeRecord, bool, error)
 	ValidateToken(ctx context.Context, secret string) (tokenRecord, bool, error)
 	RecordAudit(ctx context.Context, audit auditRecord) error
@@ -236,6 +240,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/routes", s.withAdminAuth(s.handleRoutes))
 	mux.HandleFunc("/api/v1/admin/routes/", s.withAdminAuth(s.handleRouteByID))
 	mux.HandleFunc("/api/v1/admin/tenants", s.withAdminAuth(s.handleTenants))
+	mux.HandleFunc("/api/v1/admin/tenants/", s.withAdminAuth(s.handleTenantByID))
 	mux.HandleFunc("/api/v1/admin/tokens", s.withAdminAuth(s.handleTokens))
 	mux.HandleFunc("/api/v1/admin/tokens/", s.withAdminAuth(s.handleTokenByID))
 	mux.HandleFunc("/api/v1/admin/audit", s.withAdminAuth(s.handleAudit))
@@ -538,13 +543,7 @@ func (s *Service) handleAudit(writer http.ResponseWriter, request *http.Request)
 	writeJSON(writer, http.StatusOK, items)
 }
 
-func (s *Service) handleCreateTenant(writer http.ResponseWriter, request *http.Request) {
-	var payload createTenantRequest
-	if err := decodeJSON(request, &payload); err != nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-
+func normalizeTenantPayload(payload *createTenantRequest, defaultHeaderName string) error {
 	payload.Name = strings.TrimSpace(payload.Name)
 	payload.TenantID = strings.TrimSpace(payload.TenantID)
 	payload.Upstream = strings.TrimSpace(payload.Upstream)
@@ -552,17 +551,30 @@ func (s *Service) handleCreateTenant(writer http.ResponseWriter, request *http.R
 	payload.AuthMode = strings.TrimSpace(payload.AuthMode)
 
 	if payload.Name == "" || payload.TenantID == "" || payload.Upstream == "" {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "name, tenantID, and upstreamURL are required"})
-		return
+		return fmt.Errorf("name, tenantID, and upstreamURL are required")
 	}
 	if payload.HeaderName == "" {
-		payload.HeaderName = s.config.MimirHeaderName
+		payload.HeaderName = defaultHeaderName
 	}
 	if payload.AuthMode == "" {
 		payload.AuthMode = "header"
 	}
 	if _, err := url.ParseRequestURI(payload.Upstream); err != nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "upstreamURL must be a valid URL"})
+		return fmt.Errorf("upstreamURL must be a valid URL")
+	}
+
+	return nil
+}
+
+func (s *Service) handleCreateTenant(writer http.ResponseWriter, request *http.Request) {
+	var payload createTenantRequest
+	if err := decodeJSON(request, &payload); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if err := normalizeTenantPayload(&payload, s.config.MimirHeaderName); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -580,6 +592,58 @@ func (s *Service) handleCreateTenant(writer http.ResponseWriter, request *http.R
 		AuthMode:   tenant.AuthMode,
 		HeaderName: tenant.HeaderName,
 	})
+}
+
+func (s *Service) handleTenantByID(writer http.ResponseWriter, request *http.Request) {
+	tenantID := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tenants/"), "/")
+	if tenantID == "" || strings.Contains(tenantID, "/") {
+		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "tenant not found"})
+		return
+	}
+
+	switch request.Method {
+	case http.MethodPatch:
+		var payload createTenantRequest
+		if err := decodeJSON(request, &payload); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := normalizeTenantPayload(&payload, s.config.MimirHeaderName); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+
+		tenant, err := s.store.UpdateTenant(request.Context(), tenantID, payload)
+		if err != nil {
+			status := http.StatusBadRequest
+			if err.Error() == "tenant not found" {
+				status = http.StatusNotFound
+			}
+			writeJSON(writer, status, map[string]string{"error": err.Error()})
+			return
+		}
+
+		writeJSON(writer, http.StatusOK, tenantSummary{
+			ID:         tenant.ID,
+			Name:       tenant.Name,
+			TenantID:   tenant.TenantID,
+			Upstream:   tenant.Upstream,
+			AuthMode:   tenant.AuthMode,
+			HeaderName: tenant.HeaderName,
+		})
+	case http.MethodDelete:
+		if err := s.store.DeleteTenant(request.Context(), tenantID); err != nil {
+			status := http.StatusBadRequest
+			if err.Error() == "tenant not found" {
+				status = http.StatusNotFound
+			}
+			writeJSON(writer, status, map[string]string{"error": err.Error()})
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	default:
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
 }
 
 func (s *Service) handleCreateRoute(writer http.ResponseWriter, request *http.Request) {
@@ -693,107 +757,127 @@ func (s *Service) handleCreateToken(writer http.ResponseWriter, request *http.Re
 }
 
 func (s *Service) handleRouteByID(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodPatch {
-		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
 	routeID := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/routes/"), "/")
 	if routeID == "" || strings.Contains(routeID, "/") {
 		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "route not found"})
 		return
 	}
 
-	var payload createRouteRequest
-	if err := decodeJSON(request, &payload); err != nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-
-	payload.Slug = strings.TrimSpace(payload.Slug)
-	payload.TargetPath = strings.TrimSpace(payload.TargetPath)
-	payload.TenantID = strings.TrimSpace(payload.TenantID)
-	payload.RequiredScope = strings.TrimSpace(payload.RequiredScope)
-	methods, err := normalizeStringList(payload.Methods)
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "methods must be a JSON array or comma-separated string"})
-		return
-	}
-	if payload.Slug == "" || payload.TargetPath == "" || payload.TenantID == "" || payload.RequiredScope == "" {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "slug, targetPath, tenantID, and requiredScope are required"})
-		return
-	}
-	if !strings.HasPrefix(payload.TargetPath, "/") {
-		payload.TargetPath = "/" + payload.TargetPath
-	}
-	methods = normalizeMethods(methods)
-	if len(methods) == 0 {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "methods must be valid HTTP verbs"})
-		return
-	}
-
-	route, err := s.store.UpdateRoute(request.Context(), routeID, payload, methods)
-	if err != nil {
-		status := http.StatusBadRequest
-		if err.Error() == "route not found" {
-			status = http.StatusNotFound
+	switch request.Method {
+	case http.MethodPatch:
+		var payload createRouteRequest
+		if err := decodeJSON(request, &payload); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
 		}
-		writeJSON(writer, status, map[string]string{"error": err.Error()})
-		return
-	}
 
-	writeJSON(writer, http.StatusOK, routeSummary{
-		ID:            route.ID,
-		Slug:          route.Slug,
-		TargetPath:    route.TargetPath,
-		TenantID:      route.TenantID,
-		RequiredScope: route.RequiredScope,
-		Methods:       route.Methods,
-	})
+		payload.Slug = strings.TrimSpace(payload.Slug)
+		payload.TargetPath = strings.TrimSpace(payload.TargetPath)
+		payload.TenantID = strings.TrimSpace(payload.TenantID)
+		payload.RequiredScope = strings.TrimSpace(payload.RequiredScope)
+		methods, err := normalizeStringList(payload.Methods)
+		if err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "methods must be a JSON array or comma-separated string"})
+			return
+		}
+		if payload.Slug == "" || payload.TargetPath == "" || payload.TenantID == "" || payload.RequiredScope == "" {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "slug, targetPath, tenantID, and requiredScope are required"})
+			return
+		}
+		if !strings.HasPrefix(payload.TargetPath, "/") {
+			payload.TargetPath = "/" + payload.TargetPath
+		}
+		methods = normalizeMethods(methods)
+		if len(methods) == 0 {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "methods must be valid HTTP verbs"})
+			return
+		}
+
+		route, err := s.store.UpdateRoute(request.Context(), routeID, payload, methods)
+		if err != nil {
+			status := http.StatusBadRequest
+			if err.Error() == "route not found" {
+				status = http.StatusNotFound
+			}
+			writeJSON(writer, status, map[string]string{"error": err.Error()})
+			return
+		}
+
+		writeJSON(writer, http.StatusOK, routeSummary{
+			ID:            route.ID,
+			Slug:          route.Slug,
+			TargetPath:    route.TargetPath,
+			TenantID:      route.TenantID,
+			RequiredScope: route.RequiredScope,
+			Methods:       route.Methods,
+		})
+	case http.MethodDelete:
+		if err := s.store.DeleteRoute(request.Context(), routeID); err != nil {
+			status := http.StatusBadRequest
+			if err.Error() == "route not found" {
+				status = http.StatusNotFound
+			}
+			writeJSON(writer, status, map[string]string{"error": err.Error()})
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	default:
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
 }
 
 func (s *Service) handleTokenByID(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodPatch {
-		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
 	tokenID := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tokens/"), "/")
 	if tokenID == "" || strings.Contains(tokenID, "/") {
 		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "token not found"})
 		return
 	}
 
-	var payload updateTokenRequest
-	if err := decodeJSON(request, &payload); err != nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if payload.Active == nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "active is required"})
-		return
-	}
-
-	token, err := s.store.SetTokenActive(request.Context(), tokenID, *payload.Active)
-	if err != nil {
-		status := http.StatusBadRequest
-		if err.Error() == "token not found" {
-			status = http.StatusNotFound
+	switch request.Method {
+	case http.MethodPatch:
+		var payload updateTokenRequest
+		if err := decodeJSON(request, &payload); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
 		}
-		writeJSON(writer, status, map[string]string{"error": err.Error()})
-		return
-	}
+		if payload.Active == nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "active is required"})
+			return
+		}
 
-	writeJSON(writer, http.StatusOK, tokenSummary{
-		ID:         token.ID,
-		Name:       token.Name,
-		TenantID:   token.TenantID,
-		Scopes:     token.Scopes,
-		ExpiresAt:  token.ExpiresAt.Format(time.RFC3339),
-		LastUsedAt: token.LastUsedAt.Format(time.RFC3339),
-		Preview:    token.Preview,
-		Active:     token.Active,
-	})
+		token, err := s.store.SetTokenActive(request.Context(), tokenID, *payload.Active)
+		if err != nil {
+			status := http.StatusBadRequest
+			if err.Error() == "token not found" {
+				status = http.StatusNotFound
+			}
+			writeJSON(writer, status, map[string]string{"error": err.Error()})
+			return
+		}
+
+		writeJSON(writer, http.StatusOK, tokenSummary{
+			ID:         token.ID,
+			Name:       token.Name,
+			TenantID:   token.TenantID,
+			Scopes:     token.Scopes,
+			ExpiresAt:  token.ExpiresAt.Format(time.RFC3339),
+			LastUsedAt: token.LastUsedAt.Format(time.RFC3339),
+			Preview:    token.Preview,
+			Active:     token.Active,
+		})
+	case http.MethodDelete:
+		if err := s.store.DeleteToken(request.Context(), tokenID); err != nil {
+			status := http.StatusBadRequest
+			if err.Error() == "token not found" {
+				status = http.StatusNotFound
+			}
+			writeJSON(writer, status, map[string]string{"error": err.Error()})
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	default:
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
 }
 
 func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request) {

@@ -346,6 +346,84 @@ func (store *sqlStore) CreateTenant(ctx context.Context, payload createTenantReq
 	return tenant, nil
 }
 
+func (store *sqlStore) UpdateTenant(ctx context.Context, tenantID string, payload createTenantRequest) (tenantRecord, error) {
+	var currentTenantID string
+	if err := store.queryRowContext(ctx, `SELECT tenant_id FROM tenants WHERE id = ? LIMIT 1`, tenantID).Scan(&currentTenantID); err != nil {
+		if err == sql.ErrNoRows {
+			return tenantRecord{}, fmt.Errorf("tenant not found")
+		}
+		return tenantRecord{}, err
+	}
+
+	result, err := store.execContext(ctx, `UPDATE tenants SET name = ?, tenant_id = ?, upstream_url = ?, auth_mode = ?, header_name = ? WHERE id = ?`, payload.Name, payload.TenantID, payload.Upstream, payload.AuthMode, payload.HeaderName, tenantID)
+	if err != nil {
+		return tenantRecord{}, translateDBError(err, "tenantID already exists")
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return tenantRecord{}, err
+	}
+	if rowsAffected == 0 {
+		return tenantRecord{}, fmt.Errorf("tenant not found")
+	}
+
+	if _, err := store.execContext(ctx, `UPDATE routes SET tenant_id = ?, upstream_url = ? WHERE tenant_id = ?`, payload.TenantID, payload.Upstream, currentTenantID); err != nil {
+		return tenantRecord{}, err
+	}
+	if _, err := store.execContext(ctx, `UPDATE tokens SET tenant_id = ? WHERE tenant_id = ?`, payload.TenantID, currentTenantID); err != nil {
+		return tenantRecord{}, err
+	}
+
+	return tenantRecord{
+		ID:         tenantID,
+		Name:       payload.Name,
+		TenantID:   payload.TenantID,
+		Upstream:   payload.Upstream,
+		AuthMode:   payload.AuthMode,
+		HeaderName: payload.HeaderName,
+	}, nil
+}
+
+func (store *sqlStore) DeleteTenant(ctx context.Context, tenantID string) error {
+	var currentTenantID string
+	if err := store.queryRowContext(ctx, `SELECT tenant_id FROM tenants WHERE id = ? LIMIT 1`, tenantID).Scan(&currentTenantID); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("tenant not found")
+		}
+		return err
+	}
+
+	var routeCount int
+	if err := store.queryRowContext(ctx, `SELECT COUNT(*) FROM routes WHERE tenant_id = ?`, currentTenantID).Scan(&routeCount); err != nil {
+		return err
+	}
+	if routeCount > 0 {
+		return fmt.Errorf("tenant has routes; delete routes first")
+	}
+
+	var tokenCount int
+	if err := store.queryRowContext(ctx, `SELECT COUNT(*) FROM tokens WHERE tenant_id = ?`, currentTenantID).Scan(&tokenCount); err != nil {
+		return err
+	}
+	if tokenCount > 0 {
+		return fmt.Errorf("tenant has tokens; delete or revoke tokens first")
+	}
+
+	result, err := store.execContext(ctx, `DELETE FROM tenants WHERE id = ?`, tenantID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("tenant not found")
+	}
+
+	return nil
+}
+
 func (store *sqlStore) CreateRoute(ctx context.Context, payload createRouteRequest, methods []string) (routeRecord, error) {
 	upstreamURL, err := store.lookupTenantUpstream(ctx, payload.TenantID)
 	if err != nil {
@@ -409,6 +487,22 @@ func (store *sqlStore) UpdateRoute(ctx context.Context, routeID string, payload 
 	}, nil
 }
 
+func (store *sqlStore) DeleteRoute(ctx context.Context, routeID string) error {
+	result, err := store.execContext(ctx, `DELETE FROM routes WHERE id = ?`, routeID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("route not found")
+	}
+
+	return nil
+}
+
 func (store *sqlStore) CreateToken(ctx context.Context, payload createTokenRequest, scopes []string, expiresAt time.Time, secret string) (tokenRecord, error) {
 	if _, err := store.lookupTenantUpstream(ctx, payload.TenantID); err != nil {
 		return tokenRecord{}, err
@@ -454,6 +548,22 @@ func (store *sqlStore) SetTokenActive(ctx context.Context, tokenID string, activ
 
 	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash FROM tokens WHERE id = ?`, tokenID)
 	return scanToken(row)
+}
+
+func (store *sqlStore) DeleteToken(ctx context.Context, tokenID string) error {
+	result, err := store.execContext(ctx, `DELETE FROM tokens WHERE id = ?`, tokenID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("token not found")
+	}
+
+	return nil
 }
 
 func (store *sqlStore) RouteBySlug(ctx context.Context, slug string) (routeRecord, bool, error) {

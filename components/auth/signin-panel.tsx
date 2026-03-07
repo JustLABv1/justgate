@@ -1,9 +1,12 @@
 "use client";
 
 import { Button, Card, Chip, Form, Input, Label, TextField } from "@heroui/react";
+import { ArrowUpRight, LockKeyhole, ShieldCheck, UserPlus } from "lucide-react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState, useTransition } from "react";
+
+type AuthMode = "signin" | "register";
 
 interface SignInPanelProps {
   callbackUrl: string;
@@ -21,21 +24,23 @@ export function SignInPanel({
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [registerEmail, setRegisterEmail] = useState("");
   const [registerName, setRegisterName] = useState("");
+  const [registerEmail, setRegisterEmail] = useState("");
   const [registerPassword, setRegisterPassword] = useState("");
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
+  const [mode, setMode] = useState<AuthMode>("signin");
   const [isPending, startTransition] = useTransition();
 
   function handleOIDCSignIn() {
     setError(undefined);
+    setSuccess(undefined);
     startTransition(() => {
       void signIn("oidc", { callbackUrl });
     });
   }
 
-  async function handleDevSignIn(event: FormEvent<HTMLFormElement>) {
+  async function handleLocalSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(undefined);
     setSuccess(undefined);
@@ -48,7 +53,7 @@ export function SignInPanel({
     });
 
     if (!result || result.error) {
-      setError("Local admin sign-in failed.");
+      setError("Local sign-in failed.");
       return;
     }
 
@@ -67,17 +72,15 @@ export function SignInPanel({
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        email: registerEmail,
         name: registerName,
+        email: registerEmail,
         password: registerPassword,
       }),
     });
 
-    const payload = (await response.json().catch(() => null)) as
-      | { error?: string; email?: string }
-      | null;
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
     if (!response.ok) {
-      setError(payload?.error || "Local account registration failed.");
+      setError(payload?.error || "Registration failed.");
       return;
     }
 
@@ -87,8 +90,9 @@ export function SignInPanel({
       callbackUrl,
       redirect: false,
     });
+
     if (!signInResult || signInResult.error) {
-      setSuccess("Account created. Sign in with your new credentials.");
+      setSuccess("Account created. Sign in with the new credentials.");
       return;
     }
 
@@ -97,132 +101,163 @@ export function SignInPanel({
   }
 
   return (
-    <Card className="border border-slate-900/10 bg-white/84 shadow-[0_30px_80px_-42px_rgba(15,23,42,0.42)] backdrop-blur">
-      <Card.Content className="space-y-6 p-8">
-        <div className="space-y-3">
-          <Chip className="w-fit bg-slate-950 text-white">Admin access</Chip>
-          <div>
-            <h2 className="font-display text-4xl text-slate-950">Authenticate to control the proxy</h2>
-            <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">
-              The admin UI now requires a signed session before it can read or mutate Go control-plane state.
-            </p>
+    <Card className="overflow-hidden rounded-[32px] border border-border bg-surface shadow-[0_20px_60px_-40px_rgba(15,23,42,0.35)]">
+      <Card.Content className="space-y-6 p-6 sm:p-8">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-3">
+            <Chip className="w-fit bg-foreground text-background">Admin access</Chip>
+            <div>
+              <h2 className="text-2xl font-semibold tracking-[-0.03em] text-foreground sm:text-3xl">
+                Sign in to continue
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Use OIDC when it is configured, or fall back to local backend-managed credentials.
+              </p>
+            </div>
+          </div>
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-foreground text-background shadow-sm">
+            <ShieldCheck size={20} />
           </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-3">
-          <Card className="border border-slate-900/10 bg-[rgba(252,250,245,0.72)] shadow-none">
-            <Card.Content className="space-y-4 p-6">
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Recommended</div>
-                <div className="mt-2 font-display text-2xl text-slate-950">OIDC single sign-on</div>
-              </div>
-              <p className="text-sm leading-7 text-slate-600">
-                Use your identity provider when issuer and client credentials are configured for the admin console.
-              </p>
-              <Button
-                className="w-full bg-slate-950 text-white"
-                isDisabled={!oidcEnabled || isPending}
-                onPress={handleOIDCSignIn}
-              >
-                {oidcEnabled ? "Continue with OIDC" : "OIDC not configured"}
-              </Button>
-            </Card.Content>
-          </Card>
+        {oidcEnabled ? (
+          <Button
+            className="h-12 w-full rounded-2xl bg-foreground text-background"
+            isDisabled={isPending}
+            onPress={handleOIDCSignIn}
+          >
+            <ArrowUpRight size={16} />
+            Continue with OIDC
+          </Button>
+        ) : null}
 
-          <Card className="border border-slate-900/10 bg-[rgba(252,250,245,0.72)] shadow-none">
-            <Card.Content className="space-y-4 p-6">
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Built-in</div>
-                <div className="mt-2 font-display text-2xl text-slate-950">Local account sign-in</div>
-              </div>
-              <p className="text-sm leading-7 text-slate-600">
-                Use credentials stored by the Go backend when you want account-based access without external identity infrastructure.
-              </p>
-              <Form className="grid gap-3" onSubmit={handleDevSignIn}>
-                <TextField className="grid gap-2">
-                  <Label>Email</Label>
-                  <Input
-                    disabled={!localAccountsEnabled || isPending}
-                    onChange={(event) => setEmail(event.target.value)}
-                    type="email"
-                    value={email}
-                  />
-                </TextField>
-                <TextField className="grid gap-2">
-                  <Label>Password</Label>
-                  <Input
-                    disabled={!localAccountsEnabled || isPending}
-                    onChange={(event) => setPassword(event.target.value)}
-                    type="password"
-                    value={password}
-                  />
-                </TextField>
+        {localAccountsEnabled || localRegistrationEnabled ? (
+          <div className="space-y-4 rounded-[28px] border border-border bg-background/70 p-5">
+            {localRegistrationEnabled ? (
+              <div className="inline-flex w-full rounded-full border border-border bg-surface p-1 shadow-sm">
                 <Button
-                  className="w-full bg-white text-slate-950 ring-1 ring-slate-900/10"
-                  isDisabled={!localAccountsEnabled || isPending}
-                  type="submit"
+                  className={[
+                    "h-10 flex-1 rounded-full",
+                    mode === "signin" ? "bg-foreground text-background" : "bg-transparent text-muted-foreground",
+                  ].join(" ")}
+                  onPress={() => setMode("signin")}
+                  size="sm"
+                  variant="ghost"
                 >
-                  {localAccountsEnabled ? "Sign in locally" : "Local login disabled"}
+                  Sign in
                 </Button>
-              </Form>
-            </Card.Content>
-          </Card>
+                <Button
+                  className={[
+                    "h-10 flex-1 rounded-full",
+                    mode === "register" ? "bg-foreground text-background" : "bg-transparent text-muted-foreground",
+                  ].join(" ")}
+                  onPress={() => setMode("register")}
+                  size="sm"
+                  variant="ghost"
+                >
+                  Register
+                </Button>
+              </div>
+            ) : null}
 
-          <Card className="border border-slate-900/10 bg-[rgba(252,250,245,0.72)] shadow-none">
-            <Card.Content className="space-y-4 p-6">
+            {mode === "signin" || !localRegistrationEnabled ? (
               <div>
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Self-service</div>
-                <div className="mt-2 font-display text-2xl text-slate-950">Create local account</div>
+                <div className="mb-4">
+                  <div className="text-sm font-semibold text-foreground">Local sign in</div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Authenticate with a backend-managed local account.
+                  </p>
+                </div>
+
+                <Form className="grid gap-3" onSubmit={handleLocalSignIn}>
+                  <TextField className="grid gap-2">
+                    <Label>Email</Label>
+                    <Input
+                      disabled={!localAccountsEnabled || isPending}
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="admin@example.com"
+                      type="email"
+                      value={email}
+                    />
+                  </TextField>
+                  <TextField className="grid gap-2">
+                    <Label>Password</Label>
+                    <Input
+                      disabled={!localAccountsEnabled || isPending}
+                      onChange={(event) => setPassword(event.target.value)}
+                      placeholder="At least 10 characters"
+                      type="password"
+                      value={password}
+                    />
+                  </TextField>
+                  <Button
+                    className="mt-1 h-11 w-full rounded-2xl bg-foreground text-background"
+                    isDisabled={!localAccountsEnabled || isPending}
+                    type="submit"
+                  >
+                    <LockKeyhole size={16} />
+                    {localAccountsEnabled ? "Sign in" : "Local sign-in disabled"}
+                  </Button>
+                </Form>
               </div>
-              <p className="text-sm leading-7 text-slate-600">
-                Register a local admin account when OIDC is optional or not yet wired for the environment.
-              </p>
-              <Form className="grid gap-3" onSubmit={handleRegister}>
-                <TextField className="grid gap-2">
-                  <Label>Name</Label>
-                  <Input
-                    disabled={!localRegistrationEnabled || isPending}
-                    onChange={(event) => setRegisterName(event.target.value)}
-                    value={registerName}
-                  />
-                </TextField>
-                <TextField className="grid gap-2">
-                  <Label>Email</Label>
-                  <Input
-                    disabled={!localRegistrationEnabled || isPending}
-                    onChange={(event) => setRegisterEmail(event.target.value)}
-                    type="email"
-                    value={registerEmail}
-                  />
-                </TextField>
-                <TextField className="grid gap-2">
-                  <Label>Password</Label>
-                  <Input
-                    disabled={!localRegistrationEnabled || isPending}
-                    onChange={(event) => setRegisterPassword(event.target.value)}
-                    type="password"
-                    value={registerPassword}
-                  />
-                </TextField>
-                <Button
-                  className="w-full bg-slate-950 text-white"
-                  isDisabled={!localRegistrationEnabled || isPending}
-                  type="submit"
-                >
-                  {localRegistrationEnabled ? "Register local account" : "Registration disabled"}
-                </Button>
-              </Form>
-            </Card.Content>
-          </Card>
-        </div>
+            ) : null}
+
+            {mode === "register" && localRegistrationEnabled ? (
+              <div>
+                <div className="mb-4">
+                  <div className="text-sm font-semibold text-foreground">Create account</div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Register a local admin for environments without mandatory SSO.
+                  </p>
+                </div>
+
+                <Form className="grid gap-3" onSubmit={handleRegister}>
+                  <TextField className="grid gap-2">
+                    <Label>Name</Label>
+                    <Input
+                      disabled={isPending}
+                      onChange={(event) => setRegisterName(event.target.value)}
+                      placeholder="Jane Proxy"
+                      value={registerName}
+                    />
+                  </TextField>
+                  <TextField className="grid gap-2">
+                    <Label>Email</Label>
+                    <Input
+                      disabled={isPending}
+                      onChange={(event) => setRegisterEmail(event.target.value)}
+                      placeholder="jane@example.com"
+                      type="email"
+                      value={registerEmail}
+                    />
+                  </TextField>
+                  <TextField className="grid gap-2">
+                    <Label>Password</Label>
+                    <Input
+                      disabled={isPending}
+                      onChange={(event) => setRegisterPassword(event.target.value)}
+                      placeholder="At least 10 characters"
+                      type="password"
+                      value={registerPassword}
+                    />
+                  </TextField>
+                  <Button className="mt-1 h-11 w-full rounded-2xl" isDisabled={isPending} type="submit">
+                    <UserPlus size={16} />
+                    Register account
+                  </Button>
+                </Form>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {error ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
             {error}
           </div>
         ) : null}
         {success ? (
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">
             {success}
           </div>
         ) : null}

@@ -1,6 +1,7 @@
 import type { DataSource } from "@/lib/contracts";
-import { Card, Chip } from "@heroui/react";
+import { Chip } from "@heroui/react";
 import type { ReactNode } from "react";
+import { AlertCircle, ArrowUpRight, Zap } from "lucide-react";
 
 interface SectionPageProps {
   eyebrow: string;
@@ -19,28 +20,49 @@ export function SectionPage({
   error,
   children,
 }: SectionPageProps) {
+  const isLive = source === "backend";
+
   return (
-    <div className="space-y-6">
-      <Card className="border border-slate-900/10 bg-white/84 shadow-[0_26px_64px_-40px_rgba(15,23,42,0.4)]">
-        <Card.Content className="p-7 lg:p-8">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="max-w-3xl">
-            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">{eyebrow}</p>
-            <h2 className="mt-2 font-display text-3xl text-slate-950 sm:text-4xl">{title}</h2>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-600">{description}</p>
-          </div>
-          <Chip className="bg-slate-950 text-white">
-            {source === "backend" ? "Live Go API" : "Fallback contract"}
-          </Chip>
-          </div>
-          {error ? (
-            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              Backend request failed: {error}
+    <div className="space-y-8">
+      <header className="rounded-[32px] border border-border bg-surface px-6 py-6 shadow-sm sm:px-8">
+        <div className="flex flex-wrap items-start justify-between gap-5">
+          <div className="max-w-3xl space-y-3">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <Zap size={14} />
+              {eyebrow}
             </div>
-          ) : null}
-        </Card.Content>
-      </Card>
-      {children}
+            <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl">
+              {title}
+            </h1>
+            <p className="max-w-2xl text-base leading-7 text-muted-foreground">
+              {description}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Chip 
+              variant="soft" 
+              color={isLive ? "success" : "warning"}
+              className="capitalize"
+            >
+              {isLive ? "Live API" : "Fallback Mode"}
+            </Chip>
+            <div className="hidden rounded-full border border-border bg-background p-2 text-muted-foreground sm:block">
+              <ArrowUpRight size={16} />
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mt-5 flex items-center gap-3 rounded-2xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger-foreground">
+            <AlertCircle size={18} />
+            <p><strong>Backend Error:</strong> {error}</p>
+          </div>
+        )}
+      </header>
+      
+      <div className="space-y-8">
+        {children}
+      </div>
     </div>
   );
 }
