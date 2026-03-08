@@ -1,38 +1,87 @@
 @import "tailwindcss";
 @import "@heroui/styles";
 
-:root {
-  --radius: 1.25rem;
-  --background: oklch(0.14 0.01 264);
-  --foreground: oklch(0.98 0.01 264);
-  --panel: oklch(0.18 0.015 264 / 0.8);
-  --surface: oklch(0.2 0.02 264 / 0.7);
-  --surface-strong: oklch(0.25 0.02 264);
-  --border: oklch(0.28 0.02 264 / 0.5);
-  --accent: oklch(0.7 0.18 200); /* Cyan-blue accent */
-  --accent-foreground: oklch(1 0 0);
-  --muted: oklch(0.6 0.02 264);
-  --muted-foreground: oklch(0.75 0.02 264);
-  --success: oklch(0.75 0.15 150);
-  --warning: oklch(0.85 0.15 90);
-  --danger: oklch(0.7 0.2 30);
+:root,
+.light,
+[data-theme="light"] {
+  color-scheme: light;
+  --radius: 1rem;
+  --field-radius: 0.875rem;
+  --spacing: 0.25rem;
+  --background: oklch(0.979 0.002 255);
+  --foreground: oklch(0.31 0.012 255);
+  --surface: oklch(0.995 0.001 255);
+  --surface-foreground: var(--foreground);
+  --overlay: oklch(1 0 0);
+  --overlay-foreground: var(--foreground);
+  --panel: oklch(0.958 0.003 255);
+  --panel-foreground: var(--foreground);
+  --default: oklch(0.944 0.003 255);
+  --default-foreground: var(--foreground);
+  --segment: var(--surface);
+  --segment-foreground: var(--foreground);
+  --field-background: var(--surface);
+  --field-foreground: var(--foreground);
+  --field-placeholder: oklch(0.61 0.008 255);
+  --field-border: oklch(0.87 0.004 255);
+  --border: oklch(0.87 0.004 255);
+  --separator: oklch(0.91 0.003 255);
+  --accent: oklch(0.55 0.07 242);
+  --accent-foreground: oklch(0.985 0.001 255);
+  --muted: oklch(0.66 0.008 255);
+  --muted-foreground: oklch(0.54 0.008 255);
+  --success: oklch(0.73 0.11 154);
+  --success-foreground: oklch(0.25 0.015 154);
+  --warning: oklch(0.79 0.09 86);
+  --warning-foreground: oklch(0.34 0.025 86);
+  --danger: oklch(0.69 0.18 24);
+  --danger-foreground: oklch(0.99 0.003 24);
+  --focus: var(--accent);
+  --link: var(--accent);
+  --surface-shadow: 0 8px 22px -18px rgba(15, 23, 42, 0.07), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --overlay-shadow: 0 16px 38px -26px rgba(15, 23, 42, 0.14), 0 6px 16px -14px rgba(15, 23, 42, 0.08);
+  --field-shadow: 0 1px 1px rgba(15, 23, 42, 0.03), 0 0 0 1px rgba(255, 255, 255, 0.45) inset;
 }
 
-.dark {
+.dark,
+[data-theme="dark"] {
   color-scheme: dark;
-  --background: oklch(0.1 0.01 264);
-  --foreground: oklch(0.98 0.01 264);
-  --panel: oklch(0.14 0.02 264 / 0.85);
-  --surface: oklch(0.16 0.02 264 / 0.9);
-  --surface-strong: oklch(0.22 0.02 264);
-  --border: oklch(0.25 0.02 264 / 0.6);
-  --accent: oklch(0.7 0.2 200);
-  --accent-foreground: oklch(1 0 0);
-  --muted: oklch(0.5 0.02 264);
-  --muted-foreground: oklch(0.65 0.02 264);
-  --success: oklch(0.72 0.16 150);
-  --warning: oklch(0.82 0.15 90);
-  --danger: oklch(0.68 0.19 30);
+  --radius: 1rem;
+  --field-radius: 0.875rem;
+  --spacing: 0.25rem;
+  --background: oklch(0.26 0.006 255);
+  --foreground: oklch(0.93 0.003 255);
+  --surface: oklch(0.305 0.006 255);
+  --surface-foreground: var(--foreground);
+  --overlay: oklch(0.33 0.006 255);
+  --overlay-foreground: var(--foreground);
+  --panel: oklch(0.285 0.006 255);
+  --panel-foreground: var(--foreground);
+  --default: oklch(0.35 0.006 255);
+  --default-foreground: var(--foreground);
+  --segment: oklch(0.34 0.006 255);
+  --segment-foreground: var(--foreground);
+  --field-background: var(--default);
+  --field-foreground: var(--foreground);
+  --field-placeholder: oklch(0.72 0.003 255);
+  --field-border: oklch(0.4 0.005 255);
+  --border: oklch(0.4 0.005 255);
+  --separator: oklch(0.37 0.005 255);
+  --accent: oklch(0.72 0.045 242);
+  --accent-foreground: oklch(0.22 0.005 255);
+  --muted: oklch(0.72 0.004 255);
+  --muted-foreground: oklch(0.69 0.004 255);
+  --success: oklch(0.71 0.09 154);
+  --success-foreground: oklch(0.2 0.01 154);
+  --warning: oklch(0.78 0.08 86);
+  --warning-foreground: oklch(0.24 0.015 86);
+  --danger: oklch(0.68 0.18 24);
+  --danger-foreground: oklch(0.98 0.003 24);
+  --focus: var(--accent);
+  --link: var(--accent);
+  --surface-shadow: 0 10px 26px -20px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --overlay-shadow: 0 16px 36px -24px rgba(0, 0, 0, 0.38), 0 6px 16px -12px rgba(0, 0, 0, 0.24);
+  --field-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
 }
 
 * {
@@ -41,18 +90,29 @@
 
 html {
   scroll-behavior: smooth;
+  background: var(--background);
 }
 
 body {
+  position: relative;
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-body-sans), sans-serif;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
   min-height: 100vh;
-  background-image:
-    radial-gradient(circle at 20% 0%, color-mix(in oklab, var(--accent) 15%, transparent) 0, transparent 40%),
-    radial-gradient(circle at 80% 0%, color-mix(in oklab, var(--success) 10%, transparent) 0, transparent 40%),
-    linear-gradient(180deg, var(--background), color-mix(in oklab, var(--background) 95%, white) 100%);
-  background-attachment: fixed;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 0% 0%, color-mix(in oklab, var(--accent) 8%, transparent) 0, transparent 26%),
+    linear-gradient(180deg, color-mix(in oklab, var(--background) 92%, var(--panel) 8%), var(--background));
+  opacity: 0.38;
 }
 
 a {
@@ -70,6 +130,91 @@ a {
 
 ::selection {
   background: color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+.surface-card {
+  border: 1px solid color-mix(in oklab, var(--border) 86%, transparent);
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+  box-shadow: var(--surface-shadow);
+}
+
+.surface-card-muted {
+  border: 1px solid color-mix(in oklab, var(--border) 78%, transparent);
+  background: color-mix(in oklab, var(--panel) 96%, transparent);
+}
+
+.enterprise-kicker {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--muted-foreground) 88%, transparent);
+}
+
+.enterprise-panel {
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  background: color-mix(in oklab, var(--panel) 92%, transparent);
+  border-radius: 1.25rem;
+}
+
+.enterprise-note {
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: color-mix(in oklab, var(--muted-foreground) 92%, transparent);
+}
+
+.enterprise-feedback {
+  border-radius: 1rem;
+  border: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+  padding: 0.875rem 1rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.enterprise-feedback--error {
+  border-color: color-mix(in oklab, var(--warning) 28%, var(--border));
+  background: color-mix(in oklab, var(--warning) 10%, var(--surface));
+  color: var(--warning-foreground);
+}
+
+.enterprise-feedback--success {
+  border-color: color-mix(in oklab, var(--success) 28%, var(--border));
+  background: color-mix(in oklab, var(--success) 10%, var(--surface));
+  color: var(--success-foreground);
+}
+
+.enterprise-empty-state {
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  background: color-mix(in oklab, var(--panel) 94%, transparent);
+  border-radius: 1.25rem;
+  padding: 1.25rem;
+}
+
+.enterprise-empty-state__title {
+  margin-top: 0.35rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--foreground);
+}
+
+.enterprise-empty-state__copy {
+  margin-top: 0.35rem;
+  max-width: 34rem;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+}
+
+.enterprise-stat-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .enterprise-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @keyframes topology-flow-dash {
@@ -100,9 +245,8 @@ a {
 
 .topology-stage {
   background:
-    radial-gradient(circle at 14% 12%, color-mix(in oklab, var(--accent) 12%, transparent) 0, transparent 28%),
-    radial-gradient(circle at 84% 18%, color-mix(in oklab, var(--success) 10%, transparent) 0, transparent 24%),
-    linear-gradient(180deg, color-mix(in oklab, var(--surface) 86%, white 14%), color-mix(in oklab, var(--panel) 96%, transparent));
+    radial-gradient(circle at 14% 12%, color-mix(in oklab, var(--accent) 6%, transparent) 0, transparent 22%),
+    linear-gradient(180deg, color-mix(in oklab, var(--surface) 96%, white 4%), color-mix(in oklab, var(--panel) 98%, transparent));
 }
 
 .topology-stage::before {
@@ -113,7 +257,7 @@ a {
     linear-gradient(color-mix(in oklab, var(--border) 52%, transparent) 1px, transparent 1px),
     linear-gradient(90deg, color-mix(in oklab, var(--border) 52%, transparent) 1px, transparent 1px);
   background-size: 28px 28px;
-  opacity: 0.16;
+  opacity: 0.12;
   pointer-events: none;
 }
 

@@ -101,11 +101,11 @@ export function SignInPanel({
   }
 
   return (
-    <Card className="overflow-hidden rounded-[32px] border border-border bg-surface shadow-[0_20px_60px_-40px_rgba(15,23,42,0.35)]">
+    <Card className="surface-card overflow-hidden rounded-[32px] border-0">
       <Card.Content className="space-y-6 p-6 sm:p-8">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-3">
-            <Chip className="w-fit bg-foreground text-background">Admin access</Chip>
+            <Chip className="w-fit bg-panel text-foreground">Admin access</Chip>
             <div>
               <h2 className="text-2xl font-semibold tracking-[-0.03em] text-foreground sm:text-3xl">
                 Sign in to continue
@@ -115,7 +115,7 @@ export function SignInPanel({
               </p>
             </div>
           </div>
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-foreground text-background shadow-sm">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-border/70 bg-surface text-foreground shadow-[var(--field-shadow)]">
             <ShieldCheck size={20} />
           </div>
         </div>
@@ -132,9 +132,9 @@ export function SignInPanel({
         ) : null}
 
         {localAccountsEnabled || localRegistrationEnabled ? (
-          <div className="space-y-4 rounded-[28px] border border-border bg-background/70 p-5">
+          <div className="space-y-4 rounded-[28px] border border-border/80 bg-panel/55 p-5">
             {localRegistrationEnabled ? (
-              <div className="inline-flex w-full rounded-full border border-border bg-surface p-1 shadow-sm">
+              <div className="inline-flex w-full rounded-full border border-border/80 bg-surface/90 p-1 shadow-[var(--field-shadow)]">
                 <Button
                   className={[
                     "h-10 flex-1 rounded-full",
@@ -252,12 +252,12 @@ export function SignInPanel({
         ) : null}
 
         {error ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+          <div className="rounded-2xl border border-warning/30 bg-warning/12 px-4 py-3 text-sm text-warning-foreground">
             {error}
           </div>
         ) : null}
         {success ? (
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">
+          <div className="rounded-2xl border border-success/30 bg-success/12 px-4 py-3 text-sm text-success-foreground">
             {success}
           </div>
         ) : null}

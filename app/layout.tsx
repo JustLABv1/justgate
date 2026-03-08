@@ -2,12 +2,13 @@ import { AppShell } from "@/components/app-shell";
 import { ThemeProvider } from "@/components/theme-provider";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
-import { Geist, JetBrains_Mono } from "next/font/google";
+import { JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 
-const sans = Geist({
+const sans = Space_Grotesk({
   variable: "--font-body-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "700"],
 });
 
 const mono = JetBrains_Mono({
@@ -30,8 +31,8 @@ export default async function RootLayout({
   const signedInUser = session?.user?.email || session?.user?.name || null;
 
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${sans.variable} ${mono.variable} antialiased`}>
+    <html lang="en" className="light" data-theme="light" suppressHydrationWarning>
+      <body className={`${sans.variable} ${mono.variable} min-h-screen bg-background text-foreground antialiased`}>
         <ThemeProvider>
           <AppShell signedInUser={signedInUser}>{children}</AppShell>
         </ThemeProvider>

@@ -91,45 +91,57 @@ export function CreateTenantForm({ existingCount, disabled = false, isOpen, onOp
       )}
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
-          <Modal.Dialog>
+          <Modal.Dialog className="rounded-[28px] border border-border bg-overlay/96 shadow-[var(--overlay-shadow)]">
             <Modal.CloseTrigger />
             <Modal.Header>
               <div className="flex w-full items-center justify-between gap-3">
                 <div>
-                  <div className="text-xs font-medium text-muted-foreground">Step 1</div>
-                  <Modal.Heading className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-foreground">Create tenant</Modal.Heading>
-                  <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                  <div className="enterprise-kicker">Step 1</div>
+                  <Modal.Heading className="mt-2 text-[1.9rem] font-semibold tracking-[-0.04em] text-foreground">Create tenant</Modal.Heading>
+                  <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
                     First define the tenant itself. Routes and tokens depend on this record.
                   </p>
                 </div>
-                <Chip className="bg-foreground text-background">{existingCount} configured</Chip>
+                <Chip className="border border-border bg-panel text-foreground">{existingCount} configured</Chip>
+              </div>
+              <div className="enterprise-panel mt-5 w-full px-4 py-3">
+                <div className="enterprise-kicker">Boundary</div>
+                <div className="mt-1 text-sm font-semibold text-foreground">Each tenant maps to one upstream endpoint and one injected header identity.</div>
               </div>
             </Modal.Header>
             <Modal.Body>
-              <Form className="grid gap-4" onSubmit={handleSubmit}>
-                <TextField className="grid gap-2">
-                  <Label>Tenant name</Label>
-                  <Input placeholder="Acme Observability" required value={formState.name} onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} />
-                </TextField>
-                <TextField className="grid gap-2">
-                  <Label>Tenant ID</Label>
-                  <Input placeholder="acme-prod" required value={formState.tenantID} onChange={(event) => setFormState((current) => ({ ...current, tenantID: event.target.value }))} />
-                </TextField>
-                <TextField className="grid gap-2">
-                  <Label>Upstream URL</Label>
-                  <Input placeholder="https://mimir.internal.example" required type="url" value={formState.upstreamURL} onChange={(event) => setFormState((current) => ({ ...current, upstreamURL: event.target.value }))} />
-                </TextField>
-                <TextField className="grid gap-2">
-                  <Label>Injected header</Label>
-                  <Input required value={formState.headerName} onChange={(event) => setFormState((current) => ({ ...current, headerName: event.target.value }))} />
-                </TextField>
-                {error ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">{error}</div> : null}
+              <Form className="grid gap-5" onSubmit={handleSubmit}>
+                <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
+                  <TextField className="grid gap-2">
+                    <Label>Tenant name</Label>
+                    <Input placeholder="Acme Observability" required value={formState.name} onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} />
+                    <div className="enterprise-note">Readable label for operators.</div>
+                  </TextField>
+                  <TextField className="grid gap-2">
+                    <Label>Tenant ID</Label>
+                    <Input placeholder="acme-prod" required value={formState.tenantID} onChange={(event) => setFormState((current) => ({ ...current, tenantID: event.target.value }))} />
+                    <div className="enterprise-note">Stable machine identifier.</div>
+                  </TextField>
+                </div>
+                <div className="enterprise-panel grid gap-4 p-4">
+                  <TextField className="grid gap-2">
+                    <Label>Upstream URL</Label>
+                    <Input placeholder="https://mimir.internal.example" required type="url" value={formState.upstreamURL} onChange={(event) => setFormState((current) => ({ ...current, upstreamURL: event.target.value }))} />
+                    <div className="enterprise-note">Base upstream origin for tenant traffic.</div>
+                  </TextField>
+                  <TextField className="grid gap-2">
+                    <Label>Injected header</Label>
+                    <Input required value={formState.headerName} onChange={(event) => setFormState((current) => ({ ...current, headerName: event.target.value }))} />
+                    <div className="enterprise-note">Tenant identity header added upstream.</div>
+                  </TextField>
+                </div>
+                {error ? <div className="enterprise-feedback enterprise-feedback--error">{error}</div> : null}
                 {createdTenant ? (
-                  <div className="rounded-[1.5rem] border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-950 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">
+                  <div className="enterprise-feedback enterprise-feedback--success">
                     Tenant {createdTenant.tenantID} is available and will appear in the Go-backed inventory after refresh.
                   </div>
                 ) : null}
-                <Button className="mt-2 w-full bg-foreground text-background" isDisabled={isPending} type="submit">
+                <Button className="mt-1 h-11 w-full rounded-[1rem] bg-foreground text-background" isDisabled={isPending} type="submit">
                   {isPending ? "Creating tenant..." : "Create tenant and continue"}
                 </Button>
               </Form>

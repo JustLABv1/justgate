@@ -4,7 +4,6 @@ import {
     fallbackOverview,
     fallbackRoutes,
     fallbackTenants,
-  fallbackTopology,
     fallbackTokens,
     type AdminOverview,
     type AuditEvent,

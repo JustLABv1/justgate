@@ -3,7 +3,8 @@
 import { DeleteTokenButton } from "@/components/admin/delete-token-button";
 import { RevokeTokenButton } from "@/components/admin/revoke-token-button";
 import type { TokenSummary } from "@/lib/contracts";
-import { Card, Chip } from "@heroui/react";
+import { Card } from "@heroui/react";
+import { Shield, Clock, Activity, KeyRound } from "lucide-react";
 
 interface TokensTableProps {
   tokens: TokenSummary[];
@@ -11,41 +12,73 @@ interface TokensTableProps {
 }
 
 export function TokensTable({ tokens, actionsDisabled = false }: TokensTableProps) {
+  if (tokens.length === 0) {
+    return (
+      <div className="enterprise-empty-state">
+        <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+          <KeyRound size={14} />
+          No issued credentials
+        </div>
+        <div className="enterprise-empty-state__title">No tokens have been issued yet.</div>
+        <div className="enterprise-empty-state__copy">
+          Issue the first tenant-scoped credential after routes are defined. Secrets are shown once, while the control plane retains only the hashed record and metadata.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
-      {tokens.map((token) => (
-        <Card key={token.id} className="rounded-[28px] border border-border bg-background shadow-none">
-          <Card.Content className="space-y-5 p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="font-medium text-foreground">{token.name}</div>
-                <div className="mt-1 text-sm text-muted-foreground">{token.preview}</div>
+      {tokens.map((token, idx) => (
+        <Card key={token.id} variant="transparent" className="surface-card-muted group relative overflow-hidden rounded-[22px] border-0 p-4 transition-all animate-in fade-in slide-in-from-left-4 duration-500 fill-mode-both" style={{ animationDelay: `${idx * 40}ms` }}>
+          <Card.Content className="relative z-10 p-0 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-[1rem] border transition-colors ${token.active ? "border-success/30 bg-success/10 text-success" : "border-warning/30 bg-warning/10 text-warning"}`}>
+                  <Shield size={18} className={token.active ? "animate-pulse" : ""} />
+                </div>
+                <div>
+                   <div className="text-base font-semibold tracking-tight text-foreground">{token.name}</div>
+                   <div className="mt-0.5 font-mono text-xs font-medium text-muted-foreground">{token.preview}</div>
+                </div>
               </div>
-              <div className="flex flex-wrap items-start gap-2">
-                <Chip className="bg-surface text-foreground ring-1 ring-border">{token.tenantID}</Chip>
-                <Chip className={token.active ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-100" : "bg-amber-100 text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"}>
-                  {token.active ? "active" : "revoked"}
-                </Chip>
-                {token.active ? <RevokeTokenButton tokenID={token.id} disabled={actionsDisabled} label="Revoke" /> : null}
-                <DeleteTokenButton tokenID={token.id} disabled={actionsDisabled} />
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-col items-end gap-0.5 px-3">
+                   <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">Tenant anchor</div>
+                   <div className="text-sm font-semibold text-foreground">{token.tenantID}</div>
+                </div>
+                <div className="mx-1 h-8 w-px bg-border/40" />
+                <div className="flex gap-2">
+                   {token.active ? <RevokeTokenButton tokenID={token.id} disabled={actionsDisabled} label="Revoke" /> : null}
+                   <DeleteTokenButton tokenID={token.id} disabled={actionsDisabled} />
+                </div>
               </div>
             </div>
-            <div className="grid gap-4 md:grid-cols-[1.5fr_0.9fr_1fr]">
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Scopes</div>
-                <div className="mt-2 flex flex-wrap gap-2">
+
+            <div className="grid gap-4 border-t border-border/55 pt-3.5 md:grid-cols-3">
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">Authorized scopes</div>
+                <div className="flex flex-wrap gap-1.5">
                   {token.scopes.map((scope) => (
-                    <Chip key={scope} className="bg-surface text-foreground ring-1 ring-border">{scope}</Chip>
+                    <div key={scope} className="rounded-full border border-border/70 bg-surface/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                       {scope}
+                    </div>
                   ))}
                 </div>
               </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Expires</div>
-                <div className="mt-1 text-sm text-foreground">{new Date(token.expiresAt).toLocaleDateString()}</div>
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">Expiration</div>
+                <div className={`flex items-center gap-2 text-sm font-semibold ${new Date(token.expiresAt) < new Date() ? "text-danger" : "text-foreground"}`}>
+                   <Clock size={14} />
+                   {new Date(token.expiresAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                </div>
               </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Last used</div>
-                <div className="mt-1 text-sm text-foreground">{new Date(token.lastUsedAt).toLocaleString()}</div>
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">Last activity</div>
+                <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                   <Activity size={14} className="text-muted-foreground" />
+                   {new Date(token.lastUsedAt).toLocaleString([], { hour: '2-digit', minute: '2-digit' })}
+                </div>
               </div>
             </div>
           </Card.Content>

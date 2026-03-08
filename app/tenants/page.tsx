@@ -3,8 +3,8 @@ import { DeleteTenantButton } from "@/components/admin/delete-tenant-button";
 import { SectionPage } from "@/components/admin/section-page";
 import { UpdateTenantForm } from "@/components/admin/update-tenant-form";
 import { getTenants } from "@/lib/backend-client";
-import { Card, Chip, Surface } from "@heroui/react";
-import { ArrowRight, CheckCircle2, CircleDashed } from "lucide-react";
+import { Card } from "@heroui/react";
+import { ArrowRight, CheckCircle2, Globe, Shield, Activity } from "lucide-react";
 import Link from "next/link";
 
 export default async function TenantsPage() {
@@ -12,89 +12,114 @@ export default async function TenantsPage() {
 
   return (
     <SectionPage
-      eyebrow="Tenant inventory"
-      title="Tenant upstream bindings"
-      description="Tenants define the Mimir upstream target and the header contract that the Go proxy injects during forwarding."
+      eyebrow="Upstream Binding"
+      title="Global Tenant Registry"
+      description="Manage top-level organizational boundaries. Each tenant acts as an isolated namespace for routes and security tokens."
       source={result.source}
       error={result.error}
     >
-      <section className="flex flex-wrap items-center gap-3">
-        <CreateTenantForm disabled={result.source !== "backend"} existingCount={result.data.length} />
-        {result.source !== "backend" ? <div className="text-sm text-muted-foreground">Tenant changes are disabled while the page is showing fallback data.</div> : null}
-      </section>
+      <section className="grid gap-8 lg:grid-cols-[1fr_380px]">
+        <div className="space-y-6">
+          <div className="flex items-center justify-between gap-4 px-2 text-foreground">
+            <div className="flex items-center gap-3">
+              <Globe size={20} className="text-muted-foreground" />
+               <h2 className="text-xl font-semibold tracking-[-0.03em] leading-none">Registered realms</h2>
+            </div>
+            <CreateTenantForm disabled={result.source !== "backend"} existingCount={result.data.length} />
+          </div>
 
-      <section className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
-        <Surface className="rounded-[32px] border border-border bg-surface p-7 shadow-sm">
-          <div className="text-xs font-medium text-muted-foreground">Recommended order</div>
-          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-foreground">Start with the tenant record</h2>
-          <p className="mt-3 text-sm leading-7 text-muted-foreground">
-            Before routes or tokens exist, define where this tenant should proxy traffic and which tenant header the backend must inject upstream.
-          </p>
-          <div className="mt-6 space-y-4">
-            {[
-              { done: result.data.length > 0, title: "1. Create tenant", description: "Save the tenant name, tenant ID, upstream URL, and header." },
-              { done: false, title: "2. Create route", description: "After the tenant exists, open Routes and map a proxy slug to it." },
-              { done: false, title: "3. Issue token", description: "Only after a route exists should you generate operator or agent tokens." },
-            ].map((step) => (
-              <div key={step.title} className="flex gap-3 rounded-[24px] border border-border bg-background p-4">
-                <div className="mt-0.5 text-muted-foreground">
-                  {step.done ? <CheckCircle2 size={18} className="text-success" /> : <CircleDashed size={18} />}
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-foreground">{step.title}</div>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">{step.description}</p>
-                </div>
+          {result.data.length === 0 ? (
+            <div className="enterprise-empty-state">
+              <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+                <Globe size={14} />
+                No tenant boundaries
               </div>
+              <div className="enterprise-empty-state__title">The registry is empty.</div>
+              <div className="enterprise-empty-state__copy">
+                Start by creating the first tenant boundary. Each tenant defines the upstream destination and identity header used by routes and scoped credentials.
+              </div>
+            </div>
+          ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+            {result.data.map((tenant, idx) => (
+              <Card key={tenant.id} variant="transparent" className="surface-card group relative overflow-hidden rounded-[24px] border-0 p-5 transition-all animate-in fade-in slide-in-from-left-4 duration-500 fill-mode-both" style={{ animationDelay: `${idx * 50}ms` }}>
+                <div className="absolute right-[-10px] top-[-10px] opacity-[0.025] grayscale">
+                   <Shield size={120} />
+                </div>
+                
+                <Card.Content className="relative z-10 flex flex-col gap-4 p-0">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.24em] text-muted-foreground">Tenant binding</div>
+                      <div className="font-mono text-base font-semibold tracking-tight text-foreground uppercase">{tenant.tenantID}</div>
+                    </div>
+                    <div className="flex gap-2">
+                      <UpdateTenantForm key={`${tenant.id}:${tenant.tenantID}:${tenant.upstreamURL}:${tenant.headerName}:${tenant.name}`} disabled={result.source !== "backend"} tenant={tenant} />
+                      <DeleteTenantButton disabled={result.source !== "backend"} tenantID={tenant.tenantID} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">Upstream endpoint</div>
+                       <div className="font-mono text-xs font-semibold text-foreground truncate break-all">{tenant.upstreamURL}</div>
+                    </div>
+                    <div className="flex items-center gap-4 border-t border-border/35 pt-3">
+                     <div className="flex items-center gap-2 rounded-full border border-border/80 bg-panel/70 px-3 py-1 text-[10px] font-medium text-muted-foreground">
+                         <Activity size={10} className="text-success" />
+                       Header key
+                      </div>
+                     <div className="flex items-center gap-2 font-mono text-[11px] font-semibold text-foreground">
+                       <Shield size={14} className="text-muted-foreground" />
+                         {tenant.headerName}
+                      </div>
+                    </div>
+                  </div>
+                </Card.Content>
+              </Card>
             ))}
           </div>
-          <Link href="/routes" className="mt-6 inline-flex items-center gap-2 text-sm font-medium text-foreground">
-            Continue to routes
-            <ArrowRight size={14} />
-          </Link>
-        </Surface>
-      </section>
+          )}
+        </div>
 
-      <section className="space-y-4">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="text-xs font-medium text-muted-foreground">Current tenants</div>
-            <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-foreground">Configured upstream bindings</h2>
+        <aside className="space-y-8">
+          <div className="surface-card rounded-[32px] border-0 p-8 relative overflow-hidden">
+            <div className="absolute inset-x-0 top-0 h-20 bg-[linear-gradient(180deg,rgba(100,116,139,0.06),transparent)]" />
+            
+            <h2 className="relative z-10 mb-6 text-lg font-semibold tracking-[-0.03em] text-foreground">Workflow sequence</h2>
+            <div className="relative z-10 space-y-6">
+              {[
+                { done: result.data.length > 0, title: "Identity Definition", description: "Establish the primary tenant ID and upstream URL link." },
+                { done: false, title: "Routing Logic", description: "Map proxy slugs to this tenant in the Routes panel." },
+                { done: false, title: "Credential Issuance", description: "Generate secure access tokens for agents or operators." },
+              ].map((step, idx) => (
+                <div key={step.title} className="flex gap-4 group">
+                  <div className="flex flex-col items-center gap-2">
+                    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border transition-all ${step.done ? "border-success/50 bg-success/10 text-success" : "border-border/80 bg-panel/70 text-muted-foreground"}`}>
+                      {step.done ? <CheckCircle2 size={14} strokeWidth={3} /> : <span className="text-[10px] font-black">{idx + 1}</span>}
+                    </div>
+                    {idx < 2 && <div className="w-px flex-1 bg-border/40" />}
+                  </div>
+                  <div className="pb-4 text-foreground">
+                    <div className={`text-sm font-semibold tracking-[-0.02em] ${step.done ? "text-success" : ""}`}>{step.title}</div>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground transition-colors">{step.description}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-          <Chip className="bg-background text-foreground ring-1 ring-border">{result.data.length} tenants</Chip>
-        </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          {result.data.map((tenant) => (
-            <Card key={tenant.id} className="rounded-[32px] border border-border bg-surface shadow-sm">
-              <Card.Content className="space-y-5 p-6">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">{tenant.tenantID}</div>
-                    <div className="mt-1 text-xl font-semibold text-foreground">{tenant.name}</div>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Chip className="bg-background text-foreground ring-1 ring-border">{tenant.authMode}</Chip>
-                    <UpdateTenantForm disabled={result.source !== "backend"} tenant={tenant} />
-                    <DeleteTenantButton disabled={result.source !== "backend"} tenantID={tenant.id} />
-                  </div>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Upstream</div>
-                    <div className="mt-1 font-mono text-sm text-foreground break-all">{tenant.upstreamURL}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Injected header</div>
-                    <div className="mt-1 text-sm text-foreground">{tenant.headerName}</div>
-                  </div>
-                </div>
-                <div className="rounded-[24px] border border-border bg-background px-4 py-3 text-sm text-muted-foreground">
-                  Next step: create a route that points at <span className="font-medium text-foreground">{tenant.tenantID}</span>.
-                </div>
-              </Card.Content>
-            </Card>
-          ))}
-        </div>
+           <Link href="/routes" className="surface-card group flex items-center justify-between rounded-[30px] border-0 p-6 transition-all active:scale-95 overflow-hidden relative">
+            <div className="absolute right-[-10px] top-[-10px] opacity-10 text-accent">
+               <ArrowRight size={80} />
+            </div>
+            <div className="relative z-10 flex flex-col text-foreground">
+               <span className="mb-1 text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground">Bridge interface</span>
+              <span className="text-sm font-semibold">Configure proxy routes</span>
+            </div>
+            <ArrowRight size={18} className="text-muted-foreground" />
+          </Link>
+        </aside>
       </section>
     </SectionPage>
   );

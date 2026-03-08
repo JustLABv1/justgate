@@ -117,63 +117,72 @@ export function CreateTokenForm({
       )}
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
-          <Modal.Dialog>
+          <Modal.Dialog className="rounded-[28px] border border-border bg-overlay/96 shadow-[var(--overlay-shadow)]">
             <Modal.CloseTrigger />
             <Modal.Header>
               <div className="flex w-full items-center justify-between gap-3">
                 <div>
-                  <Modal.Heading className="text-2xl font-semibold tracking-[-0.03em] text-foreground">Issue token</Modal.Heading>
-                  <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                  <div className="enterprise-kicker">Issue credential</div>
+                  <Modal.Heading className="mt-2 text-[1.9rem] font-semibold tracking-[-0.04em] text-foreground">Issue token</Modal.Heading>
+                  <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
                     Go generates the credential, stores only the hash, and returns the secret once for operator handoff.
                   </p>
                 </div>
-                <Chip className="bg-foreground text-background">{existingCount} known</Chip>
+                <Chip className="border border-border bg-panel text-foreground">{existingCount} known</Chip>
+              </div>
+              <div className="enterprise-panel mt-5 w-full px-4 py-3">
+                <div className="enterprise-kicker">Security</div>
+                <div className="mt-1 text-sm font-semibold text-foreground">The secret is shown once and only the hash persists in storage.</div>
               </div>
             </Modal.Header>
             <Modal.Body>
-              <Form className="grid gap-4" onSubmit={handleSubmit}>
-                <TextField className="grid gap-2">
-                  <Label>Token name</Label>
-                  <Input placeholder="grafana-writer" required value={formState.name} onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} />
-                  <div className="text-xs text-muted-foreground">Use a name that explains who will use this token, for example `grafana-prod-agent`.</div>
-                </TextField>
-                <Select className="w-full" isRequired placeholder="Select tenant" value={formState.tenantID} variant="secondary" onChange={(value) => setFormState((current) => ({ ...current, tenantID: String(value) }))}>
-                  <Label>Tenant ID</Label>
-                  <Select.Trigger>
-                    <Select.Value />
-                    <Select.Indicator />
-                  </Select.Trigger>
-                  <Select.Popover>
-                    <ListBox>
-                      {tenantIDs.map((tenantID) => (
-                        <ListBox.Item key={tenantID} id={tenantID} textValue={tenantID}>
-                          {tenantID}
-                          <ListBox.ItemIndicator />
-                        </ListBox.Item>
-                      ))}
-                    </ListBox>
-                  </Select.Popover>
-                </Select>
-                <div className="text-xs text-muted-foreground">This token will only work for the selected tenant.</div>
-                <TextField className="grid gap-2">
-                  <Label>Scopes</Label>
-                  <Input placeholder="metrics:write, rules:read" required value={formState.scopes} onChange={(event) => setFormState((current) => ({ ...current, scopes: event.target.value }))} />
-                  <div className="text-xs text-muted-foreground">Enter one or more permissions as a comma-separated list. They must match the scopes your routes require.</div>
-                </TextField>
-                <TextField className="grid gap-2">
-                  <Label>Expiration</Label>
-                  <Input required type="datetime-local" value={formState.expiresAt} onChange={(event) => setFormState((current) => ({ ...current, expiresAt: event.target.value }))} />
-                  <div className="text-xs text-muted-foreground">Pick the exact local date and time when this token should expire.</div>
-                </TextField>
-                {error ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">{error}</div> : null}
+              <Form className="grid gap-5" onSubmit={handleSubmit}>
+                <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
+                  <TextField className="grid gap-2">
+                    <Label>Token name</Label>
+                    <Input placeholder="grafana-writer" required value={formState.name} onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} />
+                    <div className="enterprise-note">Readable client or workload identifier.</div>
+                  </TextField>
+                  <Select className="w-full" isRequired placeholder="Select tenant" value={formState.tenantID} variant="secondary" onChange={(value) => setFormState((current) => ({ ...current, tenantID: String(value) }))}>
+                    <Label>Tenant ID</Label>
+                    <Select.Trigger>
+                      <Select.Value />
+                      <Select.Indicator />
+                    </Select.Trigger>
+                    <Select.Popover>
+                      <ListBox>
+                        {tenantIDs.map((tenantID) => (
+                          <ListBox.Item key={tenantID} id={tenantID} textValue={tenantID}>
+                            {tenantID}
+                            <ListBox.ItemIndicator />
+                          </ListBox.Item>
+                        ))}
+                      </ListBox>
+                    </Select.Popover>
+                  </Select>
+                  <div className="enterprise-note md:col-span-2">The token can only authorize calls for the selected tenant.</div>
+                </div>
+                <div className="enterprise-panel grid gap-4 p-4">
+                  <TextField className="grid gap-2">
+                    <Label>Scopes</Label>
+                    <Input placeholder="metrics:write, rules:read" required value={formState.scopes} onChange={(event) => setFormState((current) => ({ ...current, scopes: event.target.value }))} />
+                    <div className="enterprise-note">Comma-separated permissions that must satisfy route policy.</div>
+                  </TextField>
+                  <TextField className="grid gap-2">
+                    <Label>Expiration</Label>
+                    <Input required type="datetime-local" value={formState.expiresAt} onChange={(event) => setFormState((current) => ({ ...current, expiresAt: event.target.value }))} />
+                    <div className="enterprise-note">Local timestamp when the token becomes invalid.</div>
+                  </TextField>
+                </div>
+                {error ? <div className="enterprise-feedback enterprise-feedback--error">{error}</div> : null}
                 {issuedToken ? (
-                  <div className="rounded-[1.5rem] border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-950 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">
+                  <div className="enterprise-feedback enterprise-feedback--success">
                     <div className="font-medium">One-time secret</div>
-                    <div className="mt-2 font-mono text-sm break-all">{issuedToken.secret}</div>
+                    <div className="mt-2 rounded-[0.9rem] border border-border/70 bg-background/75 px-3 py-3 font-mono text-sm break-all text-foreground">{issuedToken.secret}</div>
                     <div className="mt-2">Preview: {issuedToken.token.preview}</div>
                   </div>
                 ) : null}
-                <Button className="mt-2 w-full bg-foreground text-background" isDisabled={isPending} type="submit">
+                <Button className="mt-1 h-11 w-full rounded-[1rem] bg-foreground text-background" isDisabled={isPending} type="submit">
                   {isPending ? "Issuing token..." : "Issue token"}
                 </Button>
               </Form>

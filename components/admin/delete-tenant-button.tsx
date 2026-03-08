@@ -36,10 +36,10 @@ export function DeleteTenantButton({ tenantID, label = "Delete", disabled = fals
 
   return (
     <div className="space-y-2">
-      <Button className="h-8 rounded-full bg-danger px-3 text-white" isDisabled={disabled || isPending} onPress={handleDelete} size="sm">
+      <Button className="h-8 rounded-full bg-danger px-3 text-danger-foreground" isDisabled={disabled || isPending} onPress={handleDelete} size="sm">
         {isPending ? "Deleting..." : label}
       </Button>
-      {error ? <div className="text-xs text-amber-800 dark:text-amber-200">{error}</div> : null}
+      {error ? <div className="text-xs text-warning">{error}</div> : null}
     </div>
   );
 }

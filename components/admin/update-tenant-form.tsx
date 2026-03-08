@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { Button, Form, Input, Label, Modal, TextField } from "@heroui/react";
 import { PenSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useState, useTransition } from "react";
+import { type FormEvent, useState, useTransition } from "react";
 
 interface UpdateTenantFormProps {
   tenant: TenantSummary;
@@ -31,12 +31,6 @@ export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isO
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState(tenant));
-
-  useEffect(() => {
-    setFormState(toFormState(tenant));
-    setError(undefined);
-    setSuccess(undefined);
-  }, [tenant]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -80,37 +74,46 @@ export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isO
       )}
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
-          <Modal.Dialog>
+          <Modal.Dialog className="rounded-[28px] border border-border bg-overlay/96 shadow-[var(--overlay-shadow)]">
             <Modal.CloseTrigger />
             <Modal.Header>
               <div>
-                <Modal.Heading className="text-2xl font-semibold tracking-[-0.03em] text-foreground">Edit tenant</Modal.Heading>
-                <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                <div className="enterprise-kicker">Update tenant</div>
+                <Modal.Heading className="mt-2 text-[1.9rem] font-semibold tracking-[-0.04em] text-foreground">Edit tenant</Modal.Heading>
+                <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
                   Change the upstream target or header for {tenant.tenantID}.
                 </p>
               </div>
             </Modal.Header>
             <Modal.Body>
-              <Form className="grid gap-4" onSubmit={handleSubmit}>
-                <TextField className="grid gap-2">
-                  <Label>Tenant name</Label>
-                  <Input onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} value={formState.name} />
-                </TextField>
-                <TextField className="grid gap-2">
-                  <Label>Tenant ID</Label>
-                  <Input onChange={(event) => setFormState((current) => ({ ...current, tenantID: event.target.value }))} value={formState.tenantID} />
-                </TextField>
-                <TextField className="grid gap-2">
-                  <Label>Upstream URL</Label>
-                  <Input onChange={(event) => setFormState((current) => ({ ...current, upstreamURL: event.target.value }))} value={formState.upstreamURL} />
-                </TextField>
-                <TextField className="grid gap-2">
-                  <Label>Injected header</Label>
-                  <Input onChange={(event) => setFormState((current) => ({ ...current, headerName: event.target.value }))} value={formState.headerName} />
-                </TextField>
-                {error ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">{error}</div> : null}
-                {success ? <div className="rounded-[1.5rem] border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-950 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">{success}</div> : null}
-                <Button className="mt-2 w-full bg-foreground text-background" isDisabled={isPending} type="submit">
+              <Form className="grid gap-5" onSubmit={handleSubmit}>
+                <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
+                  <TextField className="grid gap-2">
+                    <Label>Tenant name</Label>
+                    <Input onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} value={formState.name} />
+                    <div className="enterprise-note">Readable operator label.</div>
+                  </TextField>
+                  <TextField className="grid gap-2">
+                    <Label>Tenant ID</Label>
+                    <Input onChange={(event) => setFormState((current) => ({ ...current, tenantID: event.target.value }))} value={formState.tenantID} />
+                    <div className="enterprise-note">Stable machine identifier.</div>
+                  </TextField>
+                </div>
+                <div className="enterprise-panel grid gap-4 p-4">
+                  <TextField className="grid gap-2">
+                    <Label>Upstream URL</Label>
+                    <Input onChange={(event) => setFormState((current) => ({ ...current, upstreamURL: event.target.value }))} value={formState.upstreamURL} />
+                    <div className="enterprise-note">Tenant traffic destination origin.</div>
+                  </TextField>
+                  <TextField className="grid gap-2">
+                    <Label>Injected header</Label>
+                    <Input onChange={(event) => setFormState((current) => ({ ...current, headerName: event.target.value }))} value={formState.headerName} />
+                    <div className="enterprise-note">Identity header attached upstream.</div>
+                  </TextField>
+                </div>
+                {error ? <div className="enterprise-feedback enterprise-feedback--error">{error}</div> : null}
+                {success ? <div className="enterprise-feedback enterprise-feedback--success">{success}</div> : null}
+                <Button className="mt-1 h-11 w-full rounded-[1rem] bg-foreground text-background" isDisabled={isPending} type="submit">
                   {isPending ? "Saving tenant..." : "Save tenant changes"}
                 </Button>
               </Form>

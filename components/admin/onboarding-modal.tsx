@@ -2,7 +2,6 @@
 
 import { 
   Button, 
-  Chip, 
   Form, 
   Input, 
   Label, 
@@ -12,7 +11,7 @@ import {
   TextField,
   Tabs
 } from "@heroui/react";
-import { Plus, CheckCircle2, ArrowRight, Save, Key, Settings, Users } from "lucide-react";
+import { Plus, CheckCircle2, ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type FormEvent } from "react";
 import type { TenantSummary, IssuedToken } from "@/lib/contracts";
@@ -35,6 +34,7 @@ function toApiExpiryFromDays(value: string) {
 
 export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModalProps) {
   const router = useRouter();
+  const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("tenant");
   const [isPending, startTransition] = useTransition();
   
@@ -51,6 +51,17 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
   const [issuedToken, setIssuedToken] = useState<IssuedToken>();
 
   const [localTenantIDs, setLocalTenantIDs] = useState<string[]>(tenantIDs);
+
+  function resetWizard() {
+    setActiveTab("tenant");
+    setTenantError(undefined);
+    setCreatedTenant(undefined);
+    setRouteError(undefined);
+    setRouteSuccess(undefined);
+    setTokenError(undefined);
+    setIssuedToken(undefined);
+    setLocalTenantIDs(tenantIDs);
+  }
 
   async function handleTenantSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -155,19 +166,45 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
   }
 
   return (
-    <Modal>
-      <Button className="bg-foreground text-background rounded-full px-6" isDisabled={disabled}>
+    <Modal
+      isOpen={isOpen}
+      onOpenChange={(open) => {
+        setIsOpen(open);
+        if (!open) {
+          resetWizard();
+        }
+      }}
+    >
+      <Button className="rounded-full bg-foreground px-6 text-background" isDisabled={disabled} onPress={() => setIsOpen(true)}>
         <Plus size={16} />
         Onboard Tenant
       </Button>
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
-          <Modal.Dialog>
+          <Modal.Dialog className="rounded-[30px] border border-border bg-overlay/96 shadow-[var(--overlay-shadow)]">
             <Modal.CloseTrigger />
             <Modal.Header>
-              <div className="space-y-1">
-                <Modal.Heading className="text-2xl font-semibold tracking-[-0.03em]">Onboarding Wizard</Modal.Heading>
-                <p className="text-sm text-muted-foreground">Create the tenant first, then attach a route, then issue a token that is limited to that tenant and route scope.</p>
+              <div className="space-y-2">
+                <div className="enterprise-kicker">Guided setup</div>
+                <Modal.Heading className="text-[1.9rem] font-semibold tracking-[-0.04em]">Onboarding Wizard</Modal.Heading>
+                <p className="max-w-2xl text-sm leading-6 text-muted-foreground">Create the tenant first, then attach a route, then issue a token that is limited to that tenant and route scope.</p>
+                <div className="enterprise-stat-grid pt-2">
+                  {[
+                    { label: "Tenant", done: Boolean(createdTenant) },
+                    { label: "Route", done: Boolean(routeSuccess) },
+                    { label: "Token", done: Boolean(issuedToken) },
+                  ].map((step, index) => (
+                    <div key={step.label} className="enterprise-panel flex items-center justify-between px-4 py-3">
+                      <div>
+                        <div className="enterprise-kicker">Step {index + 1}</div>
+                        <div className="mt-1 text-sm font-semibold text-foreground">{step.label}</div>
+                      </div>
+                      <div className={`flex h-8 w-8 items-center justify-center rounded-full border ${step.done ? "border-success/30 bg-success/12 text-success" : "border-border bg-background/80 text-muted-foreground"}`}>
+                        {step.done ? <CheckCircle2 size={15} /> : index + 1}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </Modal.Header>
             <Modal.Body className="pb-8">
@@ -178,20 +215,20 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                 className="w-full"
                 variant="secondary"
               >
-                <Tabs.List className="mb-6 w-full justify-start gap-8">
-                  <Tabs.Tab id="tenant" className="flex items-center gap-2 py-3 px-0 outline-none">
+                <Tabs.List className="mb-6 w-full justify-start gap-6 border-b border-border/80 pb-2">
+                  <Tabs.Tab id="tenant" className="flex items-center gap-2 py-2.5 px-0 outline-none">
                     <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${createdTenant ? 'bg-success text-success-foreground' : 'bg-muted text-muted-foreground'}`}>
                       {createdTenant ? <CheckCircle2 size={14} /> : "1"}
                     </div>
                     <span className="font-medium">Tenant</span>
                   </Tabs.Tab>
-                  <Tabs.Tab id="route" className="flex items-center gap-2 py-3 px-0 outline-none">
+                  <Tabs.Tab id="route" className="flex items-center gap-2 py-2.5 px-0 outline-none">
                     <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${routeSuccess ? 'bg-success text-success-foreground' : 'bg-muted text-muted-foreground'}`}>
                       {routeSuccess ? <CheckCircle2 size={14} /> : "2"}
                     </div>
                     <span className="font-medium">Route</span>
                   </Tabs.Tab>
-                  <Tabs.Tab id="token" className="flex items-center gap-2 py-3 px-0 outline-none">
+                  <Tabs.Tab id="token" className="flex items-center gap-2 py-2.5 px-0 outline-none">
                     <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${issuedToken ? 'bg-success text-success-foreground' : 'bg-muted text-muted-foreground'}`}>
                       {issuedToken ? <CheckCircle2 size={14} /> : "3"}
                     </div>
@@ -206,7 +243,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                       <p className="text-sm text-muted-foreground">Define where traffic for this customer or environment should go and which tenant header the proxy should inject upstream.</p>
                     </div>
                     {createdTenant ? (
-                      <div className="rounded-2xl border border-success/30 bg-success/5 p-6 text-center space-y-4">
+                      <div className="enterprise-feedback enterprise-feedback--success space-y-4 p-6 text-center">
                         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success/20 text-success">
                           <CheckCircle2 size={24} />
                         </div>
@@ -223,33 +260,35 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                         </Button>
                       </div>
                     ) : (
-                      <Form className="grid gap-4" onSubmit={handleTenantSubmit}>
-                        <div className="grid gap-4 md:grid-cols-2">
+                      <Form className="grid gap-5" onSubmit={handleTenantSubmit}>
+                        <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
                           <TextField className="grid gap-2">
                             <Label>Tenant name</Label>
                             <Input name="name" placeholder="Acme Observability" required variant="secondary" />
-                            <div className="text-xs text-muted-foreground">Friendly label shown in the admin UI.</div>
+                            <div className="enterprise-note">Friendly label shown in the admin UI.</div>
                           </TextField>
                           <TextField className="grid gap-2">
                             <Label>Tenant ID</Label>
                             <Input name="tenantID" placeholder="acme-prod" required variant="secondary" />
-                            <div className="text-xs text-muted-foreground">Stable machine identifier that will be injected into the upstream tenant header.</div>
+                            <div className="enterprise-note">Stable machine identifier that will be injected into the upstream tenant header.</div>
                           </TextField>
                         </div>
-                        <TextField className="grid gap-2">
-                          <Label>Upstream URL</Label>
-                          <Input name="upstreamURL" placeholder="https://mimir.internal.example" required type="url" variant="secondary" />
-                          <div className="text-xs text-muted-foreground">Base URL of the backend that should receive this tenant's traffic, for example your Mimir, Loki, or Tempo endpoint.</div>
-                        </TextField>
-                        <TextField className="grid gap-2">
-                          <Label>Injected header</Label>
-                          <Input name="headerName" defaultValue="X-Scope-OrgID" required variant="secondary" />
-                          <div className="text-xs text-muted-foreground">Header name the proxy adds upstream to represent the tenant. For Grafana backends this is usually `X-Scope-OrgID`.</div>
-                        </TextField>
+                        <div className="enterprise-panel grid gap-4 p-4">
+                          <TextField className="grid gap-2">
+                            <Label>Upstream URL</Label>
+                            <Input name="upstreamURL" placeholder="https://mimir.internal.example" required type="url" variant="secondary" />
+                            <div className="enterprise-note">Base URL of the backend that should receive this tenant&apos;s traffic, for example your Mimir, Loki, or Tempo endpoint.</div>
+                          </TextField>
+                          <TextField className="grid gap-2">
+                            <Label>Injected header</Label>
+                            <Input name="headerName" defaultValue="X-Scope-OrgID" required variant="secondary" />
+                            <div className="enterprise-note">Header name the proxy adds upstream to represent the tenant. For Grafana backends this is usually X-Scope-OrgID.</div>
+                          </TextField>
+                        </div>
                         {tenantError && (
-                          <div className="rounded-xl bg-danger/10 p-3 text-xs text-danger">{tenantError}</div>
+                          <div className="enterprise-feedback enterprise-feedback--error">{tenantError}</div>
                         )}
-                        <Button type="submit" className="bg-foreground text-background mt-2" isDisabled={isPending}>
+                        <Button type="submit" className="mt-1 h-11 rounded-[1rem] bg-foreground text-background" isDisabled={isPending}>
                           {isPending ? "Creating..." : "Save Tenant"}
                         </Button>
                       </Form>
@@ -264,7 +303,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                       <p className="text-sm text-muted-foreground">Create the public proxy entry point that agents or operators will call for this tenant.</p>
                     </div>
                     {routeSuccess ? (
-                      <div className="rounded-2xl border border-success/30 bg-success/5 p-6 text-center space-y-4">
+                      <div className="enterprise-feedback enterprise-feedback--success space-y-4 p-6 text-center">
                         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success/20 text-success">
                           <CheckCircle2 size={24} />
                         </div>
@@ -281,12 +320,12 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                         </Button>
                       </div>
                     ) : (
-                      <Form className="grid gap-4" onSubmit={handleRouteSubmit}>
-                        <div className="grid gap-4 md:grid-cols-2">
+                      <Form className="grid gap-5" onSubmit={handleRouteSubmit}>
+                        <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
                           <TextField className="grid gap-2">
                             <Label>Proxy slug</Label>
                             <Input name="slug" placeholder="metrics-ingest" required variant="secondary" />
-                            <div className="text-xs text-muted-foreground">Becomes the public path `/proxy/&lt;slug&gt;`. Keep it short and stable.</div>
+                            <div className="enterprise-note">Becomes the public path /proxy/&lt;slug&gt;. Keep it short and stable.</div>
                           </TextField>
                           <Select className="w-full" isRequired name="tenantID" defaultValue={createdTenant?.tenantID} variant="secondary">
                             <Label>Tenant ID</Label>
@@ -304,29 +343,29 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                               </ListBox>
                             </Select.Popover>
                           </Select>
-                          <div className="text-xs text-muted-foreground">Choose which tenant this route should forward to.</div>
+                            <div className="enterprise-note md:col-span-2">Choose which tenant this route should forward to.</div>
                         </div>
-                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
                           <TextField className="grid gap-2">
                             <Label>Target path</Label>
                             <Input name="targetPath" defaultValue="/" required variant="secondary" />
-                            <div className="text-xs text-muted-foreground">Path appended to the tenant upstream URL, for example `/api/v1/push`.</div>
+                              <div className="enterprise-note">Path appended to the tenant upstream URL, for example /api/v1/push.</div>
                           </TextField>
                           <TextField className="grid gap-2">
                             <Label>Required scope</Label>
                             <Input name="requiredScope" placeholder="metrics:write" required variant="secondary" />
-                            <div className="text-xs text-muted-foreground">Permission a token must contain before it can call this route.</div>
+                              <div className="enterprise-note">Permission a token must contain before it can call this route.</div>
                           </TextField>
+                            <TextField className="grid gap-2 md:col-span-2">
+                              <Label>Allowed methods (comma separated)</Label>
+                              <Input name="methods" defaultValue="POST,PUT" required variant="secondary" />
+                              <div className="enterprise-note">HTTP verbs allowed on this route, for example POST or GET,POST.</div>
+                            </TextField>
                         </div>
-                        <TextField className="grid gap-2">
-                          <Label>Allowed methods (comma separated)</Label>
-                          <Input name="methods" defaultValue="POST,PUT" required variant="secondary" />
-                          <div className="text-xs text-muted-foreground">HTTP verbs allowed on this route, for example `POST` or `GET,POST`.</div>
-                        </TextField>
                         {routeError && (
-                          <div className="rounded-xl bg-danger/10 p-3 text-xs text-danger">{routeError}</div>
+                            <div className="enterprise-feedback enterprise-feedback--error">{routeError}</div>
                         )}
-                        <Button type="submit" className="bg-foreground text-background mt-2" isDisabled={isPending}>
+                          <Button type="submit" className="mt-1 h-11 rounded-[1rem] bg-foreground text-background" isDisabled={isPending}>
                           {isPending ? "Creating..." : "Save Route"}
                         </Button>
                       </Form>
@@ -341,7 +380,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                       <p className="text-sm text-muted-foreground">Create the credential that clients will use. The token should include the scope required by the route you just created.</p>
                     </div>
                     {issuedToken ? (
-                      <div className="rounded-2xl border border-success/30 bg-success/5 p-6 space-y-4">
+                      <div className="enterprise-feedback enterprise-feedback--success space-y-4 p-6">
                         <div className="flex items-center gap-3 text-success">
                           <CheckCircle2 size={24} />
                           <p className="font-semibold">Token Issued Successfully</p>
@@ -358,20 +397,20 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                         <div className="flex justify-end pt-4">
                           <Button 
                             variant="secondary"
-                            onPress={() => window.location.reload()}
+                            onPress={() => setIsOpen(false)}
                           >
                             Finish & Close
                           </Button>
                         </div>
                       </div>
                     ) : (
-                      <Form className="grid gap-4" onSubmit={handleTokenSubmit}>
-                        <TextField className="grid gap-2">
-                          <Label>Token name</Label>
-                          <Input name="name" placeholder="grafana-agent" required variant="secondary" />
-                          <div className="text-xs text-muted-foreground">Friendly label for the client or workload that will use this token.</div>
-                        </TextField>
-                        <div className="grid gap-4 md:grid-cols-2">
+                      <Form className="grid gap-5" onSubmit={handleTokenSubmit}>
+                        <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
+                          <TextField className="grid gap-2 md:col-span-2">
+                            <Label>Token name</Label>
+                            <Input name="name" placeholder="grafana-agent" required variant="secondary" />
+                            <div className="enterprise-note">Friendly label for the client or workload that will use this token.</div>
+                          </TextField>
                           <Select className="w-full" isRequired name="tenantID" defaultValue={createdTenant?.tenantID} variant="secondary">
                             <Label>Tenant ID</Label>
                             <Select.Trigger>
@@ -388,22 +427,24 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                               </ListBox>
                             </Select.Popover>
                           </Select>
-                          <div className="text-xs text-muted-foreground">This token can only be used with routes that belong to this tenant.</div>
                           <TextField className="grid gap-2">
                             <Label>Expires in (days)</Label>
                             <Input min="1" name="expiresAt" defaultValue="30" type="number" required variant="secondary" />
-                            <div className="text-xs text-muted-foreground">How many days from now the token should remain valid.</div>
+                            <div className="enterprise-note">How many days from now the token should remain valid.</div>
+                          </TextField>
+                          <div className="enterprise-note md:col-span-2">This token can only be used with routes that belong to this tenant.</div>
+                        </div>
+                        <div className="enterprise-panel grid gap-4 p-4">
+                          <TextField className="grid gap-2">
+                            <Label>Scopes (comma separated)</Label>
+                            <Input name="scopes" placeholder="metrics:write" defaultValue="metrics:write" required variant="secondary" />
+                            <div className="enterprise-note">Include at least the scope required by the route, for example metrics:write.</div>
                           </TextField>
                         </div>
-                        <TextField className="grid gap-2">
-                          <Label>Scopes (comma separated)</Label>
-                          <Input name="scopes" placeholder="metrics:write" defaultValue="metrics:write" required variant="secondary" />
-                          <div className="text-xs text-muted-foreground">Include at least the scope required by the route, for example `metrics:write`.</div>
-                        </TextField>
                         {tokenError && (
-                          <div className="rounded-xl bg-danger/10 p-3 text-xs text-danger">{tokenError}</div>
+                          <div className="enterprise-feedback enterprise-feedback--error">{tokenError}</div>
                         )}
-                        <Button type="submit" className="bg-foreground text-background mt-2" isDisabled={isPending}>
+                        <Button type="submit" className="mt-1 h-11 rounded-[1rem] bg-foreground text-background" isDisabled={isPending}>
                           {isPending ? "Issuing..." : "Issue Token"}
                         </Button>
                       </Form>

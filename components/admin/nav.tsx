@@ -25,7 +25,7 @@ export function AdminNav() {
   const router = useRouter();
 
   return (
-    <nav className="flex flex-col gap-1">
+    <nav className="flex flex-col gap-2">
       {links.map((link) => {
         const active = pathname === link.href;
 
@@ -33,20 +33,22 @@ export function AdminNav() {
           <Button
             key={link.href}
             variant="ghost"
-            className={`group relative h-11 justify-start gap-4 rounded-xl px-4 py-3 text-sm font-semibold transition-all duration-300 ${
+            className={`group relative h-14 justify-start gap-4 rounded-[22px] px-4 py-3 text-sm font-medium transition-all duration-300 ${
               active
-                ? "bg-accent/15 text-accent shadow-[inset_0_0_0_1px_rgba(0,163,255,0.2)]"
-                : "text-muted-foreground/80 hover:bg-surface/60 hover:text-foreground"
+                ? "border border-border/70 bg-surface text-foreground shadow-[var(--field-shadow)]"
+                : "text-muted-foreground hover:bg-panel/80 hover:text-foreground"
             }`}
             onPress={() => router.push(link.href)}
           >
             <link.icon 
               size={18} 
-              className={`transition-transform duration-300 group-hover:scale-110 ${active ? "text-accent stroke-[2.5px]" : ""}`}
+              className={`transition-transform duration-300 group-hover:scale-110 ${active ? "text-foreground stroke-[2.5px]" : "text-muted-foreground group-hover:text-foreground"}`}
             />
             <span className="flex-1 text-left">{link.label}</span>
             {active && (
-              <span className="absolute left-[-1px] top-1/4 h-1/2 w-1 rounded-full bg-accent" />
+              <span className="rounded-full bg-panel px-2 py-1 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+                Current
+              </span>
             )}
           </Button>
         );

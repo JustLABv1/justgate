@@ -695,10 +695,10 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
           : "Fallback snapshot";
 
   const chipClassName = streamStatus === "live"
-    ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-100"
+    ? "border border-success/25 bg-success/12 text-success"
     : streamStatus === "retrying" || streamStatus === "connecting"
-      ? "bg-amber-100 text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"
-      : "bg-background text-foreground ring-1 ring-border";
+      ? "border border-warning/25 bg-warning/12 text-warning-foreground"
+      : "border border-border bg-surface text-foreground";
 
   const inspectorTitle = selectedRouteForInspector
     ? selectedRouteForInspector.slug
@@ -726,14 +726,41 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
           ? "Dragging the graph camera."
           : "Drag the background to pan. Use the toolbar to create and connect entities directly on the map.";
 
+  const summaryMetrics = [
+    { label: "Tenants", value: snapshot.data.tenants.length },
+    { label: "Routes", value: snapshot.data.routes.length },
+    { label: "Active tokens", value: snapshot.data.tokens.filter((token) => token.active).length },
+    { label: "Recent audits", value: graph.recentAudits.length },
+  ];
+
+  const inspectorRows = selectedTenantForInspector
+    ? [
+        { label: "Tenant ID", value: selectedTenantForInspector.tenantID },
+        { label: "Header", value: selectedTenantForInspector.headerName },
+        { label: "Upstream", value: selectedTenantForInspector.upstreamURL },
+      ]
+    : selectedRouteForInspector
+      ? [
+          { label: "Tenant", value: selectedRouteForInspector.tenantID },
+          { label: "Scope", value: selectedRouteForInspector.requiredScope },
+          { label: "Methods", value: selectedRouteForInspector.methods.join(", ") },
+        ]
+      : selectedTokenForInspector
+        ? [
+            { label: "Tenant", value: selectedTokenForInspector.tenantID },
+            { label: "Scopes", value: selectedTokenForInspector.scopes.join(", ") },
+            { label: "Preview", value: selectedTokenForInspector.preview },
+          ]
+        : [];
+
   return (
     <div className="space-y-6">
-      <Surface className="overflow-hidden rounded-[32px] border border-border bg-surface p-6 shadow-sm sm:p-8">
+      <Surface className="overflow-hidden rounded-[28px] border border-border bg-surface p-5 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="text-xs font-medium text-muted-foreground">Topology workspace</div>
-            <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-foreground">Interactive tenant network</h2>
-            <p className="mt-3 max-w-3xl text-sm leading-7 text-muted-foreground">
+            <div className="enterprise-kicker">Topology workspace</div>
+            <h2 className="mt-2 text-[1.85rem] font-semibold tracking-[-0.045em] text-foreground">Interactive tenant network</h2>
+            <p className="mt-2.5 max-w-3xl text-sm leading-6 text-muted-foreground">
               Move around the graph with the mouse, inspect live connections, and create tenants, routes, or tokens directly in the network instead of leaving the workspace.
             </p>
           </div>
@@ -756,15 +783,24 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
           </div>
         </div>
 
-        <div className="mt-6 flex flex-wrap gap-3">
-          <Button className="h-10 rounded-full bg-foreground px-4 text-background" isDisabled={snapshot.source !== "backend"} onPress={() => {
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {summaryMetrics.map((metric) => (
+            <div key={metric.label} className="enterprise-panel px-4 py-3">
+              <div className="enterprise-kicker">{metric.label}</div>
+              <div className="mt-1 text-[1.6rem] font-semibold tracking-[-0.05em] text-foreground">{metric.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-3">
+          <Button className="h-10 rounded-full px-4" isDisabled={snapshot.source !== "backend"} variant="outline" onPress={() => {
             clearConnectionMode();
             setIsCreateTenantOpen(true);
           }}>
             <Plus size={14} />
             New tenant
           </Button>
-          <Button className={connectionMode?.kind === "route-from-tenant" ? "h-10 rounded-full bg-warning px-4 text-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
+          <Button className={connectionMode?.kind === "route-from-tenant" ? "h-10 rounded-full border border-warning/30 bg-warning/12 px-4 text-warning-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
             if (connectionMode?.kind === "route-from-tenant") {
               clearConnectionMode();
               return;
@@ -774,7 +810,7 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
             <Route size={14} />
             Route to tenant
           </Button>
-          <Button className={connectionMode?.kind === "token-from-tenant" ? "h-10 rounded-full bg-warning px-4 text-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
+          <Button className={connectionMode?.kind === "token-from-tenant" ? "h-10 rounded-full border border-warning/30 bg-warning/12 px-4 text-warning-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
             if (connectionMode?.kind === "token-from-tenant") {
               clearConnectionMode();
               return;
@@ -784,7 +820,7 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
             <KeyRound size={14} />
             Token to tenant
           </Button>
-          <Button className={connectionMode?.kind === "token-from-route" ? "h-10 rounded-full bg-warning px-4 text-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
+          <Button className={connectionMode?.kind === "token-from-route" ? "h-10 rounded-full border border-warning/30 bg-warning/12 px-4 text-warning-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
             if (connectionMode?.kind === "token-from-route") {
               clearConnectionMode();
               return;
@@ -796,10 +832,10 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
           </Button>
         </div>
 
-        <div className="topology-stage relative mt-6 overflow-hidden rounded-[30px] border border-border p-5">
+        <div className="topology-stage relative mt-5 overflow-hidden rounded-[24px] border border-border p-4">
           <div
             ref={viewportRef}
-            className={`relative min-h-[760px] overflow-hidden rounded-[26px] border border-border/80 bg-background/42 ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
+            className={`relative min-h-[680px] overflow-hidden rounded-[20px] border border-border/80 bg-background/42 ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
             onPointerDown={handleBackgroundPointerDown}
             onPointerMove={handleBackgroundPointerMove}
             onPointerUp={handleBackgroundPointerEnd}
@@ -852,45 +888,45 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
                 return (
                   <button
                     key={node.id}
-                    className="absolute rounded-[26px] border text-left transition-all duration-200 hover:-translate-y-1"
+                    className="absolute rounded-[20px] border text-left transition-all duration-200 hover:-translate-y-0.5"
                     style={{
                       left: node.x,
                       opacity: active ? 1 : 0.26,
                       top: node.y,
                       transform: "translate(-50%, -50%)",
-                      width: 290,
+                      width: 270,
                       background: selected
-                        ? "color-mix(in oklab, var(--accent) 8%, var(--surface))"
+                        ? "color-mix(in oklab, var(--panel) 88%, var(--surface))"
                         : node.kind === "draft"
-                          ? "color-mix(in oklab, var(--warning) 10%, var(--surface))"
+                          ? "color-mix(in oklab, var(--warning) 7%, var(--surface))"
                           : "color-mix(in oklab, var(--surface) 88%, white 12%)",
-                      borderColor: selected ? "var(--accent)" : "color-mix(in oklab, var(--border) 82%, white 18%)",
+                      borderColor: selected ? "color-mix(in oklab, var(--foreground) 18%, var(--border))" : "color-mix(in oklab, var(--border) 82%, white 18%)",
                       boxShadow: selected
-                        ? "0 24px 50px -30px color-mix(in oklab, var(--accent) 42%, transparent)"
+                        ? "0 12px 26px -22px color-mix(in oklab, var(--foreground) 18%, transparent)"
                         : node.kind === "draft"
-                          ? "0 18px 40px -28px color-mix(in oklab, var(--warning) 40%, transparent)"
-                          : "0 14px 34px -30px color-mix(in oklab, var(--foreground) 25%, transparent)",
-                      backdropFilter: "blur(18px)",
+                          ? "0 10px 22px -18px color-mix(in oklab, var(--warning) 22%, transparent)"
+                          : "0 10px 24px -20px color-mix(in oklab, var(--foreground) 18%, transparent)",
+                      backdropFilter: "blur(14px)",
                     }}
                     type="button"
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => handleNodeSelect(node)}
                   >
-                    <div className="p-4">
+                    <div className="p-3.5">
                       <div className="flex items-center justify-between gap-3">
                         <span className="rounded-full border border-border/70 bg-background/75 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{badge}</span>
                         <span className="h-3 w-3 rounded-full" style={{ background: node.tone, boxShadow: edgeGlow(node.tone) }} />
                       </div>
-                      <div className="mt-3 text-sm font-semibold leading-5 text-foreground">{node.label}</div>
+                      <div className="mt-2.5 text-sm font-semibold leading-5 text-foreground">{node.label}</div>
                       <div className="mt-1 text-xs leading-5 text-muted-foreground">{node.meta}</div>
-                      {node.stats ? <div className="mt-3 text-[11px] font-medium text-foreground/80">{node.stats}</div> : null}
+                      {node.stats ? <div className="mt-2.5 text-[11px] font-medium text-foreground/80">{node.stats}</div> : null}
                     </div>
                   </button>
                 );
               })}
             </div>
 
-            <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-border bg-surface/85 px-4 py-3 text-xs text-muted-foreground backdrop-blur-sm">
+            <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-border bg-surface/88 px-4 py-2.5 text-[11px] text-muted-foreground backdrop-blur-sm">
               <div className="flex items-center gap-2">
                 <Move size={14} />
                 {connectionHelper}
@@ -904,11 +940,21 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
           </div>
         </div>
 
-        <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_320px]">
-          <Surface className="rounded-[26px] border border-border bg-surface/90 p-5 shadow-none xl:col-span-2">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Inspector</div>
-            <div className="mt-3 text-lg font-semibold text-foreground">{inspectorTitle}</div>
-            <div className="mt-2 text-sm leading-6 text-muted-foreground">{inspectorMeta}</div>
+        <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_300px]">
+          <Surface className="rounded-[22px] border border-border bg-surface/90 p-5 shadow-none xl:col-span-2">
+            <div className="enterprise-kicker">Inspector</div>
+            <div className="mt-2 text-lg font-semibold text-foreground">{inspectorTitle}</div>
+            <div className="mt-1.5 text-sm leading-6 text-muted-foreground">{inspectorMeta}</div>
+            {inspectorRows.length > 0 ? (
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                {inspectorRows.map((row) => (
+                  <div key={row.label} className="enterprise-panel px-4 py-3">
+                    <div className="enterprise-kicker">{row.label}</div>
+                    <div className="mt-1 text-sm font-semibold text-foreground break-words">{row.value}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <div className="mt-4 flex flex-wrap gap-2">
               {selectedTenantForInspector ? (
                 <>
@@ -941,20 +987,20 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
             </div>
           </Surface>
 
-          <Surface className="rounded-[26px] border border-border bg-foreground p-5 text-background shadow-none">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-background/65">Graph stats</div>
-            <div className="mt-4 space-y-4">
+          <Surface className="surface-card-muted rounded-[22px] border-0 p-5 shadow-none">
+            <div className="enterprise-kicker">Graph stats</div>
+            <div className="mt-3 space-y-3">
               <div>
-                <div className="text-3xl font-semibold tracking-[-0.04em]">{snapshot.data.tenants.length}</div>
-                <div className="text-sm text-background/72">tenants in the workspace</div>
+                <div className="text-[1.8rem] font-semibold tracking-[-0.05em] text-foreground">{snapshot.data.tenants.length}</div>
+                <div className="text-[13px] text-muted-foreground">tenants in the workspace</div>
               </div>
               <div>
-                <div className="text-3xl font-semibold tracking-[-0.04em]">{snapshot.data.routes.length}</div>
-                <div className="text-sm text-background/72">routes connected across tenants</div>
+                <div className="text-[1.8rem] font-semibold tracking-[-0.05em] text-foreground">{snapshot.data.routes.length}</div>
+                <div className="text-[13px] text-muted-foreground">routes connected across tenants</div>
               </div>
               <div>
-                <div className="text-3xl font-semibold tracking-[-0.04em]">{snapshot.data.tokens.filter((token) => token.active).length}</div>
-                <div className="text-sm text-background/72">active tokens represented live</div>
+                <div className="text-[1.8rem] font-semibold tracking-[-0.05em] text-foreground">{snapshot.data.tokens.filter((token) => token.active).length}</div>
+                <div className="text-[13px] text-muted-foreground">active tokens represented live</div>
               </div>
             </div>
           </Surface>
@@ -962,26 +1008,26 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
       </Surface>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <Surface className="col-span-2 rounded-[32px] border border-border bg-surface p-6 shadow-sm">
+        <Surface className="col-span-2 rounded-[28px] border border-border bg-surface p-5 shadow-sm">
           <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-muted-foreground">
             <Activity size={14} />
             Recent Flow activity
           </div>
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <div className="mt-5 grid gap-3 xl:grid-cols-2">
             {graph.recentAudits.length === 0 ? (
               <div className="col-span-full rounded-[24px] border border-border bg-background px-4 py-8 text-center text-sm text-muted-foreground">
                 No recent audit traffic has been recorded yet.
               </div>
             ) : (
               graph.recentAudits.slice(0, 4).map((event) => (
-                <Card key={event.id} className="rounded-[24px] border border-border bg-background shadow-none">
-                  <Card.Content className="space-y-3 p-4">
+                <Card key={event.id} className="rounded-[18px] border border-border bg-background shadow-none">
+                  <Card.Content className="space-y-2.5 p-3.5">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="text-sm font-semibold text-foreground">/{event.routeSlug}</div>
                         <div className="mt-1 text-xs text-muted-foreground">{new Date(event.timestamp).toLocaleTimeString()}</div>
                       </div>
-                      <Chip className={event.status < 400 ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-100" : "bg-amber-100 text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"}>{event.status}</Chip>
+                      <Chip className={event.status < 400 ? "border border-success/25 bg-success/12 text-success" : "border border-warning/25 bg-warning/12 text-warning-foreground"}>{event.status}</Chip>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span className="rounded-full border border-border bg-surface px-2 py-1">{event.tokenID}</span>
@@ -995,8 +1041,8 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
           </div>
         </Surface>
 
-        <Surface className="rounded-[32px] border border-border bg-surface p-6 shadow-sm">
-          <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Workspace hints</div>
+        <Surface className="rounded-[28px] border border-border bg-surface p-5 shadow-sm">
+          <div className="enterprise-kicker">Workspace hints</div>
           <div className="mt-4 space-y-3 text-sm leading-6 text-muted-foreground">
             <div>Use the mouse to pan the scene and the wheel to zoom into a dense section.</div>
             <div>Route to tenant asks you to click a tenant node, then opens a route modal already bound to that tenant.</div>
@@ -1059,6 +1105,7 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
 
       {selectedRoute ? (
         <UpdateRouteForm
+          key={`${selectedRoute.id}:${selectedRoute.slug}:${selectedRoute.tenantID}:${selectedRoute.targetPath}:${selectedRoute.requiredScope}:${selectedRoute.methods.join(",")}`}
           disabled={snapshot.source !== "backend"}
           isOpen={Boolean(selectedRoute)}
           label="Edit"
@@ -1075,6 +1122,7 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
 
       {selectedTenant ? (
         <UpdateTenantForm
+          key={`${selectedTenant.id}:${selectedTenant.tenantID}:${selectedTenant.upstreamURL}:${selectedTenant.headerName}:${selectedTenant.name}`}
           disabled={snapshot.source !== "backend"}
           isOpen={Boolean(selectedTenant)}
           label="Edit"

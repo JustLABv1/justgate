@@ -3,67 +3,84 @@ import { SectionPage } from "@/components/admin/section-page";
 import { TokensTable } from "@/components/admin/tokens-table";
 import { getTenants, getTokens } from "@/lib/backend-client";
 import { Card, Chip } from "@heroui/react";
+import { ArrowRight, Shield, Sparkles } from "lucide-react";
+import Link from "next/link";
 
 export default async function TokensPage() {
   const [result, tenants] = await Promise.all([getTokens(), getTenants()]);
 
   return (
     <SectionPage
-      eyebrow="Token inventory"
-      title="Issued credentials"
-      description="The eventual create and rotate flows will remain in Go. The frontend surfaces only preview-safe token metadata and operational status."
+      eyebrow="Identity Management"
+      title="Security Protocol Tokens"
+      description="The backend logic manages rotation and encryption. The control interface surfaces safe metadata and operational state."
       source={result.source}
       error={result.error}
     >
-      <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-        <Card className="rounded-[32px] border border-border bg-surface shadow-sm">
-          <Card.Content className="flex h-full flex-col justify-between gap-5 p-7">
+      <section className="grid gap-8 xl:grid-cols-[1fr_450px]">
+        <div className="space-y-6">
+           <div className="flex items-center justify-between px-2">
+              <div className="flex items-center gap-3">
+                <Shield size={20} className="text-muted-foreground" />
+                 <h2 className="text-xl font-semibold tracking-[-0.03em] text-foreground">Active credentials</h2>
+              </div>
+              <Chip className="border border-border/80 bg-panel text-foreground">{result.data.length} issued tokens</Chip>
+           </div>
+           
+            <div className="surface-card rounded-[28px] border-0 p-6 overflow-hidden relative">
+              <TokensTable actionsDisabled={result.source !== "backend"} tokens={result.data} />
+           </div>
+        </div>
+
+        <aside className="space-y-8">
+          <Card variant="transparent" className="surface-card rounded-[32px] border-0 p-8">
+            <Card.Content className="flex h-full flex-col justify-between gap-6 p-0">
+              <div className="space-y-4">
+                <div className="text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground">Control action</div>
+                <h2 className="text-2xl font-semibold tracking-[-0.04em] text-foreground leading-tight">Generate a new identity</h2>
+                <p className="text-sm leading-7 text-muted-foreground">
+                  Issue a new encrypted token for agents or administrative operators. Secrets are shown exactly once.
+                </p>
+              </div>
+              <div className="flex flex-col gap-4">
+                <CreateTokenForm disabled={result.source !== "backend"} existingCount={result.data.length} tenantIDs={tenants.data.map((tenant) => tenant.tenantID)} />
+                <div className="flex items-center justify-between rounded-[24px] border border-border/80 bg-panel/65 px-5 py-4">
+                   <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">Global issuance</div>
+                   <div className="text-sm font-semibold text-foreground">{result.data.length} total</div>
+                </div>
+              </div>
+            </Card.Content>
+          </Card>
+
+          <Card variant="transparent" className="surface-card rounded-[32px] border-0 p-8">
+            <h5 className="mb-4 flex items-center gap-2 text-sm font-medium uppercase tracking-[0.24em] text-muted-foreground">
+              <Sparkles size={16} className="text-muted-foreground" />
+              Encryption protocol
+            </h5>
+            <div className="space-y-4">
+               <div className="rounded-[24px] border border-border/80 bg-panel/60 p-4">
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">Statefulness</div>
+                  <div className="text-sm font-semibold text-foreground">Encrypted at rest</div>
+               </div>
+               <div className="rounded-[24px] border border-border/80 bg-panel/60 p-4">
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">Authorization</div>
+                  <div className="text-sm font-semibold text-foreground">Tenant-anchored scopes</div>
+               </div>
+               <p className="text-sm leading-7 text-muted-foreground">
+                 Audit trails capture every token usage event across the proxy boundary.
+               </p>
+            </div>
+          </Card>
+
+          <Link href="/audit" className="surface-card flex items-center justify-between rounded-[30px] border-0 p-6">
             <div>
-              <div className="text-xs font-medium text-muted-foreground">Credential operations</div>
-              <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-foreground">Issue tokens from a modal</h2>
-              <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                Keep the inventory visible while you create a credential, then return to the list without shifting the whole page layout.
-              </p>
+              <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">Visibility</div>
+              <div className="mt-2 text-lg font-semibold tracking-[-0.03em] text-foreground">Review token usage in the audit stream.</div>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <CreateTokenForm disabled={result.source !== "backend"} existingCount={result.data.length} tenantIDs={tenants.data.map((tenant) => tenant.tenantID)} />
-              {result.source !== "backend" ? <span className="text-sm text-muted-foreground">Changes are disabled while fallback data is shown.</span> : null}
-              <Chip className="bg-background text-foreground ring-1 ring-border">{result.data.length} issued</Chip>
-            </div>
-          </Card.Content>
-        </Card>
-        <Card className="rounded-[32px] border border-border bg-surface shadow-sm">
-          <Card.Content className="space-y-4 p-7">
-            <Chip className="w-fit bg-foreground text-background">Issuance boundary</Chip>
-            <div className="text-sm leading-7 text-muted-foreground">
-              Token issuance now happens through the Go admin API. The secret is shown once, while the frontend continues to render only preview-safe metadata after that moment.
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Card className="rounded-[28px] border border-border bg-background shadow-none">
-                <Card.Content className="p-4">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Store mode</div>
-                  <div className="mt-2 font-medium text-foreground">Hashed in memory</div>
-                </Card.Content>
-              </Card>
-              <Card className="rounded-[28px] border border-border bg-background shadow-none">
-                <Card.Content className="p-4">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Next step</div>
-                  <div className="mt-2 font-medium text-foreground">Repository-backed persistence</div>
-                </Card.Content>
-              </Card>
-            </div>
-          </Card.Content>
-        </Card>
+            <ArrowRight size={18} className="text-muted-foreground" />
+          </Link>
+        </aside>
       </section>
-      <Card className="rounded-[32px] border border-border bg-surface shadow-sm">
-        <Card.Header className="border-b border-border pb-4">
-          <Card.Title className="text-2xl font-semibold tracking-[-0.03em] text-foreground">Issued credentials</Card.Title>
-          <Card.Description className="text-sm text-muted-foreground">Preview-safe token metadata returned by the Go admin surface.</Card.Description>
-        </Card.Header>
-        <Card.Content className="pt-6">
-          <TokensTable actionsDisabled={result.source !== "backend"} tokens={result.data} />
-        </Card.Content>
-      </Card>
     </SectionPage>
   );
 }

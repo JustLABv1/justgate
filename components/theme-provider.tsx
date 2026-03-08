@@ -18,13 +18,24 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
+function isTheme(value: string | null): value is Theme {
+  return value === "light" || value === "dark" || value === "system";
+}
+
 export function ThemeProvider({
   children,
-  defaultTheme = "system",
+  defaultTheme = "light",
   storageKey = "ui-theme",
 }: ThemeProviderProps) {
   const [theme, setTheme] = useState<Theme>(
-    () => (typeof window !== "undefined" ? (localStorage.getItem(storageKey) as Theme) : defaultTheme) || defaultTheme
+    () => {
+      if (typeof window === "undefined") {
+        return defaultTheme;
+      }
+
+      const storedTheme = window.localStorage.getItem(storageKey);
+      return isTheme(storedTheme) ? storedTheme : defaultTheme;
+    }
   );
 
   const [resolvedTheme, setResolvedTheme] = useState<"dark" | "light">("light");
@@ -38,6 +49,7 @@ export function ThemeProvider({
 
       const effectiveTheme = nextTheme === "system" ? (mediaQuery.matches ? "dark" : "light") : nextTheme;
       root.classList.add(effectiveTheme);
+      root.dataset.theme = effectiveTheme;
       root.style.colorScheme = effectiveTheme;
       setResolvedTheme(effectiveTheme);
     };
@@ -59,7 +71,7 @@ export function ThemeProvider({
     theme,
     resolvedTheme,
     setTheme: (theme: Theme) => {
-      localStorage.setItem(storageKey, theme);
+      window.localStorage.setItem(storageKey, theme);
       setTheme(theme);
     },
   };

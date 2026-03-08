@@ -98,23 +98,33 @@ export function CreateRouteForm({
       )}
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
-          <Modal.Dialog>
+          <Modal.Dialog className="rounded-[28px] border border-border bg-overlay/96 shadow-[var(--overlay-shadow)]">
             <Modal.CloseTrigger />
             <Modal.Header>
               <div className="flex w-full items-center justify-between gap-3">
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-muted">Create</div>
-                  <Modal.Heading className="mt-2 text-3xl leading-none tracking-[-0.03em] text-foreground">Register a route</Modal.Heading>
-                  <p className="mt-3 text-sm leading-7 text-muted-foreground">
+                  <div className="enterprise-kicker">Create route</div>
+                  <Modal.Heading className="mt-2 text-[1.9rem] leading-none tracking-[-0.04em] text-foreground">Register a route</Modal.Heading>
+                  <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
                     Publish a stable proxy slug and bind it to one tenant-specific upstream path with a narrow method and scope contract.
                   </p>
                 </div>
-                <Chip className="w-fit bg-background text-foreground ring-1 ring-border">{existingCount} existing routes</Chip>
+                <Chip className="w-fit border border-border bg-panel text-foreground">{existingCount} existing routes</Chip>
+              </div>
+              <div className="enterprise-stat-grid mt-5 w-full">
+                <div className="enterprise-panel px-4 py-3">
+                  <div className="enterprise-kicker">Exposure</div>
+                  <div className="mt-1 text-sm font-semibold text-foreground">Public entry via /proxy/&lt;slug&gt;</div>
+                </div>
+                <div className="enterprise-panel px-4 py-3">
+                  <div className="enterprise-kicker">Policy</div>
+                  <div className="mt-1 text-sm font-semibold text-foreground">Tenant, scope, and method contract</div>
+                </div>
               </div>
             </Modal.Header>
             <Modal.Body>
-              <Form className="grid gap-4" onSubmit={handleSubmit}>
-                <div className="grid gap-4 md:grid-cols-2">
+              <Form className="grid gap-5" onSubmit={handleSubmit}>
+                <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
                   <TextField className="grid gap-2">
                     <Label>Proxy slug</Label>
                     <Input
@@ -123,6 +133,7 @@ export function CreateRouteForm({
                       value={formState.slug}
                       onChange={(event) => setFormState((current) => ({ ...current, slug: event.target.value }))}
                     />
+                    <div className="enterprise-note">Stable operator-facing path segment.</div>
                   </TextField>
                   <Select
                     className="w-full"
@@ -148,50 +159,56 @@ export function CreateRouteForm({
                       </ListBox>
                     </Select.Popover>
                   </Select>
+                  <div className="enterprise-note md:col-span-2">The route is bound to exactly one tenant inventory record.</div>
                 </div>
 
-                <TextField className="grid gap-2">
-                  <Label>Target path</Label>
-                  <Input
-                    placeholder="/api/v1/push"
-                    required
-                    value={formState.targetPath}
-                    onChange={(event) => setFormState((current) => ({ ...current, targetPath: event.target.value }))}
-                  />
-                </TextField>
+                <div className="enterprise-panel grid gap-4 p-4">
+                  <TextField className="grid gap-2">
+                    <Label>Target path</Label>
+                    <Input
+                      placeholder="/api/v1/push"
+                      required
+                      value={formState.targetPath}
+                      onChange={(event) => setFormState((current) => ({ ...current, targetPath: event.target.value }))}
+                    />
+                    <div className="enterprise-note">Appended to the tenant upstream URL.</div>
+                  </TextField>
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  <TextField className="grid gap-2">
-                    <Label>Required scope</Label>
-                    <Input
-                      placeholder="metrics:write"
-                      required
-                      value={formState.requiredScope}
-                      onChange={(event) => setFormState((current) => ({ ...current, requiredScope: event.target.value }))}
-                    />
-                  </TextField>
-                  <TextField className="grid gap-2">
-                    <Label>Allowed methods</Label>
-                    <Input
-                      placeholder="POST, PUT"
-                      required
-                      value={formState.methods}
-                      onChange={(event) => setFormState((current) => ({ ...current, methods: event.target.value }))}
-                    />
-                  </TextField>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <TextField className="grid gap-2">
+                      <Label>Required scope</Label>
+                      <Input
+                        placeholder="metrics:write"
+                        required
+                        value={formState.requiredScope}
+                        onChange={(event) => setFormState((current) => ({ ...current, requiredScope: event.target.value }))}
+                      />
+                      <div className="enterprise-note">Permission that must appear on the token.</div>
+                    </TextField>
+                    <TextField className="grid gap-2">
+                      <Label>Allowed methods</Label>
+                      <Input
+                        placeholder="POST, PUT"
+                        required
+                        value={formState.methods}
+                        onChange={(event) => setFormState((current) => ({ ...current, methods: event.target.value }))}
+                      />
+                      <div className="enterprise-note">Comma-separated HTTP verbs.</div>
+                    </TextField>
+                  </div>
                 </div>
 
-                <Button className="mt-2 w-full bg-foreground text-background" isDisabled={isPending} type="submit">
+                <Button className="mt-1 h-11 w-full rounded-[1rem] bg-foreground text-background" isDisabled={isPending} type="submit">
                   <ArrowUpRight size={16} />
                   {isPending ? "Registering route..." : "Register route"}
                 </Button>
                 {error ? (
-                  <div className="rounded-[1.35rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                  <div className="enterprise-feedback enterprise-feedback--error">
                     {error}
                   </div>
                 ) : null}
                 {success ? (
-                  <div className="rounded-[1.35rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950">
+                  <div className="enterprise-feedback enterprise-feedback--success">
                     {success}
                   </div>
                 ) : null}
