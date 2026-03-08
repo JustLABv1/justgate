@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Button, Chip, Form, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
 import { ArrowUpRight, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -9,27 +10,59 @@ interface CreateRouteFormProps {
   existingCount: number;
   tenantIDs: string[];
   disabled?: boolean;
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  trigger?: ReactNode;
+  initialTenantID?: string;
+  onCreated?: (slug: string) => void;
 }
 
-export function CreateRouteForm({ existingCount, tenantIDs, disabled = false }: CreateRouteFormProps) {
+function toFormState(initialTenantID = "") {
+  return {
+    slug: "",
+    tenantID: initialTenantID,
+    targetPath: "",
+    requiredScope: "",
+    methods: "",
+  };
+}
+
+export function CreateRouteForm({
+  existingCount,
+  tenantIDs,
+  disabled = false,
+  isOpen,
+  onOpenChange,
+  trigger,
+  initialTenantID,
+  onCreated,
+}: CreateRouteFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
+  const [formState, setFormState] = useState(() => toFormState(initialTenantID));
+
+  function handleOpenChange(open: boolean) {
+    if (open) {
+      setFormState(toFormState(initialTenantID));
+      setError(undefined);
+      setSuccess(undefined);
+    }
+
+    onOpenChange?.(open);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(undefined);
     setSuccess(undefined);
-
-    const form = event.currentTarget;
-    const formData = new FormData(form);
     const payload = {
-      slug: String(formData.get("slug") || ""),
-      tenantID: String(formData.get("tenantID") || ""),
-      targetPath: String(formData.get("targetPath") || ""),
-      requiredScope: String(formData.get("requiredScope") || ""),
-      methods: String(formData.get("methods") || ""),
+      slug: formState.slug,
+      tenantID: formState.tenantID,
+      targetPath: formState.targetPath,
+      requiredScope: formState.requiredScope,
+      methods: formState.methods,
     };
 
     const response = await fetch("/api/admin/routes", {
@@ -47,18 +80,22 @@ export function CreateRouteForm({ existingCount, tenantIDs, disabled = false }: 
     }
 
     setSuccess(`Created /proxy/${result?.slug || payload.slug}.`);
-    form.reset();
+    setFormState(toFormState(initialTenantID));
     startTransition(() => {
       router.refresh();
     });
+    onCreated?.(result?.slug || payload.slug);
+    onOpenChange?.(false);
   }
 
   return (
-    <Modal>
-      <Button className="bg-foreground text-background" isDisabled={disabled}>
-        <Plus size={16} />
-        New route
-      </Button>
+    <Modal isOpen={isOpen} onOpenChange={handleOpenChange}>
+      {trigger ?? (
+        <Button className="bg-foreground text-background" isDisabled={disabled}>
+          <Plus size={16} />
+          New route
+        </Button>
+      )}
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
           <Modal.Dialog>
@@ -80,9 +117,21 @@ export function CreateRouteForm({ existingCount, tenantIDs, disabled = false }: 
                 <div className="grid gap-4 md:grid-cols-2">
                   <TextField className="grid gap-2">
                     <Label>Proxy slug</Label>
-                    <Input name="slug" placeholder="metrics-ingest" required />
+                    <Input
+                      placeholder="metrics-ingest"
+                      required
+                      value={formState.slug}
+                      onChange={(event) => setFormState((current) => ({ ...current, slug: event.target.value }))}
+                    />
                   </TextField>
-                  <Select className="w-full" isRequired name="tenantID" placeholder="Select tenant" variant="secondary">
+                  <Select
+                    className="w-full"
+                    isRequired
+                    placeholder="Select tenant"
+                    value={formState.tenantID}
+                    variant="secondary"
+                    onChange={(value) => setFormState((current) => ({ ...current, tenantID: String(value) }))}
+                  >
                     <Label>Tenant ID</Label>
                     <Select.Trigger>
                       <Select.Value />
@@ -103,17 +152,32 @@ export function CreateRouteForm({ existingCount, tenantIDs, disabled = false }: 
 
                 <TextField className="grid gap-2">
                   <Label>Target path</Label>
-                  <Input name="targetPath" placeholder="/api/v1/push" required />
+                  <Input
+                    placeholder="/api/v1/push"
+                    required
+                    value={formState.targetPath}
+                    onChange={(event) => setFormState((current) => ({ ...current, targetPath: event.target.value }))}
+                  />
                 </TextField>
 
                 <div className="grid gap-4 md:grid-cols-2">
                   <TextField className="grid gap-2">
                     <Label>Required scope</Label>
-                    <Input name="requiredScope" placeholder="metrics:write" required />
+                    <Input
+                      placeholder="metrics:write"
+                      required
+                      value={formState.requiredScope}
+                      onChange={(event) => setFormState((current) => ({ ...current, requiredScope: event.target.value }))}
+                    />
                   </TextField>
                   <TextField className="grid gap-2">
                     <Label>Allowed methods</Label>
-                    <Input name="methods" placeholder="POST, PUT" required />
+                    <Input
+                      placeholder="POST, PUT"
+                      required
+                      value={formState.methods}
+                      onChange={(event) => setFormState((current) => ({ ...current, methods: event.target.value }))}
+                    />
                   </TextField>
                 </div>
 

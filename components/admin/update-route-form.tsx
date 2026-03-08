@@ -1,16 +1,20 @@
 "use client";
 
 import type { RouteSummary } from "@/lib/contracts";
+import type { ReactNode } from "react";
 import { Button, Form, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
 import { ArrowUpRight, PenSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState, useTransition } from "react";
+import { type FormEvent, useEffect, useState, useTransition } from "react";
 
 interface UpdateRouteFormProps {
   route: RouteSummary;
   tenantIDs: string[];
   label?: string;
   disabled?: boolean;
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  trigger?: ReactNode;
 }
 
 function toFormState(route: RouteSummary | undefined) {
@@ -24,12 +28,18 @@ function toFormState(route: RouteSummary | undefined) {
   };
 }
 
-export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = false }: UpdateRouteFormProps) {
+export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = false, isOpen, onOpenChange, trigger }: UpdateRouteFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState(route));
+
+  useEffect(() => {
+    setFormState(toFormState(route));
+    setError(undefined);
+    setSuccess(undefined);
+  }, [route]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -64,14 +74,17 @@ export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = f
     startTransition(() => {
       router.refresh();
     });
+    onOpenChange?.(false);
   }
 
   return (
-    <Modal>
-      <Button className="h-8 rounded-full px-3 text-foreground" isDisabled={disabled} size="sm" variant="ghost">
-        <PenSquare size={14} />
-        {label}
-      </Button>
+    <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
+      {trigger ?? (
+        <Button className="h-8 rounded-full px-3 text-foreground" isDisabled={disabled} size="sm" variant="ghost">
+          <PenSquare size={14} />
+          {label}
+        </Button>
+      )}
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
           <Modal.Dialog>

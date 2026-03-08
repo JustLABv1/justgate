@@ -1,6 +1,7 @@
 "use client";
 
 import type { IssuedToken } from "@/lib/contracts";
+import type { ReactNode } from "react";
 import { Button, Chip, Form, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -10,25 +11,72 @@ interface CreateTokenFormProps {
   existingCount: number;
   tenantIDs: string[];
   disabled?: boolean;
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  trigger?: ReactNode;
+  initialTenantID?: string;
+  initialScopes?: string;
+  onCreated?: (token: IssuedToken) => void;
 }
 
-export function CreateTokenForm({ existingCount, tenantIDs, disabled = false }: CreateTokenFormProps) {
+function toApiExpiry(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  const parsed = new Date(trimmed);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString();
+  }
+
+  return trimmed;
+}
+
+function toFormState(initialTenantID = "", initialScopes = "") {
+  return {
+    expiresAt: "",
+    name: "",
+    scopes: initialScopes,
+    tenantID: initialTenantID,
+  };
+}
+
+export function CreateTokenForm({
+  existingCount,
+  tenantIDs,
+  disabled = false,
+  isOpen,
+  onOpenChange,
+  trigger,
+  initialTenantID,
+  initialScopes,
+  onCreated,
+}: CreateTokenFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
   const [issuedToken, setIssuedToken] = useState<IssuedToken>();
+  const [formState, setFormState] = useState(() => toFormState(initialTenantID, initialScopes));
+
+  function handleOpenChange(open: boolean) {
+    if (open) {
+      setFormState(toFormState(initialTenantID, initialScopes));
+      setError(undefined);
+      setIssuedToken(undefined);
+    }
+
+    onOpenChange?.(open);
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(undefined);
-
-    const form = event.currentTarget;
-    const formData = new FormData(form);
     const payload = {
-      name: String(formData.get("name") || ""),
-      tenantID: String(formData.get("tenantID") || ""),
-      scopes: String(formData.get("scopes") || ""),
-      expiresAt: String(formData.get("expiresAt") || ""),
+      name: formState.name,
+      tenantID: formState.tenantID,
+      scopes: formState.scopes,
+      expiresAt: toApiExpiry(formState.expiresAt),
     };
 
     const response = await fetch("/api/admin/tokens", {
@@ -51,18 +99,22 @@ export function CreateTokenForm({ existingCount, tenantIDs, disabled = false }: 
     }
 
     setIssuedToken(result as IssuedToken);
-    form.reset();
+    setFormState(toFormState(initialTenantID, initialScopes));
     startTransition(() => {
       router.refresh();
     });
+    onCreated?.(result as IssuedToken);
+    onOpenChange?.(false);
   }
 
   return (
-    <Modal>
-      <Button className="bg-foreground text-background" isDisabled={disabled}>
-        <Plus size={16} />
-        Issue token
-      </Button>
+    <Modal isOpen={isOpen} onOpenChange={handleOpenChange}>
+      {trigger ?? (
+        <Button className="bg-foreground text-background" isDisabled={disabled}>
+          <Plus size={16} />
+          Issue token
+        </Button>
+      )}
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
           <Modal.Dialog>
@@ -82,9 +134,10 @@ export function CreateTokenForm({ existingCount, tenantIDs, disabled = false }: 
               <Form className="grid gap-4" onSubmit={handleSubmit}>
                 <TextField className="grid gap-2">
                   <Label>Token name</Label>
-                  <Input name="name" placeholder="grafana-writer" required />
+                  <Input placeholder="grafana-writer" required value={formState.name} onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} />
+                  <div className="text-xs text-muted-foreground">Use a name that explains who will use this token, for example `grafana-prod-agent`.</div>
                 </TextField>
-                <Select className="w-full" isRequired name="tenantID" placeholder="Select tenant" variant="secondary">
+                <Select className="w-full" isRequired placeholder="Select tenant" value={formState.tenantID} variant="secondary" onChange={(value) => setFormState((current) => ({ ...current, tenantID: String(value) }))}>
                   <Label>Tenant ID</Label>
                   <Select.Trigger>
                     <Select.Value />
@@ -101,13 +154,16 @@ export function CreateTokenForm({ existingCount, tenantIDs, disabled = false }: 
                     </ListBox>
                   </Select.Popover>
                 </Select>
+                <div className="text-xs text-muted-foreground">This token will only work for the selected tenant.</div>
                 <TextField className="grid gap-2">
                   <Label>Scopes</Label>
-                  <Input name="scopes" placeholder="metrics:write, rules:read" required />
+                  <Input placeholder="metrics:write, rules:read" required value={formState.scopes} onChange={(event) => setFormState((current) => ({ ...current, scopes: event.target.value }))} />
+                  <div className="text-xs text-muted-foreground">Enter one or more permissions as a comma-separated list. They must match the scopes your routes require.</div>
                 </TextField>
                 <TextField className="grid gap-2">
                   <Label>Expiration</Label>
-                  <Input name="expiresAt" required type="datetime-local" />
+                  <Input required type="datetime-local" value={formState.expiresAt} onChange={(event) => setFormState((current) => ({ ...current, expiresAt: event.target.value }))} />
+                  <div className="text-xs text-muted-foreground">Pick the exact local date and time when this token should expire.</div>
                 </TextField>
                 {error ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">{error}</div> : null}
                 {issuedToken ? (

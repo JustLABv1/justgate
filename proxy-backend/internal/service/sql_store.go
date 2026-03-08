@@ -71,12 +71,16 @@ func databaseConfig(databaseURL string) (string, string, string) {
 }
 
 func (store *sqlStore) seedReferenceData(ctx context.Context, headerName string) error {
-	var tenantCount int
-	if err := store.queryRowContext(ctx, `SELECT COUNT(*) FROM tenants`).Scan(&tenantCount); err != nil {
-		return err
-	}
-	if tenantCount > 0 {
-		return nil
+	tables := []string{"tenants", "routes", "tokens", "audits"}
+	for _, tableName := range tables {
+		var rowCount int
+		query := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, tableName)
+		if err := store.queryRowContext(ctx, query).Scan(&rowCount); err != nil {
+			return err
+		}
+		if rowCount > 0 {
+			return nil
+		}
 	}
 
 	primaryUpstream := getenvOrDefault("MIMIR_PRIMARY_UPSTREAM", "http://localhost:9009")

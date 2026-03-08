@@ -16,6 +16,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type Config struct {
@@ -110,6 +112,16 @@ type auditEvent struct {
 	Method    string `json:"method"`
 	Status    int    `json:"status"`
 	Upstream  string `json:"upstreamURL"`
+}
+
+type topologyResponse struct {
+	GeneratedAt string        `json:"generatedAt"`
+	Runtime     runtimeState  `json:"runtime"`
+	Stats       stats         `json:"stats"`
+	Tenants     []tenantSummary `json:"tenants"`
+	Routes      []routeSummary  `json:"routes"`
+	Tokens      []tokenSummary  `json:"tokens"`
+	AuditEvents []auditEvent    `json:"auditEvents"`
 }
 
 type createTenantRequest struct {
@@ -244,6 +256,8 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/tokens", s.withAdminAuth(s.handleTokens))
 	mux.HandleFunc("/api/v1/admin/tokens/", s.withAdminAuth(s.handleTokenByID))
 	mux.HandleFunc("/api/v1/admin/audit", s.withAdminAuth(s.handleAudit))
+	mux.HandleFunc("/api/v1/admin/topology", s.withAdminAuth(s.handleTopology))
+	mux.HandleFunc("/api/v1/admin/topology/stream", s.handleTopologyStream)
 	mux.HandleFunc("/proxy/", s.handleProxy)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -258,6 +272,10 @@ func (s *Service) Handler() http.Handler {
 
 		mux.ServeHTTP(writer, request)
 	})
+}
+
+var topologyUpgrader = websocket.Upgrader{
+	CheckOrigin: func(_ *http.Request) bool { return true },
 }
 
 func (s *Service) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -357,54 +375,16 @@ func (s *Service) handleVerifyLocalAdmin(writer http.ResponseWriter, request *ht
 }
 
 func (s *Service) handleOverview(writer http.ResponseWriter, request *http.Request) {
-	tokens, err := s.store.ListTokens(request.Context())
+	topology, err := s.buildTopologyResponse(request.Context())
 	if err != nil {
-		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load tokens"})
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
-	}
-	tenants, err := s.store.ListTenants(request.Context())
-	if err != nil {
-		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load tenants"})
-		return
-	}
-	routes, err := s.store.ListRoutes(request.Context())
-	if err != nil {
-		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load routes"})
-		return
-	}
-	audits, err := s.store.ListAudits(request.Context())
-	if err != nil {
-		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load audit events"})
-		return
-	}
-
-	activeTokens := 0
-	audits24h := 0
-	cutoff := time.Now().UTC().Add(-24 * time.Hour)
-	for _, token := range tokens {
-		if token.Active {
-			activeTokens++
-		}
-	}
-	for _, audit := range audits {
-		if audit.Timestamp.After(cutoff) {
-			audits24h++
-		}
 	}
 
 	writeJSON(writer, http.StatusOK, overviewResponse{
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		Runtime: runtimeState{
-			Status:    "online",
-			Version:   s.config.Version,
-			StoreKind: s.config.StoreKind,
-		},
-		Stats: stats{
-			Tenants:        len(tenants),
-			Routes:         len(routes),
-			ActiveTokens:   activeTokens,
-			AuditEvents24h: audits24h,
-		},
+		GeneratedAt: topology.GeneratedAt,
+		Runtime:     topology.Runtime,
+		Stats:       topology.Stats,
 	})
 }
 
@@ -541,6 +521,190 @@ func (s *Service) handleAudit(writer http.ResponseWriter, request *http.Request)
 	})
 
 	writeJSON(writer, http.StatusOK, items)
+}
+
+func (s *Service) handleTopology(writer http.ResponseWriter, request *http.Request) {
+	topology, err := s.buildTopologyResponse(request.Context())
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, topology)
+}
+
+func (s *Service) handleTopologyStream(writer http.ResponseWriter, request *http.Request) {
+	tokenValue := extractBearerToken(request.Header.Get("Authorization"))
+	if tokenValue == "" {
+		tokenValue = strings.TrimSpace(request.URL.Query().Get("access_token"))
+	}
+	if _, err := validateAdminToken(tokenValue, s.config.AdminJWTSecret); err != nil {
+		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+
+	connection, err := topologyUpgrader.Upgrade(writer, request, nil)
+	if err != nil {
+		return
+	}
+	defer connection.Close()
+
+	_ = connection.SetReadDeadline(time.Now().Add(60 * time.Second))
+	connection.SetPongHandler(func(string) error {
+		return connection.SetReadDeadline(time.Now().Add(60 * time.Second))
+	})
+
+	stop := make(chan struct{})
+	go func() {
+		defer close(stop)
+		for {
+			if _, _, readErr := connection.ReadMessage(); readErr != nil {
+				return
+			}
+		}
+	}()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	sendSnapshot := func() error {
+		topology, buildErr := s.buildTopologyResponse(request.Context())
+		if buildErr != nil {
+			return connection.WriteJSON(map[string]any{"type": "error", "error": buildErr.Error()})
+		}
+		return connection.WriteJSON(map[string]any{"type": "snapshot", "data": topology})
+	}
+
+	if err := sendSnapshot(); err != nil {
+		return
+	}
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			_ = connection.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second))
+			if err := sendSnapshot(); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, error) {
+	tokens, err := s.store.ListTokens(ctx)
+	if err != nil {
+		return topologyResponse{}, fmt.Errorf("failed to load tokens")
+	}
+	tenants, err := s.store.ListTenants(ctx)
+	if err != nil {
+		return topologyResponse{}, fmt.Errorf("failed to load tenants")
+	}
+	routes, err := s.store.ListRoutes(ctx)
+	if err != nil {
+		return topologyResponse{}, fmt.Errorf("failed to load routes")
+	}
+	audits, err := s.store.ListAudits(ctx)
+	if err != nil {
+		return topologyResponse{}, fmt.Errorf("failed to load audit events")
+	}
+
+	activeTokens := 0
+	audits24h := 0
+	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+	for _, token := range tokens {
+		if token.Active {
+			activeTokens++
+		}
+	}
+	for _, audit := range audits {
+		if audit.Timestamp.After(cutoff) {
+			audits24h++
+		}
+	}
+
+	tenantItems := make([]tenantSummary, 0, len(tenants))
+	for _, tenant := range tenants {
+		tenantItems = append(tenantItems, tenantSummary{
+			ID:         tenant.ID,
+			Name:       tenant.Name,
+			TenantID:   tenant.TenantID,
+			Upstream:   tenant.Upstream,
+			AuthMode:   tenant.AuthMode,
+			HeaderName: tenant.HeaderName,
+		})
+	}
+
+	routeItems := make([]routeSummary, 0, len(routes))
+	for _, route := range routes {
+		routeItems = append(routeItems, routeSummary{
+			ID:            route.ID,
+			Slug:          route.Slug,
+			TargetPath:    route.TargetPath,
+			TenantID:      route.TenantID,
+			RequiredScope: route.RequiredScope,
+			Methods:       route.Methods,
+		})
+	}
+
+	tokenItems := make([]tokenSummary, 0, len(tokens))
+	for _, token := range tokens {
+		tokenItems = append(tokenItems, tokenSummary{
+			ID:         token.ID,
+			Name:       token.Name,
+			TenantID:   token.TenantID,
+			Scopes:     token.Scopes,
+			ExpiresAt:  token.ExpiresAt.Format(time.RFC3339),
+			LastUsedAt: token.LastUsedAt.Format(time.RFC3339),
+			Preview:    token.Preview,
+			Active:     token.Active,
+		})
+	}
+
+	auditItems := make([]auditEvent, 0, len(audits))
+	for _, audit := range audits {
+		auditItems = append(auditItems, auditEvent{
+			ID:        audit.ID,
+			Timestamp: audit.Timestamp.Format(time.RFC3339),
+			RouteSlug: audit.RouteSlug,
+			TenantID:  audit.TenantID,
+			TokenID:   audit.TokenID,
+			Method:    audit.Method,
+			Status:    audit.Status,
+			Upstream:  audit.Upstream,
+		})
+	}
+
+	slices.SortFunc(auditItems, func(left, right auditEvent) int {
+		switch {
+		case left.Timestamp > right.Timestamp:
+			return -1
+		case left.Timestamp < right.Timestamp:
+			return 1
+		default:
+			return 0
+		}
+	})
+
+	return topologyResponse{
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		Runtime: runtimeState{
+			Status:    "online",
+			Version:   s.config.Version,
+			StoreKind: s.config.StoreKind,
+		},
+		Stats: stats{
+			Tenants:        len(tenantItems),
+			Routes:         len(routeItems),
+			ActiveTokens:   activeTokens,
+			AuditEvents24h: audits24h,
+		},
+		Tenants:     tenantItems,
+		Routes:      routeItems,
+		Tokens:      tokenItems,
+		AuditEvents: auditItems,
+	}, nil
 }
 
 func normalizeTenantPayload(payload *createTenantRequest, defaultHeaderName string) error {

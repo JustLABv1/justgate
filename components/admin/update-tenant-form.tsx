@@ -1,15 +1,19 @@
 "use client";
 
 import type { TenantSummary } from "@/lib/contracts";
+import type { ReactNode } from "react";
 import { Button, Form, Input, Label, Modal, TextField } from "@heroui/react";
 import { PenSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState, useTransition } from "react";
+import { type FormEvent, useEffect, useState, useTransition } from "react";
 
 interface UpdateTenantFormProps {
   tenant: TenantSummary;
   label?: string;
   disabled?: boolean;
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  trigger?: ReactNode;
 }
 
 function toFormState(tenant: TenantSummary | undefined) {
@@ -21,12 +25,18 @@ function toFormState(tenant: TenantSummary | undefined) {
   };
 }
 
-export function UpdateTenantForm({ tenant, label = "Edit", disabled = false }: UpdateTenantFormProps) {
+export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isOpen, onOpenChange, trigger }: UpdateTenantFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState(tenant));
+
+  useEffect(() => {
+    setFormState(toFormState(tenant));
+    setError(undefined);
+    setSuccess(undefined);
+  }, [tenant]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -57,14 +67,17 @@ export function UpdateTenantForm({ tenant, label = "Edit", disabled = false }: U
     startTransition(() => {
       router.refresh();
     });
+    onOpenChange?.(false);
   }
 
   return (
-    <Modal>
-      <Button className="h-8 rounded-full px-3 text-foreground" isDisabled={disabled} size="sm" variant="ghost">
-        <PenSquare size={14} />
-        {label}
-      </Button>
+    <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
+      {trigger ?? (
+        <Button className="h-8 rounded-full px-3 text-foreground" isDisabled={disabled} size="sm" variant="ghost">
+          <PenSquare size={14} />
+          {label}
+        </Button>
+      )}
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
           <Modal.Dialog>

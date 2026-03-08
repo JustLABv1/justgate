@@ -71,119 +71,45 @@ export interface QueryResult<T> {
   error?: string;
 }
 
+export interface TopologySnapshot {
+  generatedAt: string;
+  runtime: RuntimeState;
+  stats: OverviewStats;
+  tenants: TenantSummary[];
+  routes: RouteSummary[];
+  tokens: TokenSummary[];
+  auditEvents: AuditEvent[];
+}
+
 export const fallbackOverview: AdminOverview = {
-  generatedAt: "2026-03-07T10:30:00Z",
+  generatedAt: new Date().toISOString(),
   runtime: {
     status: "offline",
-    version: "seed-frontend-fallback",
-    storeKind: "memory",
+    version: "v0.0.0-dev",
+    storeKind: "none",
   },
   stats: {
-    tenants: 2,
-    routes: 3,
-    activeTokens: 2,
-    auditEvents24h: 12,
+    tenants: 0,
+    routes: 0,
+    activeTokens: 0,
+    auditEvents24h: 0,
   },
 };
 
-export const fallbackTenants: TenantSummary[] = [
-  {
-    id: "tenant-acme",
-    name: "Acme Observability",
-    tenantID: "acme-prod",
-    upstreamURL: "http://localhost:9009",
-    authMode: "header",
-    headerName: "X-Scope-OrgID",
-  },
-  {
-    id: "tenant-northstar",
-    name: "Northstar Platform",
-    tenantID: "northstar-int",
-    upstreamURL: "http://localhost:9010",
-    authMode: "header",
-    headerName: "X-Scope-OrgID",
-  },
-];
+export const fallbackTenants: TenantSummary[] = [];
 
-export const fallbackRoutes: RouteSummary[] = [
-  {
-    id: "route-mimir",
-    slug: "mimir",
-    targetPath: "/api/v1",
-    tenantID: "acme-prod",
-    requiredScope: "metrics:read",
-    methods: ["GET"],
-  },
-  {
-    id: "route-rules",
-    slug: "rules",
-    targetPath: "/prometheus/config/v1/rules",
-    tenantID: "acme-prod",
-    requiredScope: "rules:read",
-    methods: ["GET"],
-  },
-  {
-    id: "route-team-a",
-    slug: "team-a-metrics",
-    targetPath: "/api/v1/push",
-    tenantID: "northstar-int",
-    requiredScope: "metrics:write",
-    methods: ["POST"],
-  },
-];
+export const fallbackRoutes: RouteSummary[] = [];
 
-export const fallbackTokens: TokenSummary[] = [
-  {
-    id: "tok_ops_reader",
-    name: "ops-reader",
-    tenantID: "acme-prod",
-    scopes: ["metrics:read", "rules:read"],
-    expiresAt: "2026-06-30T00:00:00Z",
-    lastUsedAt: "2026-03-07T09:26:00Z",
-    preview: "jpg_ops_reader_...d3f",
-    active: true,
-  },
-  {
-    id: "tok_agent_push",
-    name: "agent-push",
-    tenantID: "northstar-int",
-    scopes: ["metrics:write"],
-    expiresAt: "2026-05-14T00:00:00Z",
-    lastUsedAt: "2026-03-07T08:11:00Z",
-    preview: "jpg_agent_push_...7ab",
-    active: true,
-  },
-];
+export const fallbackTokens: TokenSummary[] = [];
 
-export const fallbackAuditEvents: AuditEvent[] = [
-  {
-    id: "audit-001",
-    timestamp: "2026-03-07T09:26:00Z",
-    routeSlug: "mimir",
-    tenantID: "acme-prod",
-    tokenID: "tok_ops_reader",
-    method: "GET",
-    status: 200,
-    upstreamURL: "http://localhost:9009/api/v1/query",
-  },
-  {
-    id: "audit-002",
-    timestamp: "2026-03-07T08:11:00Z",
-    routeSlug: "team-a-metrics",
-    tenantID: "northstar-int",
-    tokenID: "tok_agent_push",
-    method: "POST",
-    status: 202,
-    upstreamURL: "http://localhost:9010/api/v1/push",
-  },
-  {
-    id: "audit-003",
-    timestamp: "2026-03-07T07:59:00Z",
-    routeSlug: "rules",
-    tenantID: "acme-prod",
-    tokenID: "tok_ops_reader",
-    method: "GET",
-    status: 401,
-    upstreamURL: "http://localhost:9009/prometheus/config/v1/rules",
-  },
-];
+export const fallbackAuditEvents: AuditEvent[] = [];
+
+export const fallbackTopology: TopologySnapshot = {
+  generatedAt: fallbackOverview.generatedAt,
+  runtime: fallbackOverview.runtime,
+  stats: fallbackOverview.stats,
+  tenants: fallbackTenants,
+  routes: fallbackRoutes,
+  tokens: fallbackTokens,
+  auditEvents: fallbackAuditEvents,
+};

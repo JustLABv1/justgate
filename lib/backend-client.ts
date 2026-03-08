@@ -4,12 +4,14 @@ import {
     fallbackOverview,
     fallbackRoutes,
     fallbackTenants,
+  fallbackTopology,
     fallbackTokens,
     type AdminOverview,
     type AuditEvent,
     type QueryResult,
     type RouteSummary,
     type TenantSummary,
+  type TopologySnapshot,
     type TokenSummary,
 } from "@/lib/contracts";
 
@@ -62,4 +64,35 @@ export function getTokens() {
 
 export function getAuditEvents() {
   return fetchBackend<AuditEvent[]>("/api/v1/admin/audit", fallbackAuditEvents);
+}
+
+export async function getTopology(): Promise<QueryResult<TopologySnapshot>> {
+  const [overview, tenants, routes, tokens, auditEvents] = await Promise.all([
+    getOverview(),
+    getTenants(),
+    getRoutes(),
+    getTokens(),
+    getAuditEvents(),
+  ]);
+
+  const allLive = [overview, tenants, routes, tokens, auditEvents].every((result) => result.source === "backend");
+  const errors = [overview, tenants, routes, tokens, auditEvents]
+    .map((result) => result.error)
+    .filter(Boolean)
+    .join(" | ");
+
+  return {
+    data: {
+      generatedAt: overview.data.generatedAt,
+      runtime: overview.data.runtime,
+      stats: overview.data.stats,
+      tenants: tenants.data,
+      routes: routes.data,
+      tokens: tokens.data,
+      auditEvents: auditEvents.data,
+    },
+    source: allLive ? "backend" : "fallback",
+    backendUrl,
+    error: errors || undefined,
+  } satisfies QueryResult<TopologySnapshot>;
 }

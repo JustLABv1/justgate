@@ -21,6 +21,8 @@
 /build
 proxy-backend/*.db
 proxy-backend/*.sqlite
+proxy-backend/*.db-shm
+proxy-backend/*.db-wal
 
 # misc
 .DS_Store

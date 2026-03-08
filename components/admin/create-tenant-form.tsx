@@ -1,6 +1,7 @@
 "use client";
 
 import type { TenantSummary } from "@/lib/contracts";
+import type { ReactNode } from "react";
 import { Button, Chip, Form, Input, Label, Modal, TextField } from "@heroui/react";
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -9,25 +10,46 @@ import { useState, useTransition } from "react";
 interface CreateTenantFormProps {
   existingCount: number;
   disabled?: boolean;
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  trigger?: ReactNode;
+  onCreated?: (tenant: TenantSummary) => void;
 }
 
-export function CreateTenantForm({ existingCount, disabled = false }: CreateTenantFormProps) {
+function toFormState() {
+  return {
+    headerName: "X-Scope-OrgID",
+    name: "",
+    tenantID: "",
+    upstreamURL: "",
+  };
+}
+
+export function CreateTenantForm({ existingCount, disabled = false, isOpen, onOpenChange, trigger, onCreated }: CreateTenantFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
   const [createdTenant, setCreatedTenant] = useState<TenantSummary>();
+  const [formState, setFormState] = useState(() => toFormState());
+
+  function handleOpenChange(open: boolean) {
+    if (open) {
+      setFormState(toFormState());
+      setError(undefined);
+      setCreatedTenant(undefined);
+    }
+
+    onOpenChange?.(open);
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(undefined);
-
-    const form = event.currentTarget;
-    const formData = new FormData(form);
     const payload = {
-      name: String(formData.get("name") || ""),
-      tenantID: String(formData.get("tenantID") || ""),
-      upstreamURL: String(formData.get("upstreamURL") || ""),
-      headerName: String(formData.get("headerName") || ""),
+      name: formState.name,
+      tenantID: formState.tenantID,
+      upstreamURL: formState.upstreamURL,
+      headerName: formState.headerName,
       authMode: "header",
     };
 
@@ -51,18 +73,22 @@ export function CreateTenantForm({ existingCount, disabled = false }: CreateTena
     }
 
     setCreatedTenant(result as TenantSummary);
-    form.reset();
+    setFormState(toFormState());
     startTransition(() => {
       router.refresh();
     });
+    onCreated?.(result as TenantSummary);
+    onOpenChange?.(false);
   }
 
   return (
-    <Modal>
-      <Button className="bg-foreground text-background" isDisabled={disabled}>
-        <Plus size={16} />
-        New tenant
-      </Button>
+    <Modal isOpen={isOpen} onOpenChange={handleOpenChange}>
+      {trigger ?? (
+        <Button className="bg-foreground text-background" isDisabled={disabled}>
+          <Plus size={16} />
+          New tenant
+        </Button>
+      )}
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
           <Modal.Dialog>
@@ -83,19 +109,19 @@ export function CreateTenantForm({ existingCount, disabled = false }: CreateTena
               <Form className="grid gap-4" onSubmit={handleSubmit}>
                 <TextField className="grid gap-2">
                   <Label>Tenant name</Label>
-                  <Input name="name" placeholder="Acme Observability" required />
+                  <Input placeholder="Acme Observability" required value={formState.name} onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} />
                 </TextField>
                 <TextField className="grid gap-2">
                   <Label>Tenant ID</Label>
-                  <Input name="tenantID" placeholder="acme-prod" required />
+                  <Input placeholder="acme-prod" required value={formState.tenantID} onChange={(event) => setFormState((current) => ({ ...current, tenantID: event.target.value }))} />
                 </TextField>
                 <TextField className="grid gap-2">
                   <Label>Upstream URL</Label>
-                  <Input name="upstreamURL" placeholder="https://mimir.internal.example" required type="url" />
+                  <Input placeholder="https://mimir.internal.example" required type="url" value={formState.upstreamURL} onChange={(event) => setFormState((current) => ({ ...current, upstreamURL: event.target.value }))} />
                 </TextField>
                 <TextField className="grid gap-2">
                   <Label>Injected header</Label>
-                  <Input name="headerName" defaultValue="X-Scope-OrgID" required />
+                  <Input required value={formState.headerName} onChange={(event) => setFormState((current) => ({ ...current, headerName: event.target.value }))} />
                 </TextField>
                 {error ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">{error}</div> : null}
                 {createdTenant ? (

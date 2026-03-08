@@ -1,0 +1,1092 @@
+"use client";
+
+import type { QueryResult, TopologySnapshot } from "@/lib/contracts";
+import { CreateRouteForm } from "@/components/admin/create-route-form";
+import { CreateTenantForm } from "@/components/admin/create-tenant-form";
+import { CreateTokenForm } from "@/components/admin/create-token-form";
+import { UpdateRouteForm } from "@/components/admin/update-route-form";
+import { UpdateTenantForm } from "@/components/admin/update-tenant-form";
+import { Button, Card, Chip, Surface } from "@heroui/react";
+import { Activity, ArrowRight, KeyRound, LocateFixed, Move, Plus, RefreshCw, Route, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+interface LiveTopologyMapProps {
+  initialTopology: QueryResult<TopologySnapshot>;
+}
+
+type SelectedNode =
+  | { kind: "token"; id: string }
+  | { kind: "route"; id: string }
+  | { kind: "tenant"; id: string }
+  | null;
+
+type ConnectionMode =
+  | { kind: "route-from-tenant" }
+  | { kind: "token-from-tenant" }
+  | { kind: "token-from-route" }
+  | null;
+
+type GraphNode = {
+  id: string;
+  kind: "token" | "route" | "tenant" | "draft";
+  label: string;
+  meta: string;
+  stats?: string;
+  x: number;
+  y: number;
+  tone: string;
+};
+
+type GraphEdge = {
+  id: string;
+  from: string;
+  to: string;
+  kind: "access" | "binding" | "draft";
+  hot: boolean;
+};
+
+type CameraState = {
+  scale: number;
+  x: number;
+  y: number;
+};
+
+const SCENE_WIDTH = 1840;
+const LANE_X = {
+  token: 240,
+  route: 920,
+  tenant: 1600,
+};
+const CAMERA_MARGIN = 160;
+const SCALE_LIMITS = {
+  max: 1.35,
+  min: 0.18,
+};
+
+function distributePositions(count: number, start: number, end: number) {
+  if (count <= 1) {
+    return [(start + end) / 2];
+  }
+
+  return Array.from({ length: count }, (_, index) => start + ((end - start) * index) / (count - 1));
+}
+
+function pathBetween(from: GraphNode, to: GraphNode) {
+  const forward = from.x <= to.x;
+  const startX = from.x + (forward ? 120 : -120);
+  const endX = to.x + (forward ? -120 : 120);
+  const startY = from.y;
+  const endY = to.y;
+  const controlOffset = Math.max(120, Math.abs(endX - startX) * 0.36);
+  return `M ${startX} ${startY} C ${startX + (forward ? controlOffset : -controlOffset)} ${startY}, ${endX - (forward ? controlOffset : -controlOffset)} ${endY}, ${endX} ${endY}`;
+}
+
+function edgeGlow(color: string) {
+  return `0 0 0 6px color-mix(in oklab, ${color} 18%, transparent)`;
+}
+
+function clampCamera(camera: CameraState, viewportWidth: number, viewportHeight: number, sceneHeight: number): CameraState {
+  const scaledWidth = SCENE_WIDTH * camera.scale;
+  const scaledHeight = sceneHeight * camera.scale;
+
+  let x = camera.x;
+  if (scaledWidth + CAMERA_MARGIN * 2 <= viewportWidth) {
+    x = (viewportWidth - scaledWidth) / 2;
+  } else {
+    const minX = viewportWidth - scaledWidth - CAMERA_MARGIN;
+    const maxX = CAMERA_MARGIN;
+    x = Math.min(maxX, Math.max(minX, camera.x));
+  }
+
+  let y = camera.y;
+  if (scaledHeight + CAMERA_MARGIN * 2 <= viewportHeight) {
+    y = (viewportHeight - scaledHeight) / 2;
+  } else {
+    const minY = viewportHeight - scaledHeight - CAMERA_MARGIN;
+    const maxY = CAMERA_MARGIN;
+    y = Math.min(maxY, Math.max(minY, camera.y));
+  }
+
+  return {
+    scale: camera.scale,
+    x,
+    y,
+  };
+}
+
+function fitCamera(viewportWidth: number, viewportHeight: number, sceneHeight: number): CameraState {
+  const scale = Math.min(
+    SCALE_LIMITS.max,
+    Math.max(
+      SCALE_LIMITS.min,
+      Math.min((viewportWidth - 80) / SCENE_WIDTH, (viewportHeight - 120) / sceneHeight),
+    ),
+  );
+
+  return clampCamera(
+    {
+      scale,
+      x: (viewportWidth - SCENE_WIDTH * scale) / 2,
+      y: (viewportHeight - sceneHeight * scale) / 2,
+    },
+    viewportWidth,
+    viewportHeight,
+    sceneHeight,
+  );
+}
+
+export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
+  const [snapshot, setSnapshot] = useState(initialTopology);
+  const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>(null);
+  const [streamStatus, setStreamStatus] = useState<"connecting" | "live" | "retrying" | "offline">("connecting");
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [camera, setCamera] = useState<CameraState>({ scale: 0.8, x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [isCreateTenantOpen, setIsCreateTenantOpen] = useState(false);
+  const [isCreateRouteOpen, setIsCreateRouteOpen] = useState(false);
+  const [isCreateTokenOpen, setIsCreateTokenOpen] = useState(false);
+  const [routeDraftTenantID, setRouteDraftTenantID] = useState<string>();
+  const [tokenDraftTenantID, setTokenDraftTenantID] = useState<string>();
+  const [tokenDraftScopes, setTokenDraftScopes] = useState<string>();
+  const [editingRouteID, setEditingRouteID] = useState<string>();
+  const [editingTenantID, setEditingTenantID] = useState<string>();
+  const reconnectTimerRef = useRef<number | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const connectionAttemptRef = useRef(0);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const panRef = useRef<{ originX: number; originY: number; startX: number; startY: number } | null>(null);
+
+  const routeTenantIDs = useMemo(() => snapshot.data.tenants.map((tenant) => tenant.tenantID), [snapshot.data.tenants]);
+
+  const selectedRoute = useMemo(
+    () => (editingRouteID ? snapshot.data.routes.find((route) => route.id === editingRouteID) || null : null),
+    [editingRouteID, snapshot.data.routes],
+  );
+
+  const selectedTenant = useMemo(
+    () => (editingTenantID ? snapshot.data.tenants.find((tenant) => tenant.id === editingTenantID) || null : null),
+    [editingTenantID, snapshot.data.tenants],
+  );
+
+  const selectedRouteForInspector = useMemo(
+    () => (selectedNode?.kind === "route" ? snapshot.data.routes.find((route) => route.id === selectedNode.id) || null : null),
+    [selectedNode, snapshot.data.routes],
+  );
+
+  const selectedTenantForInspector = useMemo(
+    () => (selectedNode?.kind === "tenant" ? snapshot.data.tenants.find((tenant) => tenant.id === selectedNode.id) || null : null),
+    [selectedNode, snapshot.data.tenants],
+  );
+
+  const selectedTokenForInspector = useMemo(
+    () => (selectedNode?.kind === "token" ? snapshot.data.tokens.find((token) => token.id === selectedNode.id) || null : null),
+    [selectedNode, snapshot.data.tokens],
+  );
+
+  async function pollTopology() {
+    setIsRefreshing(true);
+    try {
+      const response = await fetch("/api/admin/topology", { cache: "no-store" });
+      if (!response.ok) {
+        return;
+      }
+
+      const next = (await response.json()) as QueryResult<TopologySnapshot>;
+      setSnapshot(next);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  function clearConnectionMode() {
+    setConnectionMode(null);
+    setRouteDraftTenantID(undefined);
+    setTokenDraftTenantID(undefined);
+    setTokenDraftScopes(undefined);
+  }
+
+  function handleTopologyChanged() {
+    void pollTopology();
+  }
+
+  useEffect(() => {
+    let disposed = false;
+
+    const scheduleReconnect = () => {
+      if (disposed) {
+        return;
+      }
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+      }
+      reconnectTimerRef.current = window.setTimeout(() => {
+        void connect();
+      }, 3000);
+    };
+
+    const connect = async () => {
+      const attemptID = connectionAttemptRef.current + 1;
+      connectionAttemptRef.current = attemptID;
+
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        return;
+      }
+
+      setStreamStatus((current) => (current === "live" ? current : current === "retrying" ? "retrying" : "connecting"));
+
+      try {
+        const response = await fetch("/api/admin/topology/socket-info", { cache: "no-store" });
+        if (disposed || attemptID !== connectionAttemptRef.current) {
+          return;
+        }
+        if (!response.ok) {
+          setStreamStatus("offline");
+          scheduleReconnect();
+          return;
+        }
+
+        const socketInfo = (await response.json()) as { token: string; wsUrl: string };
+        const socket = new WebSocket(`${socketInfo.wsUrl}?access_token=${encodeURIComponent(socketInfo.token)}`);
+        socketRef.current = socket;
+
+        socket.onopen = () => {
+          if (disposed || attemptID !== connectionAttemptRef.current) {
+            return;
+          }
+          if (reconnectTimerRef.current) {
+            window.clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+          }
+          setStreamStatus("live");
+        };
+
+        socket.onmessage = (event) => {
+          if (disposed || attemptID !== connectionAttemptRef.current) {
+            return;
+          }
+          const message = JSON.parse(event.data) as { type: "snapshot" | "error"; data?: TopologySnapshot };
+          if (message.type !== "snapshot" || !message.data) {
+            return;
+          }
+          setSnapshot((current) => ({
+            ...current,
+            data: message.data as TopologySnapshot,
+            error: undefined,
+            source: "backend",
+          }));
+        };
+
+        socket.onclose = () => {
+          if (disposed || attemptID !== connectionAttemptRef.current) {
+            return;
+          }
+          socketRef.current = null;
+          setStreamStatus("retrying");
+          scheduleReconnect();
+        };
+
+        socket.onerror = () => {
+          if (disposed || attemptID !== connectionAttemptRef.current) {
+            return;
+          }
+          setStreamStatus("retrying");
+          socket.close();
+        };
+      } catch {
+        if (disposed || attemptID !== connectionAttemptRef.current) {
+          return;
+        }
+        setStreamStatus("offline");
+        scheduleReconnect();
+      }
+    };
+
+    void connect();
+
+    return () => {
+      disposed = true;
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+      }
+      socketRef.current?.close();
+      socketRef.current = null;
+    };
+  }, []);
+
+  const graph = useMemo(() => {
+    const tokens = [...snapshot.data.tokens].sort((left, right) => Number(right.active) - Number(left.active) || left.name.localeCompare(right.name));
+    const routes = [...snapshot.data.routes].sort((left, right) => left.slug.localeCompare(right.slug));
+    const tenants = [...snapshot.data.tenants].sort((left, right) => left.tenantID.localeCompare(right.tenantID));
+    const recentAudits = snapshot.data.auditEvents.slice(0, 18);
+
+    const rowCount = Math.max(tokens.length, routes.length, tenants.length, 1);
+    const sceneHeight = Math.max(980, 260 + rowCount * 170);
+    const tokenY = distributePositions(tokens.length || 1, 220, sceneHeight - 180);
+    const routeY = distributePositions(routes.length || 1, 180, sceneHeight - 180);
+    const tenantY = distributePositions(tenants.length || 1, 220, sceneHeight - 180);
+    const routeMetrics = new Map<string, { throughput: number; errors: number }>();
+
+    for (const route of routes) {
+      const matchingAudits = recentAudits.filter((audit) => audit.routeSlug === route.slug && audit.tenantID === route.tenantID);
+      routeMetrics.set(route.id, {
+        throughput: matchingAudits.length,
+        errors: matchingAudits.filter((audit) => audit.status >= 400).length,
+      });
+    }
+
+    const tokenNodes: GraphNode[] = tokens.map((token, index) => ({
+      id: `token:${token.id}`,
+      kind: "token",
+      label: token.name,
+      meta: `${token.tenantID} • ${token.scopes.join(", ")}`,
+      stats: token.active ? "Active credential" : "Inactive credential",
+      x: LANE_X.token,
+      y: tokenY[index] ?? sceneHeight / 2,
+      tone: token.active ? "var(--success)" : "var(--muted)",
+    }));
+
+    const routeNodes: GraphNode[] = routes.map((route, index) => {
+      const metrics = routeMetrics.get(route.id) || { throughput: 0, errors: 0 };
+      return {
+        id: `route:${route.id}`,
+        kind: "route",
+        label: `/proxy/${route.slug}`,
+        meta: `${route.tenantID} • ${route.requiredScope} • ${route.methods.join(", ")}`,
+        stats: `${metrics.throughput} req • ${metrics.errors} err`,
+        x: LANE_X.route,
+        y: routeY[index] ?? sceneHeight / 2,
+        tone: "var(--accent)",
+      } satisfies GraphNode;
+    });
+
+    const tenantNodes: GraphNode[] = tenants.map((tenant, index) => ({
+      id: `tenant:${tenant.id}`,
+      kind: "tenant",
+      label: tenant.name,
+      meta: `${tenant.tenantID} • ${tenant.upstreamURL}`,
+      stats: tenant.headerName,
+      x: LANE_X.tenant,
+      y: tenantY[index] ?? sceneHeight / 2,
+      tone: "var(--foreground)",
+    }));
+
+    const allNodes = [...tokenNodes, ...routeNodes, ...tenantNodes];
+    const tenantNodeByTenantID = new Map(tenants.map((tenant, index) => [tenant.tenantID, tenantNodes[index]]));
+    const routeNodeByRouteID = new Map(routes.map((route, index) => [route.id, routeNodes[index]]));
+    const hotRouteKeys = new Set(recentAudits.map((event) => `route:${event.routeSlug}:${event.tenantID}`));
+    const hotTokenKeys = new Set(recentAudits.map((event) => `token:${event.tokenID}:${event.routeSlug}`));
+
+    const tokenEdges: GraphEdge[] = [];
+    for (const token of tokens) {
+      for (const route of routes) {
+        const canAccessRoute = token.tenantID === route.tenantID && token.scopes.includes(route.requiredScope);
+        if (!canAccessRoute) {
+          continue;
+        }
+        tokenEdges.push({
+          id: `edge:${token.id}:${route.id}`,
+          from: `token:${token.id}`,
+          to: `route:${route.id}`,
+          kind: "access",
+          hot: hotTokenKeys.has(`token:${token.id}:${route.slug}`),
+        });
+      }
+    }
+
+    const tenantEdges: GraphEdge[] = routes
+      .map((route) => {
+        const tenant = tenants.find((item) => item.tenantID === route.tenantID);
+        if (!tenant) {
+          return null;
+        }
+        return {
+          id: `edge:${route.id}:${tenant.id}`,
+          from: `route:${route.id}`,
+          to: `tenant:${tenant.id}`,
+          kind: "binding",
+          hot: hotRouteKeys.has(`route:${route.slug}:${route.tenantID}`),
+        } satisfies GraphEdge;
+      })
+      .filter(Boolean) as GraphEdge[];
+
+    return {
+      nodes: allNodes,
+      recentAudits,
+      routeNodeByRouteID,
+      sceneHeight,
+      tenantEdges,
+      tenantNodeByTenantID,
+      tokenEdges,
+    };
+  }, [snapshot]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    setCamera((current) => {
+      const nextCamera = fitCamera(viewport.clientWidth, viewport.clientHeight, graph.sceneHeight);
+      if (
+        Math.abs(current.scale - nextCamera.scale) < 0.001 &&
+        Math.abs(current.x - nextCamera.x) < 0.5 &&
+        Math.abs(current.y - nextCamera.y) < 0.5
+      ) {
+        return current;
+      }
+
+      return nextCamera;
+    });
+
+    function handleResize() {
+      const activeViewport = viewportRef.current;
+      if (!activeViewport) {
+        return;
+      }
+
+      setCamera((current) => clampCamera(current, activeViewport.clientWidth, activeViewport.clientHeight, graph.sceneHeight));
+    }
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [graph.sceneHeight]);
+
+  const draftGraph = useMemo(() => {
+    const draftNodes: GraphNode[] = [];
+    const draftEdges: GraphEdge[] = [];
+
+    if (routeDraftTenantID) {
+      const tenantNode = graph.tenantNodeByTenantID.get(routeDraftTenantID);
+      if (tenantNode) {
+        draftNodes.push({
+          id: "draft:route",
+          kind: "draft",
+          label: "New route",
+          meta: `Linked to ${routeDraftTenantID}`,
+          stats: "Pending route details",
+          x: 1220,
+          y: tenantNode.y,
+          tone: "var(--warning)",
+        });
+        draftEdges.push({
+          id: `draft-edge:route:${routeDraftTenantID}`,
+          from: "draft:route",
+          to: tenantNode.id,
+          kind: "draft",
+          hot: true,
+        });
+      }
+    }
+
+    if (tokenDraftTenantID) {
+      const tenantNode = graph.tenantNodeByTenantID.get(tokenDraftTenantID);
+      const routeNode = selectedNode?.kind === "route" && tokenDraftScopes ? graph.routeNodeByRouteID.get(selectedNode.id) : null;
+
+      draftNodes.push({
+        id: "draft:token",
+        kind: "draft",
+        label: "New token",
+        meta: tokenDraftScopes ? `${tokenDraftTenantID} • ${tokenDraftScopes}` : `Linked to ${tokenDraftTenantID}`,
+        stats: tokenDraftScopes ? "Will satisfy selected route" : "Tenant-scoped credential",
+        x: 520,
+        y: routeNode?.y ?? tenantNode?.y ?? graph.sceneHeight / 2,
+        tone: "var(--warning)",
+      });
+
+      if (routeNode) {
+        draftEdges.push({
+          id: `draft-edge:token-route:${routeNode.id}`,
+          from: "draft:token",
+          to: routeNode.id,
+          kind: "draft",
+          hot: true,
+        });
+      } else if (tenantNode) {
+        draftEdges.push({
+          id: `draft-edge:token-tenant:${tenantNode.id}`,
+          from: "draft:token",
+          to: tenantNode.id,
+          kind: "draft",
+          hot: true,
+        });
+      }
+    }
+
+    return {
+      draftEdges,
+      draftNodes,
+    };
+  }, [graph.routeNodeByRouteID, graph.sceneHeight, graph.tenantNodeByTenantID, routeDraftTenantID, selectedNode, tokenDraftScopes, tokenDraftTenantID]);
+
+  const selectedNodeId = selectedNode ? `${selectedNode.kind}:${selectedNode.id}` : null;
+
+  const emphasis = useMemo(() => {
+    const activeNodes = new Set<string>();
+    const activeEdges = new Set<string>();
+
+    if (selectedNodeId) {
+      activeNodes.add(selectedNodeId);
+      for (const edge of [...graph.tokenEdges, ...graph.tenantEdges]) {
+        if (edge.from === selectedNodeId || edge.to === selectedNodeId) {
+          activeEdges.add(edge.id);
+          activeNodes.add(edge.from);
+          activeNodes.add(edge.to);
+        }
+      }
+    }
+
+    for (const node of draftGraph.draftNodes) {
+      activeNodes.add(node.id);
+    }
+    for (const edge of draftGraph.draftEdges) {
+      activeEdges.add(edge.id);
+      activeNodes.add(edge.from);
+      activeNodes.add(edge.to);
+    }
+
+    return {
+      edges: activeEdges,
+      nodes: activeNodes,
+    };
+  }, [draftGraph.draftEdges, draftGraph.draftNodes, graph.tenantEdges, graph.tokenEdges, selectedNodeId]);
+
+  function handleBackgroundPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    if (target.closest("button")) {
+      return;
+    }
+
+    panRef.current = {
+      originX: camera.x,
+      originY: camera.y,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    setIsPanning(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleBackgroundPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const viewport = viewportRef.current;
+    if (!viewport || !panRef.current) {
+      return;
+    }
+
+    const nextCamera = clampCamera(
+      {
+        ...camera,
+        x: panRef.current.originX + (event.clientX - panRef.current.startX),
+        y: panRef.current.originY + (event.clientY - panRef.current.startY),
+      },
+      viewport.clientWidth,
+      viewport.clientHeight,
+      graph.sceneHeight,
+    );
+
+    setCamera(nextCamera);
+  }
+
+  function handleBackgroundPointerEnd(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    panRef.current = null;
+    setIsPanning(false);
+  }
+
+  function handleWheel(event: React.WheelEvent<HTMLDivElement>) {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    event.preventDefault();
+    const rect = viewport.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+    const nextScale = Math.max(SCALE_LIMITS.min, Math.min(SCALE_LIMITS.max, camera.scale - event.deltaY * 0.001));
+    const sceneX = (pointerX - camera.x) / camera.scale;
+    const sceneY = (pointerY - camera.y) / camera.scale;
+
+    setCamera(
+      clampCamera(
+        {
+          scale: nextScale,
+          x: pointerX - sceneX * nextScale,
+          y: pointerY - sceneY * nextScale,
+        },
+        viewport.clientWidth,
+        viewport.clientHeight,
+        graph.sceneHeight,
+      ),
+    );
+  }
+
+  function activateConnectionMode(mode: ConnectionMode) {
+    setSelectedNode(null);
+    setConnectionMode(mode);
+    setRouteDraftTenantID(undefined);
+    setTokenDraftTenantID(undefined);
+    setTokenDraftScopes(undefined);
+  }
+
+  function handleNodeSelect(node: GraphNode) {
+    const [kind, id] = node.id.split(":");
+
+    if (connectionMode?.kind === "route-from-tenant" && kind === "tenant") {
+      const tenant = snapshot.data.tenants.find((item) => item.id === id);
+      if (!tenant) {
+        return;
+      }
+      setRouteDraftTenantID(tenant.tenantID);
+      setIsCreateRouteOpen(true);
+      setConnectionMode(null);
+      return;
+    }
+
+    if (connectionMode?.kind === "token-from-tenant" && kind === "tenant") {
+      const tenant = snapshot.data.tenants.find((item) => item.id === id);
+      if (!tenant) {
+        return;
+      }
+      setTokenDraftTenantID(tenant.tenantID);
+      setTokenDraftScopes(undefined);
+      setIsCreateTokenOpen(true);
+      setConnectionMode(null);
+      return;
+    }
+
+    if (connectionMode?.kind === "token-from-route" && kind === "route") {
+      const route = snapshot.data.routes.find((item) => item.id === id);
+      if (!route) {
+        return;
+      }
+      setSelectedNode({ kind: "route", id: route.id });
+      setTokenDraftTenantID(route.tenantID);
+      setTokenDraftScopes(route.requiredScope);
+      setIsCreateTokenOpen(true);
+      setConnectionMode(null);
+      return;
+    }
+
+    if (kind === "route" || kind === "tenant" || kind === "token") {
+      setSelectedNode((current) => (current?.kind === kind && current.id === id ? null : { kind, id }));
+    }
+  }
+
+  const graphEdges = [...graph.tokenEdges, ...graph.tenantEdges, ...draftGraph.draftEdges];
+  const graphNodes = [...graph.nodes, ...draftGraph.draftNodes];
+  const isLive = snapshot.source === "backend";
+  const modalTrigger = <span aria-hidden className="hidden" />;
+  const chipLabel = streamStatus === "live"
+    ? "WebSocket live"
+    : streamStatus === "retrying"
+      ? "Reconnecting"
+      : streamStatus === "connecting"
+        ? "Connecting..."
+        : isLive
+          ? "Snapshot live"
+          : "Fallback snapshot";
+
+  const chipClassName = streamStatus === "live"
+    ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-100"
+    : streamStatus === "retrying" || streamStatus === "connecting"
+      ? "bg-amber-100 text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"
+      : "bg-background text-foreground ring-1 ring-border";
+
+  const inspectorTitle = selectedRouteForInspector
+    ? selectedRouteForInspector.slug
+    : selectedTenantForInspector
+      ? selectedTenantForInspector.name
+      : selectedTokenForInspector
+        ? selectedTokenForInspector.name
+        : "Nothing selected";
+
+  const inspectorMeta = selectedRouteForInspector
+    ? `${selectedRouteForInspector.tenantID} • ${selectedRouteForInspector.requiredScope}`
+    : selectedTenantForInspector
+      ? selectedTenantForInspector.upstreamURL
+      : selectedTokenForInspector
+        ? `${selectedTokenForInspector.tenantID} • ${selectedTokenForInspector.scopes.join(", ")}`
+        : "Select a tenant, route, or token node to inspect its available actions and live links.";
+
+  const connectionHelper = connectionMode?.kind === "route-from-tenant"
+    ? "Click a tenant node to create a route already connected to it."
+    : connectionMode?.kind === "token-from-tenant"
+      ? "Click a tenant node to issue a token directly into that tenant."
+      : connectionMode?.kind === "token-from-route"
+        ? "Click a route node to issue a token preloaded with that route’s required scope."
+        : isPanning
+          ? "Dragging the graph camera."
+          : "Drag the background to pan. Use the toolbar to create and connect entities directly on the map.";
+
+  return (
+    <div className="space-y-6">
+      <Surface className="overflow-hidden rounded-[32px] border border-border bg-surface p-6 shadow-sm sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-xs font-medium text-muted-foreground">Topology workspace</div>
+            <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-foreground">Interactive tenant network</h2>
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-muted-foreground">
+              Move around the graph with the mouse, inspect live connections, and create tenants, routes, or tokens directly in the network instead of leaving the workspace.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Chip className={chipClassName}>{chipLabel}</Chip>
+            <Button className="h-9 rounded-full px-3" isDisabled={isRefreshing} size="sm" variant="ghost" onPress={() => void pollTopology()}>
+              <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+              Refresh
+            </Button>
+            <Button className="h-9 rounded-full px-3" size="sm" variant="ghost" onPress={() => {
+              const viewport = viewportRef.current;
+              if (!viewport) {
+                return;
+              }
+              setCamera(fitCamera(viewport.clientWidth, viewport.clientHeight, graph.sceneHeight));
+            }}>
+              <LocateFixed size={14} />
+              Fit view
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Button className="h-10 rounded-full bg-foreground px-4 text-background" isDisabled={snapshot.source !== "backend"} onPress={() => {
+            clearConnectionMode();
+            setIsCreateTenantOpen(true);
+          }}>
+            <Plus size={14} />
+            New tenant
+          </Button>
+          <Button className={connectionMode?.kind === "route-from-tenant" ? "h-10 rounded-full bg-warning px-4 text-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
+            if (connectionMode?.kind === "route-from-tenant") {
+              clearConnectionMode();
+              return;
+            }
+            activateConnectionMode({ kind: "route-from-tenant" });
+          }}>
+            <Route size={14} />
+            Route to tenant
+          </Button>
+          <Button className={connectionMode?.kind === "token-from-tenant" ? "h-10 rounded-full bg-warning px-4 text-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
+            if (connectionMode?.kind === "token-from-tenant") {
+              clearConnectionMode();
+              return;
+            }
+            activateConnectionMode({ kind: "token-from-tenant" });
+          }}>
+            <KeyRound size={14} />
+            Token to tenant
+          </Button>
+          <Button className={connectionMode?.kind === "token-from-route" ? "h-10 rounded-full bg-warning px-4 text-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
+            if (connectionMode?.kind === "token-from-route") {
+              clearConnectionMode();
+              return;
+            }
+            activateConnectionMode({ kind: "token-from-route" });
+          }}>
+            <Sparkles size={14} />
+            Token to route
+          </Button>
+        </div>
+
+        <div className="topology-stage relative mt-6 overflow-hidden rounded-[30px] border border-border p-5">
+          <div
+            ref={viewportRef}
+            className={`relative min-h-[760px] overflow-hidden rounded-[26px] border border-border/80 bg-background/42 ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
+            onPointerDown={handleBackgroundPointerDown}
+            onPointerMove={handleBackgroundPointerMove}
+            onPointerUp={handleBackgroundPointerEnd}
+            onPointerCancel={handleBackgroundPointerEnd}
+            onWheel={handleWheel}
+          >
+            <div
+              className="absolute left-0 top-0 origin-top-left"
+              style={{
+                height: graph.sceneHeight,
+                transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`,
+                width: SCENE_WIDTH,
+              }}
+            >
+              <div className="pointer-events-none absolute inset-0">
+                <div className="absolute left-[90px] top-[54px] text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Tokens</div>
+                <div className="absolute left-[770px] top-[54px] text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Routes</div>
+                <div className="absolute left-[1450px] top-[54px] text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Tenants</div>
+              </div>
+
+              <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${SCENE_WIDTH} ${graph.sceneHeight}`}>
+                {graphEdges.map((edge) => {
+                  const from = graphNodes.find((node) => node.id === edge.from);
+                  const to = graphNodes.find((node) => node.id === edge.to);
+                  if (!from || !to) {
+                    return null;
+                  }
+
+                  const active = emphasis.nodes.size === 0 || emphasis.edges.has(edge.id) || emphasis.nodes.has(edge.from) || emphasis.nodes.has(edge.to);
+                  const className = edge.kind === "draft"
+                    ? "topology-flow-line topology-flow-line--draft"
+                    : edge.hot
+                      ? "topology-flow-line topology-flow-line--hot"
+                      : "topology-flow-line";
+
+                  return (
+                    <g key={edge.id} opacity={active ? 1 : 0.12}>
+                      <path className="topology-flow-line topology-flow-line--glow" d={pathBetween(from, to)} vectorEffect="non-scaling-stroke" />
+                      <path className={className} d={pathBetween(from, to)} vectorEffect="non-scaling-stroke" />
+                    </g>
+                  );
+                })}
+              </svg>
+
+              {graphNodes.map((node) => {
+                const selected = selectedNodeId === node.id;
+                const active = emphasis.nodes.size === 0 || emphasis.nodes.has(node.id);
+                const badge = node.kind === "tenant" ? "Tenant" : node.kind === "route" ? "Route" : node.kind === "token" ? "Token" : "Draft";
+
+                return (
+                  <button
+                    key={node.id}
+                    className="absolute rounded-[26px] border text-left transition-all duration-200 hover:-translate-y-1"
+                    style={{
+                      left: node.x,
+                      opacity: active ? 1 : 0.26,
+                      top: node.y,
+                      transform: "translate(-50%, -50%)",
+                      width: 290,
+                      background: selected
+                        ? "color-mix(in oklab, var(--accent) 8%, var(--surface))"
+                        : node.kind === "draft"
+                          ? "color-mix(in oklab, var(--warning) 10%, var(--surface))"
+                          : "color-mix(in oklab, var(--surface) 88%, white 12%)",
+                      borderColor: selected ? "var(--accent)" : "color-mix(in oklab, var(--border) 82%, white 18%)",
+                      boxShadow: selected
+                        ? "0 24px 50px -30px color-mix(in oklab, var(--accent) 42%, transparent)"
+                        : node.kind === "draft"
+                          ? "0 18px 40px -28px color-mix(in oklab, var(--warning) 40%, transparent)"
+                          : "0 14px 34px -30px color-mix(in oklab, var(--foreground) 25%, transparent)",
+                      backdropFilter: "blur(18px)",
+                    }}
+                    type="button"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={() => handleNodeSelect(node)}
+                  >
+                    <div className="p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="rounded-full border border-border/70 bg-background/75 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{badge}</span>
+                        <span className="h-3 w-3 rounded-full" style={{ background: node.tone, boxShadow: edgeGlow(node.tone) }} />
+                      </div>
+                      <div className="mt-3 text-sm font-semibold leading-5 text-foreground">{node.label}</div>
+                      <div className="mt-1 text-xs leading-5 text-muted-foreground">{node.meta}</div>
+                      {node.stats ? <div className="mt-3 text-[11px] font-medium text-foreground/80">{node.stats}</div> : null}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-border bg-surface/85 px-4 py-3 text-xs text-muted-foreground backdrop-blur-sm">
+              <div className="flex items-center gap-2">
+                <Move size={14} />
+                {connectionHelper}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full border border-border bg-background/75 px-3 py-1">Wheel to zoom</span>
+                <span className="rounded-full border border-border bg-background/75 px-3 py-1">Current zoom {Math.round(camera.scale * 100)}%</span>
+                <span className="rounded-full border border-border bg-background/75 px-3 py-1">Fit view zooms across the full graph</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_320px]">
+          <Surface className="rounded-[26px] border border-border bg-surface/90 p-5 shadow-none xl:col-span-2">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Inspector</div>
+            <div className="mt-3 text-lg font-semibold text-foreground">{inspectorTitle}</div>
+            <div className="mt-2 text-sm leading-6 text-muted-foreground">{inspectorMeta}</div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {selectedTenantForInspector ? (
+                <>
+                  <Button className="h-9 rounded-full px-3" size="sm" variant="ghost" onPress={() => setEditingTenantID(selectedTenantForInspector.id)}>Edit tenant</Button>
+                  <Button className="h-9 rounded-full px-3" size="sm" variant="ghost" onPress={() => {
+                    clearConnectionMode();
+                    setRouteDraftTenantID(selectedTenantForInspector.tenantID);
+                    setIsCreateRouteOpen(true);
+                  }}>New route</Button>
+                  <Button className="h-9 rounded-full px-3" size="sm" variant="ghost" onPress={() => {
+                    clearConnectionMode();
+                    setTokenDraftTenantID(selectedTenantForInspector.tenantID);
+                    setTokenDraftScopes(undefined);
+                    setIsCreateTokenOpen(true);
+                  }}>Issue token</Button>
+                </>
+              ) : null}
+              {selectedRouteForInspector ? (
+                <>
+                  <Button className="h-9 rounded-full px-3" size="sm" variant="ghost" onPress={() => setEditingRouteID(selectedRouteForInspector.id)}>Edit route</Button>
+                  <Button className="h-9 rounded-full px-3" size="sm" variant="ghost" onPress={() => {
+                    clearConnectionMode();
+                    setTokenDraftTenantID(selectedRouteForInspector.tenantID);
+                    setTokenDraftScopes(selectedRouteForInspector.requiredScope);
+                    setIsCreateTokenOpen(true);
+                  }}>Issue token for route</Button>
+                </>
+              ) : null}
+              {selectedTokenForInspector ? <Chip className="bg-background text-foreground ring-1 ring-border">Preview {selectedTokenForInspector.preview}</Chip> : null}
+            </div>
+          </Surface>
+
+          <Surface className="rounded-[26px] border border-border bg-foreground p-5 text-background shadow-none">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-background/65">Graph stats</div>
+            <div className="mt-4 space-y-4">
+              <div>
+                <div className="text-3xl font-semibold tracking-[-0.04em]">{snapshot.data.tenants.length}</div>
+                <div className="text-sm text-background/72">tenants in the workspace</div>
+              </div>
+              <div>
+                <div className="text-3xl font-semibold tracking-[-0.04em]">{snapshot.data.routes.length}</div>
+                <div className="text-sm text-background/72">routes connected across tenants</div>
+              </div>
+              <div>
+                <div className="text-3xl font-semibold tracking-[-0.04em]">{snapshot.data.tokens.filter((token) => token.active).length}</div>
+                <div className="text-sm text-background/72">active tokens represented live</div>
+              </div>
+            </div>
+          </Surface>
+        </div>
+      </Surface>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Surface className="col-span-2 rounded-[32px] border border-border bg-surface p-6 shadow-sm">
+          <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-muted-foreground">
+            <Activity size={14} />
+            Recent Flow activity
+          </div>
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
+            {graph.recentAudits.length === 0 ? (
+              <div className="col-span-full rounded-[24px] border border-border bg-background px-4 py-8 text-center text-sm text-muted-foreground">
+                No recent audit traffic has been recorded yet.
+              </div>
+            ) : (
+              graph.recentAudits.slice(0, 4).map((event) => (
+                <Card key={event.id} className="rounded-[24px] border border-border bg-background shadow-none">
+                  <Card.Content className="space-y-3 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-foreground">/{event.routeSlug}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{new Date(event.timestamp).toLocaleTimeString()}</div>
+                      </div>
+                      <Chip className={event.status < 400 ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-100" : "bg-amber-100 text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"}>{event.status}</Chip>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span className="rounded-full border border-border bg-surface px-2 py-1">{event.tokenID}</span>
+                      <ArrowRight size={12} />
+                      <span className="rounded-full border border-border bg-surface px-2 py-1">{event.tenantID}</span>
+                    </div>
+                  </Card.Content>
+                </Card>
+              ))
+            )}
+          </div>
+        </Surface>
+
+        <Surface className="rounded-[32px] border border-border bg-surface p-6 shadow-sm">
+          <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Workspace hints</div>
+          <div className="mt-4 space-y-3 text-sm leading-6 text-muted-foreground">
+            <div>Use the mouse to pan the scene and the wheel to zoom into a dense section.</div>
+            <div>Route to tenant asks you to click a tenant node, then opens a route modal already bound to that tenant.</div>
+            <div>Token to route asks you to click a route node, then opens a token modal preloaded with the route scope and tenant.</div>
+          </div>
+        </Surface>
+      </div>
+
+      <CreateTenantForm
+        disabled={snapshot.source !== "backend"}
+        existingCount={snapshot.data.tenants.length}
+        isOpen={isCreateTenantOpen}
+        onCreated={() => {
+          handleTopologyChanged();
+        }}
+        onOpenChange={(open) => {
+          setIsCreateTenantOpen(open);
+        }}
+        trigger={modalTrigger}
+      />
+
+      <CreateRouteForm
+        disabled={snapshot.source !== "backend"}
+        existingCount={snapshot.data.routes.length}
+        initialTenantID={routeDraftTenantID}
+        isOpen={isCreateRouteOpen}
+        onCreated={() => {
+          clearConnectionMode();
+          handleTopologyChanged();
+        }}
+        onOpenChange={(open) => {
+          setIsCreateRouteOpen(open);
+          if (!open) {
+            clearConnectionMode();
+          }
+        }}
+        tenantIDs={routeTenantIDs}
+        trigger={modalTrigger}
+      />
+
+      <CreateTokenForm
+        disabled={snapshot.source !== "backend"}
+        existingCount={snapshot.data.tokens.length}
+        initialScopes={tokenDraftScopes}
+        initialTenantID={tokenDraftTenantID}
+        isOpen={isCreateTokenOpen}
+        onCreated={() => {
+          clearConnectionMode();
+          handleTopologyChanged();
+        }}
+        onOpenChange={(open) => {
+          setIsCreateTokenOpen(open);
+          if (!open) {
+            clearConnectionMode();
+          }
+        }}
+        tenantIDs={routeTenantIDs}
+        trigger={modalTrigger}
+      />
+
+      {selectedRoute ? (
+        <UpdateRouteForm
+          disabled={snapshot.source !== "backend"}
+          isOpen={Boolean(selectedRoute)}
+          label="Edit"
+          onOpenChange={(open) => {
+            if (!open) {
+              setEditingRouteID(undefined);
+            }
+          }}
+          route={selectedRoute}
+          tenantIDs={routeTenantIDs}
+          trigger={modalTrigger}
+        />
+      ) : null}
+
+      {selectedTenant ? (
+        <UpdateTenantForm
+          disabled={snapshot.source !== "backend"}
+          isOpen={Boolean(selectedTenant)}
+          label="Edit"
+          onOpenChange={(open) => {
+            if (!open) {
+              setEditingTenantID(undefined);
+            }
+          }}
+          tenant={selectedTenant}
+          trigger={modalTrigger}
+        />
+      ) : null}
+    </div>
+  );
+}
