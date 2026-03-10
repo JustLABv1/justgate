@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -19,6 +22,8 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+const defaultAdminJWTSecret = "just-proxy-guard-local-backend-jwt-secret"
 
 type Config struct {
 	Version         string
@@ -53,6 +58,7 @@ type Service struct {
 	config Config
 	store  dataStore
 	start  time.Time
+	logger *slog.Logger
 }
 
 type overviewResponse struct {
@@ -115,9 +121,9 @@ type auditEvent struct {
 }
 
 type topologyResponse struct {
-	GeneratedAt string        `json:"generatedAt"`
-	Runtime     runtimeState  `json:"runtime"`
-	Stats       stats         `json:"stats"`
+	GeneratedAt string          `json:"generatedAt"`
+	Runtime     runtimeState    `json:"runtime"`
+	Stats       stats           `json:"stats"`
 	Tenants     []tenantSummary `json:"tenants"`
 	Routes      []routeSummary  `json:"routes"`
 	Tokens      []tokenSummary  `json:"tokens"`
@@ -222,7 +228,7 @@ func New(config Config) (*Service, error) {
 		config.Version = "dev"
 	}
 	if config.AdminJWTSecret == "" {
-		config.AdminJWTSecret = "just-proxy-guard-local-backend-jwt-secret"
+		config.AdminJWTSecret = defaultAdminJWTSecret
 	}
 	if config.DatabaseURL == "" {
 		config.DatabaseURL = defaultDatabaseURL()
@@ -236,11 +242,19 @@ func New(config Config) (*Service, error) {
 	}
 	config.StoreKind = storeKind
 
-	return &Service{
+	service := &Service{
 		config: config,
 		store:  store,
 		start:  time.Now().UTC(),
-	}, nil
+		logger: slog.Default(),
+	}
+
+	service.logStartup()
+	if config.AdminJWTSecret == defaultAdminJWTSecret {
+		service.logger.Warn("using default admin JWT secret; set JUST_PROXY_GUARD_BACKEND_JWT_SECRET outside local development")
+	}
+
+	return service, nil
 }
 
 func (s *Service) Handler() http.Handler {
@@ -261,16 +275,23 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/proxy/", s.handleProxy)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Access-Control-Allow-Origin", "*")
-		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		startedAt := time.Now()
+		loggingWriter := &statusLoggingResponseWriter{ResponseWriter: writer}
+
+		defer func() {
+			s.logRequest(request, loggingWriter.statusCode(), loggingWriter.bytesWritten, time.Since(startedAt))
+		}()
+
+		loggingWriter.Header().Set("Access-Control-Allow-Origin", "*")
+		loggingWriter.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		loggingWriter.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 
 		if request.Method == http.MethodOptions {
-			writer.WriteHeader(http.StatusNoContent)
+			loggingWriter.WriteHeader(http.StatusNoContent)
 			return
 		}
 
-		mux.ServeHTTP(writer, request)
+		mux.ServeHTTP(loggingWriter, request)
 	})
 }
 
@@ -282,6 +303,7 @@ func (s *Service) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		tokenValue := extractBearerToken(request.Header.Get("Authorization"))
 		if _, err := validateAdminToken(tokenValue, s.config.AdminJWTSecret); err != nil {
+			s.logger.Warn("admin authentication failed", "path", request.URL.Path, "remote_addr", clientAddress(request), "error", err.Error())
 			writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 			return
 		}
@@ -1054,6 +1076,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 
 	route, ok, err := s.store.RouteBySlug(request.Context(), parts[0])
 	if err != nil {
+		s.logger.Error("proxy route lookup failed", "route_slug", parts[0], "error", err)
 		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to resolve route"})
 		return
 	}
@@ -1075,6 +1098,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 
 	token, ok, err := s.store.ValidateToken(request.Context(), tokenValue)
 	if err != nil {
+		s.logger.Error("proxy token validation failed", "route_slug", parts[0], "error", err)
 		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to validate token"})
 		return
 	}
@@ -1098,6 +1122,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 
 	targetURL, err := url.Parse(route.UpstreamURL)
 	if err != nil {
+		s.logger.Error("proxy upstream configuration is invalid", "route_slug", parts[0], "upstream", route.UpstreamURL, "error", err)
 		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, route.UpstreamURL)
 		writeJSON(writer, http.StatusBadGateway, map[string]string{"error": "invalid upstream configuration"})
 		return
@@ -1123,6 +1148,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		return nil
 	}
 	proxy.ErrorHandler = func(proxyWriter http.ResponseWriter, proxyRequest *http.Request, proxyErr error) {
+		s.logger.Error("proxy upstream request failed", "route_slug", parts[0], "tenant_id", token.TenantID, "token_id", token.ID, "upstream", route.UpstreamURL, "error", proxyErr)
 		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, route.UpstreamURL)
 		writeJSON(proxyWriter, http.StatusBadGateway, map[string]string{
 			"error":   "upstream request failed",
@@ -1134,7 +1160,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 }
 
 func (s *Service) recordAudit(ctx context.Context, routeSlug, tenantID, tokenID, method string, status int, upstreamURL string) {
-	_ = s.store.RecordAudit(ctx, auditRecord{
+	if err := s.store.RecordAudit(ctx, auditRecord{
 		Timestamp: time.Now().UTC(),
 		RouteSlug: routeSlug,
 		TenantID:  tenantID,
@@ -1142,7 +1168,131 @@ func (s *Service) recordAudit(ctx context.Context, routeSlug, tenantID, tokenID,
 		Method:    method,
 		Status:    status,
 		Upstream:  upstreamURL,
-	})
+	}); err != nil {
+		s.logger.Error("failed to record audit event", "route_slug", routeSlug, "tenant_id", tenantID, "token_id", tokenID, "method", method, "status", status, "upstream", upstreamURL, "error", err)
+	}
+}
+
+type statusLoggingResponseWriter struct {
+	http.ResponseWriter
+	status       int
+	bytesWritten int
+}
+
+func (writer *statusLoggingResponseWriter) WriteHeader(status int) {
+	writer.status = status
+	writer.ResponseWriter.WriteHeader(status)
+}
+
+func (writer *statusLoggingResponseWriter) Write(body []byte) (int, error) {
+	if writer.status == 0 {
+		writer.status = http.StatusOK
+	}
+	n, err := writer.ResponseWriter.Write(body)
+	writer.bytesWritten += n
+	return n, err
+}
+
+func (writer *statusLoggingResponseWriter) Flush() {
+	if flusher, ok := writer.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (writer *statusLoggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := writer.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer does not support hijacking")
+	}
+	return hijacker.Hijack()
+}
+
+func (writer *statusLoggingResponseWriter) Push(target string, options *http.PushOptions) error {
+	pusher, ok := writer.ResponseWriter.(http.Pusher)
+	if !ok {
+		return http.ErrNotSupported
+	}
+	return pusher.Push(target, options)
+}
+
+func (writer *statusLoggingResponseWriter) statusCode() int {
+	if writer.status == 0 {
+		return http.StatusOK
+	}
+	return writer.status
+}
+
+func (s *Service) logStartup() {
+	s.logger.Info("backend service initialized",
+		"version", s.config.Version,
+		"store_kind", s.config.StoreKind,
+		"database", summarizeDatabaseTarget(s.config.DatabaseURL),
+		"mimir_header_name", s.config.MimirHeaderName,
+		"started_at", s.start.Format(time.RFC3339),
+	)
+}
+
+func (s *Service) logRequest(request *http.Request, status, bytesWritten int, duration time.Duration) {
+	level := slog.LevelInfo
+	if status >= http.StatusInternalServerError {
+		level = slog.LevelError
+	} else if status >= http.StatusBadRequest {
+		level = slog.LevelWarn
+	}
+
+	s.logger.Log(request.Context(), level, "request completed",
+		"method", request.Method,
+		"path", request.URL.Path,
+		"status", status,
+		"duration", duration.String(),
+		"bytes", bytesWritten,
+		"remote_addr", clientAddress(request),
+	)
+}
+
+func clientAddress(request *http.Request) string {
+	forwardedFor := strings.TrimSpace(request.Header.Get("X-Forwarded-For"))
+	if forwardedFor != "" {
+		parts := strings.Split(forwardedFor, ",")
+		if len(parts) > 0 {
+			return strings.TrimSpace(parts[0])
+		}
+	}
+
+	if host, _, err := net.SplitHostPort(strings.TrimSpace(request.RemoteAddr)); err == nil {
+		return host
+	}
+
+	return strings.TrimSpace(request.RemoteAddr)
+}
+
+func summarizeDatabaseTarget(databaseURL string) string {
+	trimmed := strings.TrimSpace(databaseURL)
+	if trimmed == "" {
+		return "sqlite://just-proxy-guard.db"
+	}
+
+	if strings.HasPrefix(trimmed, "postgres://") || strings.HasPrefix(trimmed, "postgresql://") {
+		parsed, err := url.Parse(trimmed)
+		if err != nil {
+			return "postgres"
+		}
+		databaseName := strings.TrimPrefix(parsed.Path, "/")
+		if databaseName == "" {
+			return fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+		}
+		return fmt.Sprintf("%s://%s/%s", parsed.Scheme, parsed.Host, databaseName)
+	}
+
+	if strings.HasPrefix(trimmed, "sqlite://") {
+		path := strings.TrimPrefix(trimmed, "sqlite://")
+		if path == "" {
+			path = "just-proxy-guard.db"
+		}
+		return "sqlite://" + path
+	}
+
+	return trimmed
 }
 
 func hashToken(secret string) string {

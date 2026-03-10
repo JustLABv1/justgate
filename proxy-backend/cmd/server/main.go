@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -9,6 +9,9 @@ import (
 )
 
 func main() {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "9090"
@@ -28,7 +31,8 @@ func main() {
 		MimirHeaderName: mimirHeaderName,
 	})
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("failed to initialize backend service", "error", err)
+		os.Exit(1)
 	}
 
 	server := &http.Server{
@@ -36,8 +40,9 @@ func main() {
 		Handler: svc.Handler(),
 	}
 
-	log.Printf("just-proxy-guard backend listening on %s", server.Addr)
+	slog.Info("just-proxy-guard backend listening", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
+		slog.Error("backend server stopped unexpectedly", "error", err)
+		os.Exit(1)
 	}
 }
