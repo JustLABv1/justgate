@@ -53,39 +53,37 @@ export function CreateRouteForm({
     onOpenChange?.(open);
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(undefined);
-    setSuccess(undefined);
-    const payload = {
-      slug: formState.slug,
-      tenantID: formState.tenantID,
-      targetPath: formState.targetPath,
-      requiredScope: formState.requiredScope,
-      methods: formState.methods,
-    };
+    startTransition(async () => {
+      setError(undefined);
+      setSuccess(undefined);
+      const payload = {
+        slug: formState.slug,
+        tenantID: formState.tenantID,
+        targetPath: formState.targetPath,
+        requiredScope: formState.requiredScope,
+        methods: formState.methods,
+      };
 
-    const response = await fetch("/api/admin/routes", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+      const response = await fetch("/api/admin/routes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    const result = (await response.json().catch(() => null)) as { error?: string; slug?: string } | null;
-    if (!response.ok) {
-      setError(result?.error || "Failed to create route.");
-      return;
-    }
+      const result = (await response.json().catch(() => null)) as { error?: string; slug?: string } | null;
+      if (!response.ok) {
+        setError(result?.error || "Failed to create route.");
+        return;
+      }
 
-    setSuccess(`Created /proxy/${result?.slug || payload.slug}.`);
-    setFormState(toFormState(initialTenantID));
-    startTransition(() => {
+      setSuccess(`Created /proxy/${result?.slug || payload.slug}.`);
+      setFormState(toFormState(initialTenantID));
+      onCreated?.(result?.slug || payload.slug);
+      onOpenChange?.(false);
       router.refresh();
     });
-    onCreated?.(result?.slug || payload.slug);
-    onOpenChange?.(false);
   }
 
   return (
@@ -183,7 +181,7 @@ export function CreateRouteForm({
                         value={formState.requiredScope}
                         onChange={(event) => setFormState((current) => ({ ...current, requiredScope: event.target.value }))}
                       />
-                      <div className="enterprise-note">Permission that must appear on the token.</div>
+                      <div className="enterprise-note">The bearer token must carry this exact scope — requests without it are rejected with 403.</div>
                     </TextField>
                     <TextField className="grid gap-2">
                       <Label>Allowed methods</Label>

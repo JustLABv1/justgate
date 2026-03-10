@@ -42,43 +42,38 @@ export function CreateTenantForm({ existingCount, disabled = false, isOpen, onOp
     onOpenChange?.(open);
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(undefined);
-    const payload = {
-      name: formState.name,
-      tenantID: formState.tenantID,
-      upstreamURL: formState.upstreamURL,
-      headerName: formState.headerName,
-      authMode: "header",
-    };
+    startTransition(async () => {
+      setError(undefined);
+      const payload = {
+        name: formState.name,
+        tenantID: formState.tenantID,
+        upstreamURL: formState.upstreamURL,
+        headerName: formState.headerName,
+        authMode: "header",
+      };
 
-    const response = await fetch("/api/admin/tenants", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+      const response = await fetch("/api/admin/tenants", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    const result = (await response.json().catch(() => null)) as
-      | TenantSummary
-      | { error?: string }
-      | null;
+      const result = (await response.json().catch(() => null)) as TenantSummary | { error?: string } | null;
 
-    if (!response.ok) {
-      setCreatedTenant(undefined);
-      setError(result && "error" in result ? result.error || "tenant creation failed" : "tenant creation failed");
-      return;
-    }
+      if (!response.ok) {
+        setCreatedTenant(undefined);
+        setError(result && "error" in result ? result.error || "tenant creation failed" : "tenant creation failed");
+        return;
+      }
 
-    setCreatedTenant(result as TenantSummary);
-    setFormState(toFormState());
-    startTransition(() => {
+      setCreatedTenant(result as TenantSummary);
+      setFormState(toFormState());
+      onCreated?.(result as TenantSummary);
+      onOpenChange?.(false);
       router.refresh();
     });
-    onCreated?.(result as TenantSummary);
-    onOpenChange?.(false);
   }
 
   return (

@@ -156,6 +156,7 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
   const connectionAttemptRef = useRef(0);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const panRef = useRef<{ originX: number; originY: number; startX: number; startY: number } | null>(null);
+  const sceneHeightRef = useRef(980);
 
   const routeTenantIDs = useMemo(() => snapshot.data.tenants.map((tenant) => tenant.tenantID), [snapshot.data.tenants]);
 
@@ -315,16 +316,48 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
   }, []);
 
   const graph = useMemo(() => {
-    const tokens = [...snapshot.data.tokens].sort((left, right) => Number(right.active) - Number(left.active) || left.name.localeCompare(right.name));
-    const routes = [...snapshot.data.routes].sort((left, right) => left.slug.localeCompare(right.slug));
-    const tenants = [...snapshot.data.tenants].sort((left, right) => left.tenantID.localeCompare(right.tenantID));
+    const now = Date.now();
+    const ACTIVE_THRESHOLD_MS = 30 * 1000; // 30 seconds — edges animate only when traffic is live
     const recentAudits = snapshot.data.auditEvents.slice(0, 18);
+    const activeAudits = recentAudits.filter((event) => now - new Date(event.timestamp).getTime() < ACTIVE_THRESHOLD_MS);
 
-    const rowCount = Math.max(tokens.length, routes.length, tenants.length, 1);
+    // Sort tenants first — their Y positions anchor the downstream columns
+    const tenants = [...snapshot.data.tenants].sort((a, b) => a.tenantID.localeCompare(b.tenantID));
+    const rawRoutes = [...snapshot.data.routes];
+    const rawTokens = [...snapshot.data.tokens];
+
+    const rowCount = Math.max(rawTokens.length, rawRoutes.length, tenants.length, 1);
     const sceneHeight = Math.max(980, 260 + rowCount * 170);
-    const tokenY = distributePositions(tokens.length || 1, 220, sceneHeight - 180);
-    const routeY = distributePositions(routes.length || 1, 180, sceneHeight - 180);
-    const tenantY = distributePositions(tenants.length || 1, 220, sceneHeight - 180);
+
+    // Tenant Y positions are determined first
+    const tenantYArr = distributePositions(tenants.length || 1, 220, sceneHeight - 180);
+    const tenantYByTenantID = new Map(tenants.map((t, i) => [t.tenantID, tenantYArr[i] ?? sceneHeight / 2]));
+
+    // Routes sorted by their tenant's Y position — route→tenant edges will not cross each other
+    const routes = rawRoutes.sort((a, b) => {
+      const ay = tenantYByTenantID.get(a.tenantID) ?? 0;
+      const by = tenantYByTenantID.get(b.tenantID) ?? 0;
+      return ay - by || a.slug.localeCompare(b.slug);
+    });
+    const routeYArr = distributePositions(routes.length || 1, 180, sceneHeight - 180);
+    const routeYByRouteID = new Map(routes.map((r, i) => [r.id, routeYArr[i] ?? sceneHeight / 2]));
+
+    // Tokens sorted by the average Y of their accessible routes — token→route edges will not cross each other
+    const tokens = rawTokens.sort((a, b) => {
+      const avgY = (token: typeof a) => {
+        const accessible = routes.filter((r) => r.tenantID === token.tenantID && token.scopes.includes(r.requiredScope));
+        if (accessible.length === 0) return tenantYByTenantID.get(token.tenantID) ?? sceneHeight / 2;
+        return accessible.reduce((sum, r) => sum + (routeYByRouteID.get(r.id) ?? 0), 0) / accessible.length;
+      };
+      const diff = avgY(a) - avgY(b);
+      return diff !== 0 ? diff : Number(b.active) - Number(a.active) || a.name.localeCompare(b.name);
+    });
+    const tokenYArr = distributePositions(tokens.length || 1, 220, sceneHeight - 180);
+
+    // Aliased for backward compat with node constructors below
+    const tokenY = tokenYArr;
+    const routeY = routeYArr;
+    const tenantY = tenantYArr;
     const routeMetrics = new Map<string, { throughput: number; errors: number }>();
 
     for (const route of routes) {
@@ -374,8 +407,8 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
     const allNodes = [...tokenNodes, ...routeNodes, ...tenantNodes];
     const tenantNodeByTenantID = new Map(tenants.map((tenant, index) => [tenant.tenantID, tenantNodes[index]]));
     const routeNodeByRouteID = new Map(routes.map((route, index) => [route.id, routeNodes[index]]));
-    const hotRouteKeys = new Set(recentAudits.map((event) => `route:${event.routeSlug}:${event.tenantID}`));
-    const hotTokenKeys = new Set(recentAudits.map((event) => `token:${event.tokenID}:${event.routeSlug}`));
+    const hotRouteKeys = new Set(activeAudits.map((event) => `route:${event.routeSlug}:${event.tenantID}`));
+    const hotTokenKeys = new Set(activeAudits.map((event) => `token:${event.tokenID}:${event.routeSlug}`));
 
     const tokenEdges: GraphEdge[] = [];
     for (const token of tokens) {
@@ -422,6 +455,7 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
   }, [snapshot]);
 
   useEffect(() => {
+    sceneHeightRef.current = graph.sceneHeight;
     const viewport = viewportRef.current;
     if (!viewport) {
       return;
@@ -452,6 +486,33 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, [graph.sceneHeight]);
+
+  // Non-passive wheel listener so event.preventDefault() actually suppresses page scroll
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+
+    const handler = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const pointerX = event.clientX - rect.left;
+      const pointerY = event.clientY - rect.top;
+      setCamera((prev) => {
+        const nextScale = Math.max(SCALE_LIMITS.min, Math.min(SCALE_LIMITS.max, prev.scale - event.deltaY * 0.001));
+        const sceneX = (pointerX - prev.x) / prev.scale;
+        const sceneY = (pointerY - prev.y) / prev.scale;
+        return clampCamera(
+          { scale: nextScale, x: pointerX - sceneX * nextScale, y: pointerY - sceneY * nextScale },
+          el.clientWidth,
+          el.clientHeight,
+          sceneHeightRef.current,
+        );
+      });
+    };
+
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []); // empty — handler reads sceneHeight via ref and camera via functional updater
 
   const draftGraph = useMemo(() => {
     const draftNodes: GraphNode[] = [];
@@ -598,34 +659,6 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
     }
     panRef.current = null;
     setIsPanning(false);
-  }
-
-  function handleWheel(event: React.WheelEvent<HTMLDivElement>) {
-    const viewport = viewportRef.current;
-    if (!viewport) {
-      return;
-    }
-
-    event.preventDefault();
-    const rect = viewport.getBoundingClientRect();
-    const pointerX = event.clientX - rect.left;
-    const pointerY = event.clientY - rect.top;
-    const nextScale = Math.max(SCALE_LIMITS.min, Math.min(SCALE_LIMITS.max, camera.scale - event.deltaY * 0.001));
-    const sceneX = (pointerX - camera.x) / camera.scale;
-    const sceneY = (pointerY - camera.y) / camera.scale;
-
-    setCamera(
-      clampCamera(
-        {
-          scale: nextScale,
-          x: pointerX - sceneX * nextScale,
-          y: pointerY - sceneY * nextScale,
-        },
-        viewport.clientWidth,
-        viewport.clientHeight,
-        graph.sceneHeight,
-      ),
-    );
   }
 
   function activateConnectionMode(mode: ConnectionMode) {
@@ -840,7 +873,6 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
             onPointerMove={handleBackgroundPointerMove}
             onPointerUp={handleBackgroundPointerEnd}
             onPointerCancel={handleBackgroundPointerEnd}
-            onWheel={handleWheel}
           >
             <div
               className="absolute left-0 top-0 origin-top-left"
@@ -857,6 +889,15 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
               </div>
 
               <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${SCENE_WIDTH} ${graph.sceneHeight}`}>
+                <defs>
+                  <filter id="topology-packet-glow" x="-100%" y="-100%" width="300%" height="300%">
+                    <feGaussianBlur stdDeviation="4" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                </defs>
                 {graphEdges.map((edge) => {
                   const from = graphNodes.find((node) => node.id === edge.from);
                   const to = graphNodes.find((node) => node.id === edge.to);
@@ -865,16 +906,31 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
                   }
 
                   const active = emphasis.nodes.size === 0 || emphasis.edges.has(edge.id) || emphasis.nodes.has(edge.from) || emphasis.nodes.has(edge.to);
+                  const d = pathBetween(from, to);
                   const className = edge.kind === "draft"
                     ? "topology-flow-line topology-flow-line--draft"
                     : edge.hot
                       ? "topology-flow-line topology-flow-line--hot"
                       : "topology-flow-line";
+                  const packetColor = edge.kind === "binding" ? "var(--success)" : "var(--accent)";
 
                   return (
                     <g key={edge.id} opacity={active ? 1 : 0.12}>
-                      <path className="topology-flow-line topology-flow-line--glow" d={pathBetween(from, to)} vectorEffect="non-scaling-stroke" />
-                      <path className={className} d={pathBetween(from, to)} vectorEffect="non-scaling-stroke" />
+                      <path className="topology-flow-line topology-flow-line--glow" d={d} vectorEffect="non-scaling-stroke" />
+                      <path className={className} d={d} vectorEffect="non-scaling-stroke" />
+                      {edge.hot && edge.kind !== "draft" && (
+                        <>
+                          <circle r="5" fill={packetColor} opacity="0.9" filter="url(#topology-packet-glow)">
+                            <animateMotion dur="1.8s" repeatCount="indefinite" path={d} />
+                          </circle>
+                          <circle r="5" fill={packetColor} opacity="0.9" filter="url(#topology-packet-glow)">
+                            <animateMotion dur="1.8s" begin="0.6s" repeatCount="indefinite" path={d} />
+                          </circle>
+                          <circle r="5" fill={packetColor} opacity="0.9" filter="url(#topology-packet-glow)">
+                            <animateMotion dur="1.8s" begin="1.2s" repeatCount="indefinite" path={d} />
+                          </circle>
+                        </>
+                      )}
                     </g>
                   );
                 })}

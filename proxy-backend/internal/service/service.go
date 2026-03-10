@@ -1086,12 +1086,14 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 	}
 
 	if !slices.Contains(route.Methods, request.Method) {
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusMethodNotAllowed, route.UpstreamURL)
 		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed for route"})
 		return
 	}
 
 	tokenValue := extractBearerToken(request.Header.Get("Authorization"))
 	if tokenValue == "" {
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusUnauthorized, route.UpstreamURL)
 		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "missing bearer token"})
 		return
 	}

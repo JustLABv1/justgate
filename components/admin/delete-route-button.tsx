@@ -15,22 +15,19 @@ export function DeleteRouteButton({ routeID, label = "Delete", disabled = false 
   const [error, setError] = useState<string>();
   const [isPending, startTransition] = useTransition();
 
-  async function handleDelete() {
-    setError(undefined);
+  function handleDelete() {
+    startTransition(async () => {
+      setError(undefined);
 
-    const response = await fetch(`/api/admin/routes/${routeID}`, {
-      method: "DELETE",
-    });
+      const response = await fetch(`/api/admin/routes/${routeID}`, { method: "DELETE" });
 
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(payload?.error || "route delete failed");
-      return;
-    }
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        setError(payload?.error || "route delete failed");
+        return;
+      }
 
-    startTransition(() => {
       router.refresh();
-      window.location.reload();
     });
   }
 

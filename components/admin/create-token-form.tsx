@@ -58,53 +58,53 @@ export function CreateTokenForm({
   const [error, setError] = useState<string>();
   const [issuedToken, setIssuedToken] = useState<IssuedToken>();
   const [formState, setFormState] = useState(() => toFormState(initialTenantID, initialScopes));
+  const [pendingReload, setPendingReload] = useState(false);
 
   function handleOpenChange(open: boolean) {
     if (open) {
       setFormState(toFormState(initialTenantID, initialScopes));
       setError(undefined);
       setIssuedToken(undefined);
+      setPendingReload(false);
+    } else if (pendingReload) {
+      setPendingReload(false);
+      router.refresh();
     }
 
     onOpenChange?.(open);
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(undefined);
-    const payload = {
-      name: formState.name,
-      tenantID: formState.tenantID,
-      scopes: formState.scopes,
-      expiresAt: toApiExpiry(formState.expiresAt),
-    };
+    startTransition(async () => {
+      setError(undefined);
+      const payload = {
+        name: formState.name,
+        tenantID: formState.tenantID,
+        scopes: formState.scopes,
+        expiresAt: toApiExpiry(formState.expiresAt),
+      };
 
-    const response = await fetch("/api/admin/tokens", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(payload),
+      const response = await fetch("/api/admin/tokens", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const result = (await response.json().catch(() => null)) as IssuedToken | { error?: string } | null;
+
+      if (!response.ok) {
+        setIssuedToken(undefined);
+        setError(result && "error" in result ? result.error || "token issue failed" : "token issue failed");
+        return;
+      }
+
+      setIssuedToken(result as IssuedToken);
+      setFormState(toFormState(initialTenantID, initialScopes));
+      setPendingReload(true);
+      onCreated?.(result as IssuedToken);
+      onOpenChange?.(false);
     });
-
-    const result = (await response.json().catch(() => null)) as
-      | IssuedToken
-      | { error?: string }
-      | null;
-
-    if (!response.ok) {
-      setIssuedToken(undefined);
-      setError(result && "error" in result ? result.error || "token issue failed" : "token issue failed");
-      return;
-    }
-
-    setIssuedToken(result as IssuedToken);
-    setFormState(toFormState(initialTenantID, initialScopes));
-    startTransition(() => {
-      router.refresh();
-    });
-    onCreated?.(result as IssuedToken);
-    onOpenChange?.(false);
   }
 
   return (
@@ -166,7 +166,7 @@ export function CreateTokenForm({
                   <TextField className="grid gap-2">
                     <Label>Scopes</Label>
                     <Input placeholder="metrics:write, rules:read" required value={formState.scopes} onChange={(event) => setFormState((current) => ({ ...current, scopes: event.target.value }))} />
-                    <div className="enterprise-note">Comma-separated permissions that must satisfy route policy.</div>
+                    <div className="enterprise-note">This token will only be accepted on routes whose required scope matches one of these values.</div>
                   </TextField>
                   <TextField className="grid gap-2">
                     <Label>Expiration</Label>

@@ -32,36 +32,34 @@ export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isO
   const [success, setSuccess] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState(tenant));
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(undefined);
-    setSuccess(undefined);
+    startTransition(async () => {
+      setError(undefined);
+      setSuccess(undefined);
 
-    const response = await fetch(`/api/admin/tenants/${tenant.id}`, {
-      method: "PATCH",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        authMode: "header",
-        headerName: formState.headerName,
-        name: formState.name,
-        tenantID: formState.tenantID,
-        upstreamURL: formState.upstreamURL,
-      }),
-    });
+      const response = await fetch(`/api/admin/tenants/${tenant.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          authMode: "header",
+          headerName: formState.headerName,
+          name: formState.name,
+          tenantID: formState.tenantID,
+          upstreamURL: formState.upstreamURL,
+        }),
+      });
 
-    const result = (await response.json().catch(() => null)) as TenantSummary | { error?: string } | null;
-    if (!response.ok) {
-      setError(result && "error" in result ? result.error || "tenant update failed" : "tenant update failed");
-      return;
-    }
+      const result = (await response.json().catch(() => null)) as TenantSummary | { error?: string } | null;
+      if (!response.ok) {
+        setError(result && "error" in result ? result.error || "tenant update failed" : "tenant update failed");
+        return;
+      }
 
-    setSuccess(`Updated tenant ${formState.tenantID}.`);
-    startTransition(() => {
+      setSuccess(`Updated tenant ${formState.tenantID}.`);
+      onOpenChange?.(false);
       router.refresh();
     });
-    onOpenChange?.(false);
   }
 
   return (

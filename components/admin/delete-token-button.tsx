@@ -15,22 +15,19 @@ export function DeleteTokenButton({ tokenID, disabled, label = "Delete" }: Delet
   const [error, setError] = useState<string>();
   const [isPending, startTransition] = useTransition();
 
-  async function handleDelete() {
-    setError(undefined);
+  function handleDelete() {
+    startTransition(async () => {
+      setError(undefined);
 
-    const response = await fetch(`/api/admin/tokens/${tokenID}`, {
-      method: "DELETE",
-    });
+      const response = await fetch(`/api/admin/tokens/${tokenID}`, { method: "DELETE" });
 
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(payload?.error || "token delete failed");
-      return;
-    }
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        setError(payload?.error || "token delete failed");
+        return;
+      }
 
-    startTransition(() => {
       router.refresh();
-      window.location.reload();
     });
   }
 

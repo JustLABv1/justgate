@@ -1,15 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Button } from "@heroui/react";
-import { 
-  LayoutDashboard, 
-  Orbit,
-  Settings2, 
-  Users2, 
-  KeyRound, 
-  History 
-} from "lucide-react";
+import { LayoutDashboard, Orbit, Settings2, Users2, KeyRound, History } from "lucide-react";
 
 const links = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
@@ -25,32 +17,24 @@ export function AdminNav() {
   const router = useRouter();
 
   return (
-    <nav className="flex flex-col gap-2">
+    <nav className="flex flex-col gap-0.5">
       {links.map((link) => {
         const active = pathname === link.href;
 
         return (
-          <Button
+          <button
             key={link.href}
-            variant="ghost"
-            className={`group relative h-14 justify-start gap-4 rounded-[22px] px-4 py-3 text-sm font-medium transition-all duration-300 ${
+            type="button"
+            onClick={() => router.push(link.href)}
+            className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors ${
               active
-                ? "border border-border/70 bg-surface text-foreground shadow-[var(--field-shadow)]"
-                : "text-muted-foreground hover:bg-panel/80 hover:text-foreground"
+                ? "bg-surface text-foreground"
+                : "text-muted-foreground hover:bg-surface/60 hover:text-foreground"
             }`}
-            onPress={() => router.push(link.href)}
           >
-            <link.icon 
-              size={18} 
-              className={`transition-transform duration-300 group-hover:scale-110 ${active ? "text-foreground stroke-[2.5px]" : "text-muted-foreground group-hover:text-foreground"}`}
-            />
-            <span className="flex-1 text-left">{link.label}</span>
-            {active && (
-              <span className="rounded-full bg-panel px-2 py-1 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
-                Current
-              </span>
-            )}
-          </Button>
+            <link.icon size={15} className={active ? "text-foreground" : "text-muted-foreground"} />
+            {link.label}
+          </button>
         );
       })}
     </nav>

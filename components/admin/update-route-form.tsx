@@ -35,40 +35,35 @@ export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = f
   const [success, setSuccess] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState(route));
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(undefined);
-    setSuccess(undefined);
+    startTransition(async () => {
+      setError(undefined);
+      setSuccess(undefined);
 
-    const response = await fetch(`/api/admin/routes/${route.id}`, {
-      method: "PATCH",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        slug: formState.slug,
-        tenantID: formState.tenantID,
-        targetPath: formState.targetPath,
-        requiredScope: formState.requiredScope,
-        methods: formState.methods,
-      }),
-    });
+      const response = await fetch(`/api/admin/routes/${route.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          slug: formState.slug,
+          tenantID: formState.tenantID,
+          targetPath: formState.targetPath,
+          requiredScope: formState.requiredScope,
+          methods: formState.methods,
+        }),
+      });
 
-    const result = (await response.json().catch(() => null)) as
-      | RouteSummary
-      | { error?: string }
-      | null;
+      const result = (await response.json().catch(() => null)) as RouteSummary | { error?: string } | null;
 
-    if (!response.ok) {
-      setError(result && "error" in result ? result.error || "route update failed" : "route update failed");
-      return;
-    }
+      if (!response.ok) {
+        setError(result && "error" in result ? result.error || "route update failed" : "route update failed");
+        return;
+      }
 
-    setSuccess(`Updated /proxy/${(result as RouteSummary).slug}.`);
-    startTransition(() => {
+      setSuccess(`Updated /proxy/${(result as RouteSummary).slug}.`);
+      onOpenChange?.(false);
       router.refresh();
     });
-    onOpenChange?.(false);
   }
 
   return (
