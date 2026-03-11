@@ -85,7 +85,7 @@ export function OIDCSettingsForm({ initial }: OIDCSettingsFormProps) {
               <Label className="text-sm font-medium text-foreground">Client ID</Label>
               <Input
                 defaultValue={initial.clientID}
-                placeholder="just-gate"
+                placeholder="justgate"
                 className="mt-1.5 w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
               />
             </TextField>

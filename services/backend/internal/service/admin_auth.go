@@ -38,8 +38,8 @@ func validateAdminToken(rawToken, secret string) (adminIdentity, error) {
 			}
 			return []byte(secret), nil
 		},
-		jwt.WithAudience("just-gate-backend"),
-		jwt.WithIssuer("just-gate-admin"),
+		jwt.WithAudience("justgate-backend"),
+		jwt.WithIssuer("justgate-admin"),
 	)
 	if err != nil || !parsedToken.Valid {
 		return adminIdentity{}, fmt.Errorf("invalid admin token")

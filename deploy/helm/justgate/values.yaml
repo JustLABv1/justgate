@@ -37,7 +37,7 @@ backend:
   jwtSecret: ""  # Header name injected into upstream requests to identify the tenant.
   # Defaults to X-Scope-OrgID (Mimir/Loki/Tempo) but can be any header.  tenantHeaderName: "X-Scope-OrgID"
   # Explicit database URL (overrides auto-computed PostgreSQL DSN).
-  # Format: postgresql://user:pass@host:5432/db  OR  sqlite:///data/just-gate.db
+  # Format: postgresql://user:pass@host:5432/db  OR  sqlite:///data/justgate.db
   databaseUrl: ""
 
 # ── Frontend configuration ─────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ frontend:
   port: 3000
   # NextAuth.js secret – leave empty to have Helm generate one.
   nextauthSecret: ""
-  # Public base URL of the frontend (e.g. https://just-gate.example.com).
+  # Public base URL of the frontend (e.g. https://justgate.example.com).
   nextauthUrl: ""
   # Override the URL the frontend uses to reach the backend.
   # Defaults to http://localhost:9090 (monolithic) or the backend Service (microservice).
@@ -64,10 +64,10 @@ frontend:
 postgresql:
   enabled: true
   auth:
-    username: just-gate
+    username: justgate
     # REQUIRED: set a password or use --set postgresql.auth.password=...
     password: ""
-    database: just-gate
+    database: justgate
   primary:
     persistence:
       enabled: true
@@ -79,6 +79,24 @@ persistence:
   storageClass: ""
   accessMode: ReadWriteOnce
   size: 1Gi
+
+# ── Custom CA Certificates ────────────────────────────────────────────────────
+# Mount additional trusted CA certificates into the pod(s).
+# Useful when the OIDC provider uses a self-signed or internal PKI certificate.
+# NODE_EXTRA_CA_CERTS is set automatically for the frontend (Next.js / next-auth).
+customCAs:
+  enabled: false
+  # Inline PEM-encoded CA certificate(s).
+  # A ConfigMap is created automatically from this content when set.
+  certificates: ""
+  # Name of an existing ConfigMap with a 'ca-bundle.crt' key.
+  # If set, no ConfigMap is created and this one is used directly.
+  existingConfigMap: ""
+  # Name of an existing Secret whose value is a PEM-encoded CA bundle.
+  # Takes precedence over existingConfigMap and certificates when set.
+  existingSecret: ""
+  # Key inside the Secret that holds the PEM bundle (default: ca-bundle.crt).
+  existingSecretKey: "ca-bundle.crt"
 
 # ── Service ───────────────────────────────────────────────────────────────────
 service:
@@ -92,7 +110,7 @@ ingress:
     # kubernetes.io/ingress.class: nginx
     # cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
-    - host: just-gate.local
+    - host: justgate.local
       paths:
         - path: /
           pathType: Prefix

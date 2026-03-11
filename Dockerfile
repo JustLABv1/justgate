@@ -6,9 +6,7 @@
 #                just-gate:latest
 
 # ── Build: Backend ────────────────────────────────────────────────────────────
-FROM golang:1.25-alpine AS backend-builder
-RUN apk upgrade --no-cache \
- && (apk del --no-cache py3-setuptools py3-setuptools-pyc py3-pip || true)
+FROM cgr.dev/chainguard/go:latest-dev AS backend-builder
 WORKDIR /build
 
 COPY services/backend/go.mod services/backend/go.sum ./
@@ -21,10 +19,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     ./cmd/server
 
 # ── Build: Frontend ───────────────────────────────────────────────────────────
-FROM node:22-alpine AS frontend-builder
-RUN apk upgrade --no-cache \
- && (apk del --no-cache py3-setuptools py3-setuptools-pyc py3-pip || true) \
- && corepack enable && corepack prepare pnpm@latest --activate
+FROM cgr.dev/chainguard/node:latest-dev AS frontend-builder
+USER root
+RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /build
 
 COPY services/frontend/package.json \
@@ -36,13 +33,10 @@ COPY services/frontend/ .
 RUN pnpm build
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
-FROM node:22-alpine
+FROM cgr.dev/chainguard/node:latest-dev
 
-RUN apk upgrade --no-cache \
- && (apk del --no-cache py3-setuptools py3-setuptools-pyc py3-pip || true) \
- && apk add --no-cache ca-certificates tzdata supervisor \
- && addgroup --system --gid 1001 nodejs \
- && adduser  --system --uid 1001 nextjs
+USER root
+RUN apk add --no-cache ca-certificates tzdata supervisor
 
 # Backend binary
 COPY --from=backend-builder /bin/just-gate-backend /usr/local/bin/just-gate-backend
@@ -50,14 +44,14 @@ COPY --from=backend-builder /bin/just-gate-backend /usr/local/bin/just-gate-back
 # Frontend standalone bundle
 WORKDIR /app
 COPY --from=frontend-builder /build/public ./public
-COPY --from=frontend-builder --chown=nextjs:nodejs /build/.next/standalone ./
-COPY --from=frontend-builder --chown=nextjs:nodejs /build/.next/static ./.next/static
+COPY --from=frontend-builder --chown=65532:65532 /build/.next/standalone ./
+COPY --from=frontend-builder --chown=65532:65532 /build/.next/static ./.next/static
 
 # Supervisor config
 COPY deploy/supervisord.conf /etc/supervisord.conf
 
 # Data directory for SQLite (override JUST_GATE_DATABASE_URL for PostgreSQL)
-RUN mkdir -p /data && chown nobody:nobody /data
+RUN mkdir -p /data && chown 65532:65532 /data
 VOLUME ["/data"]
 
 # In monolithic mode the frontend talks to the backend on localhost
@@ -66,6 +60,9 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 ENV JUST_GATE_BACKEND_URL="http://localhost:9090"
 
+USER nonroot
+
 EXPOSE 9090 3000
 
+ENTRYPOINT []
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisord.conf"]

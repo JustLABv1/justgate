@@ -56,10 +56,20 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
+          {{- if .Values.customCAs.enabled }}
+          volumeMounts:
+            - name: custom-ca-certs
+              mountPath: /etc/ssl/custom-ca
+              readOnly: true
+          {{- end }}
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+      {{- if .Values.customCAs.enabled }}
+      volumes:
+        {{- include "justgate.caVolume" . | nindent 8 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

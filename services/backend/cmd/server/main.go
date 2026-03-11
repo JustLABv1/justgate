@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"just-gate/backend/internal/service"
+	"justgate/backend/internal/service"
 )
 
 func main() {
@@ -25,7 +25,7 @@ func main() {
 	databaseURL := os.Getenv("JUST_GATE_DATABASE_URL")
 
 	svc, err := service.New(service.Config{
-		Version:          "1.0.5",
+		Version:          "1.0.6",
 		AdminJWTSecret:   adminJWTSecret,
 		DatabaseURL:      databaseURL,
 		TenantHeaderName: tenantHeaderName,
@@ -40,7 +40,7 @@ func main() {
 		Handler: svc.Handler(),
 	}
 
-	slog.Info("just-gate backend listening", "addr", server.Addr)
+	slog.Info("justgate backend listening", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("backend server stopped unexpectedly", "error", err)
 		os.Exit(1)

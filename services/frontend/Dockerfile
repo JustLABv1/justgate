@@ -1,8 +1,7 @@
 # ── Base ──────────────────────────────────────────────────────────────────────
-FROM node:22-alpine AS base
-RUN apk upgrade --no-cache \
- && (apk del --no-cache py3-setuptools py3-setuptools-pyc py3-pip || true) \
- && corepack enable && corepack prepare pnpm@latest --activate
+FROM cgr.dev/chainguard/node:latest-dev AS base
+USER root
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 FROM base AS deps
@@ -18,23 +17,16 @@ COPY . .
 RUN pnpm build
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
-FROM node:22-alpine AS runner
+FROM cgr.dev/chainguard/node:latest AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-RUN apk upgrade --no-cache \
- && (apk del --no-cache py3-setuptools py3-setuptools-pyc py3-pip || true) \
- && addgroup --system --gid 1001 nodejs \
- && adduser  --system --uid 1001 nextjs
-
 COPY --from=builder /app/public ./public
 
 # standalone output bundles the minimal server + node_modules
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
+COPY --from=builder --chown=65532:65532 /app/.next/standalone ./
+COPY --from=builder --chown=65532:65532 /app/.next/static ./.next/static
 
 EXPOSE 3000
 ENV PORT=3000
