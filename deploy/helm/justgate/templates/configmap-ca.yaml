@@ -1,0 +1,11 @@
+{{- if and .Values.customCAs.enabled (not .Values.customCAs.existingConfigMap) .Values.customCAs.certificates }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "justgate.fullname" . }}-ca-certs
+  labels:
+    {{- include "justgate.labels" . | nindent 4 }}
+data:
+  ca-bundle.crt: |
+    {{- .Values.customCAs.certificates | nindent 4 }}
+{{- end }}

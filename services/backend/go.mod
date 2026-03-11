@@ -1,4 +1,4 @@
-module just-gate/backend
+module justgate/backend
 
 go 1.25.0
 

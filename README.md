@@ -146,16 +146,16 @@ Open `http://localhost:3000`, register the first admin account, and you're ready
 
 ```bash
 # Build the monolithic image from the repo root
-docker build -t just-gate:latest .
+docker build -t justgate:latest .
 
 docker run -d \
   -p 3000:3000 -p 9090:9090 \
-  -v just-gate-data:/data \
+  -v justgate-data:/data \
   -e NEXTAUTH_SECRET=change-me \
   -e NEXTAUTH_URL=http://localhost:3000 \
   -e JUST_GATE_BACKEND_JWT_SECRET=change-me \
-  --name just-gate \
-  just-gate:latest
+  --name justgate \
+  justgate:latest
 ```
 
 ### Docker Compose
@@ -166,14 +166,14 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: just-gate
+      POSTGRES_USER: justgate
       POSTGRES_PASSWORD: change-me
-      POSTGRES_DB: just-gate
+      POSTGRES_DB: justgate
     volumes:
       - pg-data:/var/lib/postgresql/data
 
-  just-gate:
-    image: just-gate:latest
+  justgate:
+    image: justgate:latest
     build: .
     ports:
       - "3000:3000"
@@ -182,7 +182,7 @@ services:
       NEXTAUTH_SECRET: change-me
       NEXTAUTH_URL: http://localhost:3000
       JUST_GATE_BACKEND_JWT_SECRET: change-me
-      JUST_GATE_DATABASE_URL: postgresql://just-gate:change-me@postgres:5432/just-gate
+      JUST_GATE_DATABASE_URL: postgresql://justgate:change-me@postgres:5432/justgate
     depends_on:
       - postgres
 
@@ -203,7 +203,7 @@ docker compose up -d
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `JUST_GATE_BACKEND_JWT_SECRET` | — | *(insecure dev default)* | Secret used to sign & verify admin JWTs |
-| `JUST_GATE_DATABASE_URL` | — | `sqlite://just-gate.db` | Database connection — `sqlite://<path>` or `postgresql://…` |
+| `JUST_GATE_DATABASE_URL` | — | `sqlite://justgate.db` | Database connection — `sqlite://<path>` or `postgresql://…` |
 | `JUST_GATE_TENANT_HEADER` | — | `X-Scope-OrgID` | Header name injected into upstream requests to carry the tenant ID |
 | `PORT` | — | `9090` | Backend HTTP listen port |
 
@@ -212,7 +212,7 @@ docker compose up -d
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `NEXTAUTH_SECRET` | **Yes** | — | NextAuth.js session signing secret |
-| `NEXTAUTH_URL` | **Yes** | — | Public base URL of the frontend (e.g. `https://just-gate.example.com`) |
+| `NEXTAUTH_URL` | **Yes** | — | Public base URL of the frontend (e.g. `https://justgate.example.com`) |
 | `JUST_GATE_BACKEND_URL` | — | `http://localhost:9090` | URL the frontend uses to reach the backend |
 | `JUST_GATE_BACKEND_JWT_SECRET` | **Yes** | — | Must match the backend's JWT secret |
 | `JUST_GATE_LOCAL_ACCOUNTS_ENABLED` | — | `true` | Enable email/password login |
@@ -228,14 +228,14 @@ docker compose up -d
 
 ### Kubernetes / Helm
 
-The Helm chart lives in `deploy/helm/just-gate` and supports two deployment modes.
+The Helm chart lives in `deploy/helm/justgate` and supports two deployment modes.
 
 **From the OCI registry (recommended):**
 
 ```bash
 # Monolithic (default) — single pod, SQLite
 helm install justgate oci://ghcr.io/justlabv1/justgate --version <version> \
-  --set frontend.nextauthUrl=https://just-gate.example.com \
+  --set frontend.nextauthUrl=https://justgate.example.com \
   --set frontend.nextauthSecret=$(openssl rand -hex 32) \
   --set backend.jwtSecret=$(openssl rand -hex 32)
 
@@ -243,7 +243,7 @@ helm install justgate oci://ghcr.io/justlabv1/justgate --version <version> \
 helm install justgate oci://ghcr.io/justlabv1/justgate --version <version> \
   --set mode=microservice \
   --set postgresql.auth.password=change-me \
-  --set frontend.nextauthUrl=https://just-gate.example.com \
+  --set frontend.nextauthUrl=https://justgate.example.com \
   --set frontend.nextauthSecret=$(openssl rand -hex 32) \
   --set backend.jwtSecret=$(openssl rand -hex 32)
 ```
@@ -251,19 +251,19 @@ helm install justgate oci://ghcr.io/justlabv1/justgate --version <version> \
 **From source:**
 
 ```bash
-helm dependency update deploy/helm/just-gate
+helm dependency update deploy/helm/justgate
 
 # Monolithic (default) — single pod, SQLite
-helm install justgate deploy/helm/just-gate \
-  --set frontend.nextauthUrl=https://just-gate.example.com \
+helm install justgate deploy/helm/justgate \
+  --set frontend.nextauthUrl=https://justgate.example.com \
   --set frontend.nextauthSecret=$(openssl rand -hex 32) \
   --set backend.jwtSecret=$(openssl rand -hex 32)
 
 # Microservice mode with PostgreSQL
-helm install justgate deploy/helm/just-gate \
+helm install justgate deploy/helm/justgate \
   --set mode=microservice \
   --set postgresql.auth.password=change-me \
-  --set frontend.nextauthUrl=https://just-gate.example.com \
+  --set frontend.nextauthUrl=https://justgate.example.com \
   --set frontend.nextauthSecret=$(openssl rand -hex 32) \
   --set backend.jwtSecret=$(openssl rand -hex 32)
 ```
@@ -279,7 +279,7 @@ helm install justgate deploy/helm/just-gate \
 | `ingress.enabled` | `false` | Enable Kubernetes Ingress |
 | `persistence.size` | `1Gi` | SQLite PVC size (PostgreSQL disabled only) |
 
-See [`deploy/helm/just-gate/values.yaml`](deploy/helm/just-gate/values.yaml) for the full reference.
+See [`deploy/helm/justgate/values.yaml`](deploy/helm/justgate/values.yaml) for the full reference.
 
 ---
 

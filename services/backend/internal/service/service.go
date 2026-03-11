@@ -23,7 +23,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const defaultAdminJWTSecret = "just-gate-local-backend-jwt-secret"
+const defaultAdminJWTSecret = "justgate-local-backend-jwt-secret"
 
 type Config struct {
 	Version          string
@@ -1594,7 +1594,7 @@ func clientAddress(request *http.Request) string {
 func summarizeDatabaseTarget(databaseURL string) string {
 	trimmed := strings.TrimSpace(databaseURL)
 	if trimmed == "" {
-		return "sqlite://just-gate.db"
+		return "sqlite://justgate.db"
 	}
 
 	if strings.HasPrefix(trimmed, "postgres://") || strings.HasPrefix(trimmed, "postgresql://") {
@@ -1612,7 +1612,7 @@ func summarizeDatabaseTarget(databaseURL string) string {
 	if strings.HasPrefix(trimmed, "sqlite://") {
 		path := strings.TrimPrefix(trimmed, "sqlite://")
 		if path == "" {
-			path = "just-gate.db"
+			path = "justgate.db"
 		}
 		return "sqlite://" + path
 	}

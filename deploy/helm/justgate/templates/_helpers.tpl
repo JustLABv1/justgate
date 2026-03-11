@@ -96,6 +96,35 @@ sqlite:///data/justgate.db
 {{- end }}
 
 {{/*
+Resolve the name of the ConfigMap holding custom CA certificates.
+*/}}
+{{- define "justgate.caConfigMapName" -}}
+{{- if .Values.customCAs.existingConfigMap -}}
+{{- .Values.customCAs.existingConfigMap -}}
+{{- else -}}
+{{- include "justgate.fullname" . }}-ca-certs
+{{- end -}}
+{{- end }}
+
+{{/*
+Render the volume entry for custom CA certificates.
+Uses a Secret when existingSecret is set, otherwise a ConfigMap.
+*/}}
+{{- define "justgate.caVolume" -}}
+- name: custom-ca-certs
+  {{- if .Values.customCAs.existingSecret }}
+  secret:
+    secretName: {{ .Values.customCAs.existingSecret }}
+    items:
+      - key: {{ .Values.customCAs.existingSecretKey | default "ca-bundle.crt" }}
+        path: ca-bundle.crt
+  {{- else }}
+  configMap:
+    name: {{ include "justgate.caConfigMapName" . }}
+  {{- end }}
+{{- end }}
+
+{{/*
 Computed backend URL for the frontend.
 */}}
 {{- define "justgate.backendUrl" -}}
@@ -151,6 +180,10 @@ Shared frontend environment variables.
   value: {{ .Values.frontend.localAccountsEnabled | quote }}
 - name: JUST_GATE_LOCAL_REGISTRATION_ENABLED
   value: {{ .Values.frontend.localRegistrationEnabled | quote }}
+{{- if .Values.customCAs.enabled }}
+- name: NODE_EXTRA_CA_CERTS
+  value: /etc/ssl/custom-ca/ca-bundle.crt
+{{- end }}
 {{- if .Values.frontend.oidc.issuer }}
 - name: JUST_GATE_OIDC_ISSUER
   value: {{ .Values.frontend.oidc.issuer | quote }}

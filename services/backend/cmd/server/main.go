@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"just-gate/backend/internal/service"
+	"justgate/backend/internal/service"
 )
 
 func main() {
@@ -40,7 +40,7 @@ func main() {
 		Handler: svc.Handler(),
 	}
 
-	slog.Info("just-gate backend listening", "addr", server.Addr)
+	slog.Info("justgate backend listening", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("backend server stopped unexpectedly", "error", err)
 		os.Exit(1)

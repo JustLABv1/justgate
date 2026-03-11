@@ -50,7 +50,7 @@ func newSQLStore(databaseURL string) (string, *sqlStore, error) {
 func databaseConfig(databaseURL string) (string, string, string) {
 	trimmed := strings.TrimSpace(databaseURL)
 	if trimmed == "" {
-		return "sqlite", "file:just-gate.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", "sqlite"
+		return "sqlite", "file:justgate.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", "sqlite"
 	}
 
 	if strings.HasPrefix(trimmed, "postgres://") || strings.HasPrefix(trimmed, "postgresql://") {
@@ -60,7 +60,7 @@ func databaseConfig(databaseURL string) (string, string, string) {
 	if strings.HasPrefix(trimmed, "sqlite://") {
 		path := strings.TrimPrefix(trimmed, "sqlite://")
 		if path == "" {
-			path = "just-gate.db"
+			path = "justgate.db"
 		}
 		return "sqlite", fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", path), "sqlite"
 	}
@@ -566,7 +566,7 @@ func newResourceID(prefix string) string {
 func defaultDatabaseURL() string {
 	path := os.Getenv("JUST_GATE_DB_PATH")
 	if path == "" {
-		path = "just-gate.db"
+		path = "justgate.db"
 	}
 	return fmt.Sprintf("sqlite://%s", path)
 }

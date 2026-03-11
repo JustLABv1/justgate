@@ -8,9 +8,9 @@ const backendUrl =
   "http://localhost:9090";
 const localAccountsEnabled = process.env.JUST_GATE_LOCAL_ACCOUNTS_ENABLED !== "false";
 const localRegistrationEnabled = process.env.JUST_GATE_LOCAL_REGISTRATION_ENABLED !== "false";
-const authSecret = process.env.NEXTAUTH_SECRET || "just-gate-local-auth-secret";
+const authSecret = process.env.NEXTAUTH_SECRET || "justgate-local-auth-secret";
 const backendJwtSecret = new TextEncoder().encode(
-  process.env.JUST_GATE_BACKEND_JWT_SECRET || "just-gate-local-backend-jwt-secret",
+  process.env.JUST_GATE_BACKEND_JWT_SECRET || "justgate-local-backend-jwt-secret",
 );
 
 // ── OIDC config resolved at startup ────────────────────────────────────
@@ -29,8 +29,8 @@ async function createSystemToken(): Promise<string> {
   return new SignJWT({ roles: ["admin"], scope: "admin:control" })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject("system:frontend")
-    .setIssuer("just-gate-admin")
-    .setAudience("just-gate-backend")
+    .setIssuer("justgate-admin")
+    .setAudience("justgate-backend")
     .setIssuedAt()
     .setExpirationTime("1m")
     .sign(backendJwtSecret);

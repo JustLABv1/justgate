@@ -10,17 +10,17 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w" \
-    -o /bin/just-gate-backend \
+    -o /bin/justgate-backend \
     ./cmd/server
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=builder /bin/just-gate-backend /usr/local/bin/just-gate-backend
+COPY --from=builder /bin/justgate-backend /usr/local/bin/justgate-backend
 
 # Data directory for SQLite (mount a volume here or use PostgreSQL in production)
 VOLUME ["/data"]
 
 EXPOSE 9090
 
-ENTRYPOINT ["just-gate-backend"]
+ENTRYPOINT ["justgate-backend"]
