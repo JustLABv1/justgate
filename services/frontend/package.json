@@ -1,6 +1,6 @@
 {
-  "name": "just-gate",
-  "version": "1.0.1",
+  "name": "justgate",
+  "version": "1.0.2",
   "private": true,
   "scripts": {
     "dev": "next dev",
