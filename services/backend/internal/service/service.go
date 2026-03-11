@@ -52,6 +52,55 @@ type dataStore interface {
 	RouteBySlug(ctx context.Context, slug string) (routeRecord, bool, error)
 	ValidateToken(ctx context.Context, secret string) (tokenRecord, bool, error)
 	RecordAudit(ctx context.Context, audit auditRecord) error
+	// Org management
+	UpsertUser(ctx context.Context, user userRecord) error
+	GetUserByEmail(ctx context.Context, email string) (userRecord, bool, error)
+	GetUserByID(ctx context.Context, userID string) (userRecord, bool, error)
+	CreateOrg(ctx context.Context, name, createdBy string) (orgRecord, error)
+	ListOrgs(ctx context.Context, userID string) ([]orgRecord, error)
+	GetOrgMembership(ctx context.Context, orgID, userID string) (orgMemberRecord, bool, error)
+	AddOrgMember(ctx context.Context, orgID, userID, role string) error
+	RemoveOrgMember(ctx context.Context, orgID, userID string) error
+	ListOrgMembers(ctx context.Context, orgID string) ([]orgMemberRecord, error)
+	CreateOrgInvite(ctx context.Context, orgID, createdBy string, expiresAt time.Time, maxUses int) (orgInviteRecord, error)
+	GetOrgInviteByCode(ctx context.Context, code string) (orgInviteRecord, bool, error)
+	ConsumeOrgInvite(ctx context.Context, code, userID string) (string, error)
+}
+
+type createOrgRequest struct {
+	Name string `json:"name"`
+}
+
+type orgSummary struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Role      string `json:"role"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type memberSummary struct {
+	UserID    string `json:"userID"`
+	UserName  string `json:"userName"`
+	UserEmail string `json:"userEmail"`
+	Role      string `json:"role"`
+	JoinedAt  string `json:"joinedAt"`
+}
+
+type addMemberRequest struct {
+	Email string `json:"email"`
+	Role  string `json:"role"`
+}
+
+type orgInviteSummary struct {
+	Code      string `json:"code"`
+	OrgID     string `json:"orgID"`
+	ExpiresAt string `json:"expiresAt"`
+	MaxUses   int    `json:"maxUses"`
+	UseCount  int    `json:"useCount"`
+}
+
+type acceptInviteRequest struct {
+	Code string `json:"code"`
 }
 
 type Service struct {
@@ -190,6 +239,7 @@ type tenantRecord struct {
 	Upstream   string
 	AuthMode   string
 	HeaderName string
+	OrgID      string
 }
 
 type tokenRecord struct {
@@ -221,6 +271,65 @@ type localAdminRecord struct {
 	Name         string
 	PasswordHash string
 	CreatedAt    time.Time
+}
+
+type userRecord struct {
+	ID        string
+	Email     string
+	Name      string
+	Source    string
+	CreatedAt time.Time
+}
+
+type orgRecord struct {
+	ID        string
+	Name      string
+	CreatedBy string
+	Role      string // populated when listing for a specific user
+	CreatedAt time.Time
+}
+
+type orgMemberRecord struct {
+	OrgID     string
+	UserID    string
+	Role      string
+	JoinedAt  time.Time
+	UserName  string
+	UserEmail string
+}
+
+type orgInviteRecord struct {
+	ID        string
+	OrgID     string
+	Code      string
+	CreatedBy string
+	ExpiresAt time.Time
+	MaxUses   int
+	UseCount  int
+	CreatedAt time.Time
+}
+
+type requestContextKey string
+
+const (
+	contextKeyOrgID   requestContextKey = "orgID"
+	contextKeyAdminID requestContextKey = "adminID"
+	contextKeyOrgRole requestContextKey = "orgRole"
+)
+
+func orgIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(contextKeyOrgID).(string)
+	return v
+}
+
+func adminIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(contextKeyAdminID).(string)
+	return v
+}
+
+func orgRoleFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(contextKeyOrgRole).(string)
+	return v
 }
 
 func New(config Config) (*Service, error) {
@@ -263,15 +372,17 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/auth/local/register", s.handleRegisterLocalAdmin)
 	mux.HandleFunc("/api/v1/auth/local/verify", s.handleVerifyLocalAdmin)
 	mux.HandleFunc("/api/v1/admin/overview", s.withAdminAuth(s.handleOverview))
-	mux.HandleFunc("/api/v1/admin/routes", s.withAdminAuth(s.handleRoutes))
-	mux.HandleFunc("/api/v1/admin/routes/", s.withAdminAuth(s.handleRouteByID))
-	mux.HandleFunc("/api/v1/admin/tenants", s.withAdminAuth(s.handleTenants))
-	mux.HandleFunc("/api/v1/admin/tenants/", s.withAdminAuth(s.handleTenantByID))
-	mux.HandleFunc("/api/v1/admin/tokens", s.withAdminAuth(s.handleTokens))
-	mux.HandleFunc("/api/v1/admin/tokens/", s.withAdminAuth(s.handleTokenByID))
-	mux.HandleFunc("/api/v1/admin/audit", s.withAdminAuth(s.handleAudit))
-	mux.HandleFunc("/api/v1/admin/topology", s.withAdminAuth(s.handleTopology))
+	mux.HandleFunc("/api/v1/admin/routes", s.withAdminAuth(s.withOrgContext(s.handleRoutes)))
+	mux.HandleFunc("/api/v1/admin/routes/", s.withAdminAuth(s.withOrgContext(s.handleRouteByID)))
+	mux.HandleFunc("/api/v1/admin/tenants", s.withAdminAuth(s.withOrgContext(s.handleTenants)))
+	mux.HandleFunc("/api/v1/admin/tenants/", s.withAdminAuth(s.withOrgContext(s.handleTenantByID)))
+	mux.HandleFunc("/api/v1/admin/tokens", s.withAdminAuth(s.withOrgContext(s.handleTokens)))
+	mux.HandleFunc("/api/v1/admin/tokens/", s.withAdminAuth(s.withOrgContext(s.handleTokenByID)))
+	mux.HandleFunc("/api/v1/admin/audit", s.withAdminAuth(s.withOrgContext(s.handleAudit)))
+	mux.HandleFunc("/api/v1/admin/topology", s.withAdminAuth(s.withOrgContext(s.handleTopology)))
 	mux.HandleFunc("/api/v1/admin/topology/stream", s.handleTopologyStream)
+	mux.HandleFunc("/api/v1/admin/orgs", s.withAdminAuth(s.handleOrgs))
+	mux.HandleFunc("/api/v1/admin/orgs/", s.withAdminAuth(s.handleOrgByID))
 	mux.HandleFunc("/proxy/", s.handleProxy)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -302,12 +413,44 @@ var topologyUpgrader = websocket.Upgrader{
 func (s *Service) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		tokenValue := extractBearerToken(request.Header.Get("Authorization"))
-		if _, err := validateAdminToken(tokenValue, s.config.AdminJWTSecret); err != nil {
+		identity, err := validateAdminToken(tokenValue, s.config.AdminJWTSecret)
+		if err != nil {
 			s.logger.Warn("admin authentication failed", "path", request.URL.Path, "remote_addr", clientAddress(request), "error", err.Error())
 			writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 			return
 		}
-		next(writer, request)
+		_ = s.store.UpsertUser(request.Context(), userRecord{
+			ID:        identity.Subject,
+			Email:     identity.Email,
+			Name:      identity.Name,
+			Source:    "admin",
+			CreatedAt: time.Now().UTC(),
+		})
+		ctx := context.WithValue(request.Context(), contextKeyAdminID, identity.Subject)
+		next(writer, request.WithContext(ctx))
+	}
+}
+
+func (s *Service) withOrgContext(next http.HandlerFunc) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		orgID := strings.TrimSpace(request.Header.Get("X-Org-ID"))
+		if orgID == "" {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "X-Org-ID header is required"})
+			return
+		}
+		adminID := adminIDFromContext(request.Context())
+		membership, ok, err := s.store.GetOrgMembership(request.Context(), orgID, adminID)
+		if err != nil {
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to verify organisation membership"})
+			return
+		}
+		if !ok {
+			writeJSON(writer, http.StatusForbidden, map[string]string{"error": "not a member of this organisation"})
+			return
+		}
+		ctx := context.WithValue(request.Context(), contextKeyOrgID, orgID)
+		ctx = context.WithValue(ctx, contextKeyOrgRole, membership.Role)
+		next(writer, request.WithContext(ctx))
 	}
 }
 
@@ -384,8 +527,12 @@ func (s *Service) handleVerifyLocalAdmin(writer http.ResponseWriter, request *ht
 		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to verify account"})
 		return
 	}
-	if !ok || verifyLocalAccountPassword(account.PasswordHash, payload.Password) != nil {
-		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
+	if !ok {
+		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "account not found"})
+		return
+	}
+	if verifyLocalAccountPassword(account.PasswordHash, payload.Password) != nil {
+		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "wrong password"})
 		return
 	}
 
@@ -560,10 +707,31 @@ func (s *Service) handleTopologyStream(writer http.ResponseWriter, request *http
 	if tokenValue == "" {
 		tokenValue = strings.TrimSpace(request.URL.Query().Get("access_token"))
 	}
-	if _, err := validateAdminToken(tokenValue, s.config.AdminJWTSecret); err != nil {
+	identity, err := validateAdminToken(tokenValue, s.config.AdminJWTSecret)
+	if err != nil {
 		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
+	_ = s.store.UpsertUser(request.Context(), userRecord{
+		ID:        identity.Subject,
+		Email:     identity.Email,
+		Name:      identity.Name,
+		Source:    "admin",
+		CreatedAt: time.Now().UTC(),
+	})
+
+	ctx := context.WithValue(request.Context(), contextKeyAdminID, identity.Subject)
+	orgID := strings.TrimSpace(request.URL.Query().Get("org_id"))
+	if orgID != "" {
+		membership, ok, err := s.store.GetOrgMembership(ctx, orgID, identity.Subject)
+		if err != nil || !ok {
+			writeJSON(writer, http.StatusForbidden, map[string]string{"error": "not a member of this organisation"})
+			return
+		}
+		ctx = context.WithValue(ctx, contextKeyOrgID, orgID)
+		ctx = context.WithValue(ctx, contextKeyOrgRole, membership.Role)
+	}
+	request = request.WithContext(ctx)
 
 	connection, err := topologyUpgrader.Upgrade(writer, request, nil)
 	if err != nil {
@@ -854,6 +1022,10 @@ func (s *Service) handleCreateRoute(writer http.ResponseWriter, request *http.Re
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "slug, targetPath, tenantID, and requiredScope are required"})
 		return
 	}
+	if strings.ContainsAny(payload.Slug, "/ \t\n\r") {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "slug must not contain slashes or whitespace"})
+		return
+	}
 	if !strings.HasPrefix(payload.TargetPath, "/") {
 		payload.TargetPath = "/" + payload.TargetPath
 	}
@@ -968,6 +1140,10 @@ func (s *Service) handleRouteByID(writer http.ResponseWriter, request *http.Requ
 		}
 		if payload.Slug == "" || payload.TargetPath == "" || payload.TenantID == "" || payload.RequiredScope == "" {
 			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "slug, targetPath, tenantID, and requiredScope are required"})
+			return
+		}
+		if strings.ContainsAny(payload.Slug, "/ \t\n\r") {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "slug must not contain slashes or whitespace"})
 			return
 		}
 		if !strings.HasPrefix(payload.TargetPath, "/") {

@@ -1,11 +1,11 @@
 "use client";
 
-import type { QueryResult, TopologySnapshot } from "@/lib/contracts";
 import { CreateRouteForm } from "@/components/admin/create-route-form";
 import { CreateTenantForm } from "@/components/admin/create-tenant-form";
 import { CreateTokenForm } from "@/components/admin/create-token-form";
 import { UpdateRouteForm } from "@/components/admin/update-route-form";
 import { UpdateTenantForm } from "@/components/admin/update-tenant-form";
+import type { QueryResult, TopologySnapshot } from "@/lib/contracts";
 import { Button, Card, Chip, Surface } from "@heroui/react";
 import { Activity, ArrowRight, KeyRound, LocateFixed, Move, Plus, RefreshCw, Route, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -247,8 +247,9 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
           return;
         }
 
-        const socketInfo = (await response.json()) as { token: string; wsUrl: string };
-        const socket = new WebSocket(`${socketInfo.wsUrl}?access_token=${encodeURIComponent(socketInfo.token)}`);
+        const socketInfo = (await response.json()) as { token: string; wsUrl: string; orgId?: string | null };
+        const orgParam = socketInfo.orgId ? `&org_id=${encodeURIComponent(socketInfo.orgId)}` : "";
+        const socket = new WebSocket(`${socketInfo.wsUrl}?access_token=${encodeURIComponent(socketInfo.token)}${orgParam}`);
         socketRef.current = socket;
 
         socket.onopen = () => {

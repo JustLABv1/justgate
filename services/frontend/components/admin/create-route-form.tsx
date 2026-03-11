@@ -1,9 +1,9 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { Button, Chip, Form, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
 import { ArrowUpRight, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 import { type FormEvent, useState, useTransition } from "react";
 
 interface CreateRouteFormProps {
@@ -131,7 +131,7 @@ export function CreateRouteForm({
                       value={formState.slug}
                       onChange={(event) => setFormState((current) => ({ ...current, slug: event.target.value }))}
                     />
-                    <div className="enterprise-note">Stable operator-facing path segment.</div>
+                    <div className="enterprise-note">Stable operator-facing path segment. No slashes — use hyphens instead.</div>
                   </TextField>
                   <Select
                     className="w-full"

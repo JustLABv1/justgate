@@ -1,5 +1,5 @@
-import { createBackendAdminToken } from "@/lib/backend-admin-token";
 import { auth } from "@/lib/auth";
+import { createBackendAdminToken } from "@/lib/backend-admin-token";
 import { getBackendBaseUrl } from "@/lib/backend-server";
 import { NextResponse } from "next/server";
 
@@ -13,5 +13,5 @@ export async function GET() {
   const wsUrl = backendUrl.replace(/^http/, "ws") + "/api/v1/admin/topology/stream";
   const token = await createBackendAdminToken(session);
 
-  return NextResponse.json({ token, wsUrl });
+  return NextResponse.json({ token, wsUrl, orgId: session.activeOrgId ?? null });
 }

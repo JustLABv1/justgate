@@ -86,7 +86,8 @@ if (isLocalAccountsEnabled()) {
         });
 
         if (!response.ok) {
-          return null;
+          const body = await response.json().catch(() => null) as { error?: string } | null;
+          throw new Error(body?.error || "Sign-in failed");
         }
 
         const account = (await response.json()) as {
@@ -115,7 +116,7 @@ export const authOptions: NextAuthOptions = {
     strategy: "jwt",
   },
   callbacks: {
-    async jwt({ token, user, account }) {
+    async jwt({ token, user, account, trigger, session }) {
       if (user) {
         token.sub = user.id;
         token.email = user.email;
@@ -123,6 +124,9 @@ export const authOptions: NextAuthOptions = {
       }
       if (account?.provider) {
         token.provider = account.provider;
+      }
+      if (trigger === "update" && session?.activeOrgId !== undefined) {
+        token.activeOrgId = session.activeOrgId as string;
       }
       return token;
     },
@@ -132,6 +136,7 @@ export const authOptions: NextAuthOptions = {
         session.user.email = token.email || session.user.email;
         session.user.name = token.name || session.user.name;
       }
+      session.activeOrgId = (token.activeOrgId as string | undefined) ?? undefined;
       return session;
     },
   },

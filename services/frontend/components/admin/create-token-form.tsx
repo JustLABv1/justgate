@@ -1,11 +1,11 @@
 "use client";
 
 import type { IssuedToken } from "@/lib/contracts";
-import type { ReactNode } from "react";
 import { Button, Chip, Form, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
-import { Plus, Copy, Check } from "lucide-react";
+import { Check, Copy, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, useTransition, useCallback } from "react";
+import type { ReactNode } from "react";
+import { useCallback, useState, useTransition } from "react";
 
 interface CreateTokenFormProps {
   existingCount: number;
@@ -198,7 +198,7 @@ export function CreateTokenForm({
                         onPress={() => handleCopySecret(issuedToken.secret)}
                         size="sm"
                         variant="ghost"
-                        title="Copy secret"
+                        aria-label="Copy secret"
                       >
                         {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
                       </Button>

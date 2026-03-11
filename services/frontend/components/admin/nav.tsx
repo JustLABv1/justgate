@@ -1,7 +1,8 @@
 "use client";
 
+import { OrgSwitcher } from "@/components/admin/org-switcher";
+import { History, KeyRound, LayoutDashboard, Orbit, Settings2, Users2, UsersRound } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, Orbit, Settings2, Users2, KeyRound, History } from "lucide-react";
 
 const links = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
@@ -10,6 +11,7 @@ const links = [
   { href: "/tenants", label: "Tenants", icon: Users2 },
   { href: "/tokens", label: "Tokens", icon: KeyRound },
   { href: "/audit", label: "Audit Log", icon: History },
+  { href: "/team", label: "Team", icon: UsersRound },
 ];
 
 interface AdminNavProps {
@@ -22,6 +24,9 @@ export function AdminNav({ onNavigate }: AdminNavProps) {
 
   return (
     <nav className="flex flex-col gap-0.5">
+      <div className="mb-2">
+        <OrgSwitcher />
+      </div>
       {links.map((link) => {
         const active = pathname === link.href;
 

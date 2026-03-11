@@ -2,10 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -42,9 +43,6 @@ func newSQLStore(databaseURL, headerName string) (string, *sqlStore, error) {
 	if err := store.runMigrations(context.Background()); err != nil {
 		return "", nil, err
 	}
-	if err := store.seedReferenceData(context.Background(), headerName); err != nil {
-		return "", nil, err
-	}
 
 	return storeKind, store, nil
 }
@@ -70,173 +68,7 @@ func databaseConfig(databaseURL string) (string, string, string) {
 	return "sqlite", trimmed, "sqlite"
 }
 
-func (store *sqlStore) seedReferenceData(ctx context.Context, headerName string) error {
-	tables := []string{"tenants", "routes", "tokens", "audits"}
-	for _, tableName := range tables {
-		var rowCount int
-		query := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, tableName)
-		if err := store.queryRowContext(ctx, query).Scan(&rowCount); err != nil {
-			return err
-		}
-		if rowCount > 0 {
-			return nil
-		}
-	}
-
-	primaryUpstream := getenvOrDefault("MIMIR_PRIMARY_UPSTREAM", "http://localhost:9009")
-	secondaryUpstream := getenvOrDefault("MIMIR_SECONDARY_UPSTREAM", "http://localhost:9010")
-	now := store.now()
-
-	tenants := []tenantRecord{
-		{
-			ID:         "tenant-acme",
-			Name:       "Acme Observability",
-			TenantID:   "acme-prod",
-			Upstream:   primaryUpstream,
-			AuthMode:   "header",
-			HeaderName: headerName,
-		},
-		{
-			ID:         "tenant-northstar",
-			Name:       "Northstar Platform",
-			TenantID:   "northstar-int",
-			Upstream:   secondaryUpstream,
-			AuthMode:   "header",
-			HeaderName: headerName,
-		},
-	}
-
-	routes := []routeRecord{
-		{
-			ID:            "route-mimir",
-			Slug:          "mimir",
-			TargetPath:    "/api/v1",
-			TenantID:      "acme-prod",
-			RequiredScope: "metrics:read",
-			Methods:       []string{http.MethodGet},
-			UpstreamURL:   primaryUpstream,
-		},
-		{
-			ID:            "route-rules",
-			Slug:          "rules",
-			TargetPath:    "/prometheus/config/v1/rules",
-			TenantID:      "acme-prod",
-			RequiredScope: "rules:read",
-			Methods:       []string{http.MethodGet},
-			UpstreamURL:   primaryUpstream,
-		},
-		{
-			ID:            "route-team-a",
-			Slug:          "team-a-metrics",
-			TargetPath:    "/api/v1/push",
-			TenantID:      "northstar-int",
-			RequiredScope: "metrics:write",
-			Methods:       []string{http.MethodPost},
-			UpstreamURL:   secondaryUpstream,
-		},
-	}
-
-	tokens := []struct {
-		record    tokenRecord
-		createdAt time.Time
-	}{
-		{
-			record: tokenRecord{
-				ID:         "tok_ops_reader",
-				Name:       "ops-reader",
-				TenantID:   "acme-prod",
-				Scopes:     []string{"metrics:read", "rules:read"},
-				ExpiresAt:  now.Add(120 * 24 * time.Hour),
-				LastUsedAt: now.Add(-64 * time.Minute),
-				Preview:    "jpg_ops_reader_...d3f",
-				Active:     true,
-				Hash:       hashToken("jpg_ops_reader_secret_local"),
-			},
-			createdAt: now.Add(-30 * time.Minute),
-		},
-		{
-			record: tokenRecord{
-				ID:         "tok_agent_push",
-				Name:       "agent-push",
-				TenantID:   "northstar-int",
-				Scopes:     []string{"metrics:write"},
-				ExpiresAt:  now.Add(90 * 24 * time.Hour),
-				LastUsedAt: now.Add(-3 * time.Hour),
-				Preview:    "jpg_agent_push_...7ab",
-				Active:     true,
-				Hash:       hashToken("jpg_agent_push_secret_local"),
-			},
-			createdAt: now.Add(-20 * time.Minute),
-		},
-	}
-
-	audits := []auditRecord{
-		{
-			ID:        "audit-001",
-			Timestamp: now.Add(-64 * time.Minute),
-			RouteSlug: "mimir",
-			TenantID:  "acme-prod",
-			TokenID:   "tok_ops_reader",
-			Method:    http.MethodGet,
-			Status:    http.StatusOK,
-			Upstream:  primaryUpstream + "/api/v1/query",
-		},
-		{
-			ID:        "audit-002",
-			Timestamp: now.Add(-3 * time.Hour),
-			RouteSlug: "team-a-metrics",
-			TenantID:  "northstar-int",
-			TokenID:   "tok_agent_push",
-			Method:    http.MethodPost,
-			Status:    http.StatusAccepted,
-			Upstream:  secondaryUpstream + "/api/v1/push",
-		},
-		{
-			ID:        "audit-003",
-			Timestamp: now.Add(-4 * time.Hour),
-			RouteSlug: "rules",
-			TenantID:  "acme-prod",
-			TokenID:   "tok_ops_reader",
-			Method:    http.MethodGet,
-			Status:    http.StatusUnauthorized,
-			Upstream:  primaryUpstream + "/prometheus/config/v1/rules",
-		},
-	}
-
-	for index, tenant := range tenants {
-		createdAt := now.Add(time.Duration(index) * time.Minute)
-		if _, err := store.execContext(ctx, `INSERT INTO tenants (id, name, tenant_id, upstream_url, auth_mode, header_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, tenant.ID, tenant.Name, tenant.TenantID, tenant.Upstream, tenant.AuthMode, tenant.HeaderName, createdAt); err != nil {
-			return err
-		}
-	}
-
-	for index, route := range routes {
-		methodsJSON, err := json.Marshal(route.Methods)
-		if err != nil {
-			return err
-		}
-		createdAt := now.Add(time.Duration(index) * time.Minute)
-		if _, err := store.execContext(ctx, `INSERT INTO routes (id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, route.ID, route.Slug, route.TargetPath, route.TenantID, route.RequiredScope, string(methodsJSON), route.UpstreamURL, createdAt); err != nil {
-			return err
-		}
-	}
-
-	for _, token := range tokens {
-		scopesJSON, err := json.Marshal(token.record.Scopes)
-		if err != nil {
-			return err
-		}
-		if _, err := store.execContext(ctx, `INSERT INTO tokens (id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, token.record.ID, token.record.Name, token.record.TenantID, string(scopesJSON), token.record.ExpiresAt, token.record.LastUsedAt, token.record.Preview, token.record.Active, token.record.Hash, token.createdAt); err != nil {
-			return err
-		}
-	}
-
-	for _, audit := range audits {
-		if err := store.RecordAudit(ctx, audit); err != nil {
-			return err
-		}
-	}
-
+func (store *sqlStore) seedReferenceData(_ context.Context, _ string) error {
 	return nil
 }
 
@@ -261,7 +93,13 @@ func (store *sqlStore) GetLocalAdminByEmail(ctx context.Context, email string) (
 }
 
 func (store *sqlStore) ListTenants(ctx context.Context) ([]tenantRecord, error) {
-	rows, err := store.queryContext(ctx, `SELECT id, name, tenant_id, upstream_url, auth_mode, header_name FROM tenants ORDER BY created_at DESC`)
+	var rows *sql.Rows
+	var err error
+	if orgID := orgIDFromContext(ctx); orgID != "" {
+		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, upstream_url, auth_mode, header_name, org_id FROM tenants WHERE org_id = ? ORDER BY created_at DESC`, orgID)
+	} else {
+		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, upstream_url, auth_mode, header_name, org_id FROM tenants ORDER BY created_at DESC`)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +108,7 @@ func (store *sqlStore) ListTenants(ctx context.Context) ([]tenantRecord, error) 
 	items := make([]tenantRecord, 0)
 	for rows.Next() {
 		var tenant tenantRecord
-		if err := rows.Scan(&tenant.ID, &tenant.Name, &tenant.TenantID, &tenant.Upstream, &tenant.AuthMode, &tenant.HeaderName); err != nil {
+		if err := rows.Scan(&tenant.ID, &tenant.Name, &tenant.TenantID, &tenant.Upstream, &tenant.AuthMode, &tenant.HeaderName, &tenant.OrgID); err != nil {
 			return nil, err
 		}
 		items = append(items, tenant)
@@ -279,7 +117,13 @@ func (store *sqlStore) ListTenants(ctx context.Context) ([]tenantRecord, error) 
 }
 
 func (store *sqlStore) ListRoutes(ctx context.Context) ([]routeRecord, error) {
-	rows, err := store.queryContext(ctx, `SELECT id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url FROM routes ORDER BY created_at DESC`)
+	var rows *sql.Rows
+	var err error
+	if orgID := orgIDFromContext(ctx); orgID != "" {
+		rows, err = store.queryContext(ctx, `SELECT r.id, r.slug, r.target_path, r.tenant_id, r.required_scope, r.methods_json, r.upstream_url FROM routes r INNER JOIN tenants tn ON r.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY r.created_at DESC`, orgID)
+	} else {
+		rows, err = store.queryContext(ctx, `SELECT id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url FROM routes ORDER BY created_at DESC`)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +141,13 @@ func (store *sqlStore) ListRoutes(ctx context.Context) ([]routeRecord, error) {
 }
 
 func (store *sqlStore) ListTokens(ctx context.Context) ([]tokenRecord, error) {
-	rows, err := store.queryContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash FROM tokens ORDER BY created_at DESC`)
+	var rows *sql.Rows
+	var err error
+	if orgID := orgIDFromContext(ctx); orgID != "" {
+		rows, err = store.queryContext(ctx, `SELECT tok.id, tok.name, tok.tenant_id, tok.scopes_json, tok.expires_at, tok.last_used_at, tok.preview, tok.active, tok.token_hash FROM tokens tok INNER JOIN tenants tn ON tok.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY tok.created_at DESC`, orgID)
+	} else {
+		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash FROM tokens ORDER BY created_at DESC`)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +165,13 @@ func (store *sqlStore) ListTokens(ctx context.Context) ([]tokenRecord, error) {
 }
 
 func (store *sqlStore) ListAudits(ctx context.Context) ([]auditRecord, error) {
-	rows, err := store.queryContext(ctx, `SELECT id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url FROM audits ORDER BY timestamp DESC`)
+	var rows *sql.Rows
+	var err error
+	if orgID := orgIDFromContext(ctx); orgID != "" {
+		rows, err = store.queryContext(ctx, `SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url FROM audits a INNER JOIN tenants tn ON a.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY a.timestamp DESC`, orgID)
+	} else {
+		rows, err = store.queryContext(ctx, `SELECT id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url FROM audits ORDER BY timestamp DESC`)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -333,6 +189,7 @@ func (store *sqlStore) ListAudits(ctx context.Context) ([]auditRecord, error) {
 }
 
 func (store *sqlStore) CreateTenant(ctx context.Context, payload createTenantRequest) (tenantRecord, error) {
+	orgID := orgIDFromContext(ctx)
 	tenant := tenantRecord{
 		ID:         newResourceID("tenant"),
 		Name:       payload.Name,
@@ -340,9 +197,10 @@ func (store *sqlStore) CreateTenant(ctx context.Context, payload createTenantReq
 		Upstream:   payload.Upstream,
 		AuthMode:   payload.AuthMode,
 		HeaderName: payload.HeaderName,
+		OrgID:      orgID,
 	}
 
-	_, err := store.execContext(ctx, `INSERT INTO tenants (id, name, tenant_id, upstream_url, auth_mode, header_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, tenant.ID, tenant.Name, tenant.TenantID, tenant.Upstream, tenant.AuthMode, tenant.HeaderName, store.now())
+	_, err := store.execContext(ctx, `INSERT INTO tenants (id, name, tenant_id, upstream_url, auth_mode, header_name, org_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, tenant.ID, tenant.Name, tenant.TenantID, tenant.Upstream, tenant.AuthMode, tenant.HeaderName, orgID, store.now())
 	if err != nil {
 		return tenantRecord{}, translateDBError(err, "tenantID already exists")
 	}
@@ -621,7 +479,12 @@ func (store *sqlStore) RecordAudit(ctx context.Context, audit auditRecord) error
 
 func (store *sqlStore) lookupTenantUpstream(ctx context.Context, tenantID string) (string, error) {
 	var upstreamURL string
-	err := store.queryRowContext(ctx, `SELECT upstream_url FROM tenants WHERE tenant_id = ? LIMIT 1`, tenantID).Scan(&upstreamURL)
+	var err error
+	if orgID := orgIDFromContext(ctx); orgID != "" {
+		err = store.queryRowContext(ctx, `SELECT upstream_url FROM tenants WHERE tenant_id = ? AND org_id = ? LIMIT 1`, tenantID, orgID).Scan(&upstreamURL)
+	} else {
+		err = store.queryRowContext(ctx, `SELECT upstream_url FROM tenants WHERE tenant_id = ? LIMIT 1`, tenantID).Scan(&upstreamURL)
+	}
 	if err == sql.ErrNoRows {
 		return "", fmt.Errorf("tenantID does not exist")
 	}
@@ -704,4 +567,235 @@ func defaultDatabaseURL() string {
 		path = "just-gate.db"
 	}
 	return fmt.Sprintf("sqlite://%s", path)
+}
+
+func (store *sqlStore) UpsertUser(ctx context.Context, user userRecord) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO users (id, email, name, source, created_at) VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name`,
+		user.ID, user.Email, user.Name, user.Source, user.CreatedAt)
+	return err
+}
+
+func (store *sqlStore) GetUserByEmail(ctx context.Context, email string) (userRecord, bool, error) {
+	row := store.queryRowContext(ctx, `SELECT id, email, name, source, created_at FROM users WHERE email = ? LIMIT 1`, email)
+	var u userRecord
+	if err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Source, &u.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return userRecord{}, false, nil
+		}
+		return userRecord{}, false, err
+	}
+	return u, true, nil
+}
+
+func (store *sqlStore) GetUserByID(ctx context.Context, userID string) (userRecord, bool, error) {
+	row := store.queryRowContext(ctx, `SELECT id, email, name, source, created_at FROM users WHERE id = ? LIMIT 1`, userID)
+	var u userRecord
+	if err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Source, &u.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return userRecord{}, false, nil
+		}
+		return userRecord{}, false, err
+	}
+	return u, true, nil
+}
+
+func (store *sqlStore) CreateOrg(ctx context.Context, name, createdBy string) (orgRecord, error) {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return orgRecord{}, err
+	}
+	org := orgRecord{
+		ID:        newResourceID("org"),
+		Name:      name,
+		CreatedBy: createdBy,
+		CreatedAt: store.now(),
+	}
+	if _, err := tx.ExecContext(ctx, store.rebind(`INSERT INTO organizations (id, name, created_by, created_at) VALUES (?, ?, ?, ?)`), org.ID, org.Name, org.CreatedBy, org.CreatedAt); err != nil {
+		_ = tx.Rollback()
+		return orgRecord{}, err
+	}
+	if _, err := tx.ExecContext(ctx, store.rebind(`INSERT INTO org_memberships (org_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)`), org.ID, createdBy, "owner", store.now()); err != nil {
+		_ = tx.Rollback()
+		return orgRecord{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return orgRecord{}, err
+	}
+	org.Role = "owner"
+	return org, nil
+}
+
+func (store *sqlStore) ListOrgs(ctx context.Context, userID string) ([]orgRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT o.id, o.name, o.created_by, m.role, o.created_at
+		 FROM organizations o
+		 INNER JOIN org_memberships m ON o.id = m.org_id
+		 WHERE m.user_id = ?
+		 ORDER BY o.created_at ASC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]orgRecord, 0)
+	for rows.Next() {
+		var org orgRecord
+		if err := rows.Scan(&org.ID, &org.Name, &org.CreatedBy, &org.Role, &org.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, org)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) GetOrgMembership(ctx context.Context, orgID, userID string) (orgMemberRecord, bool, error) {
+	row := store.queryRowContext(ctx,
+		`SELECT m.org_id, m.user_id, m.role, m.joined_at, COALESCE(u.name,''), COALESCE(u.email,'')
+		 FROM org_memberships m
+		 LEFT JOIN users u ON m.user_id = u.id
+		 WHERE m.org_id = ? AND m.user_id = ? LIMIT 1`, orgID, userID)
+	var m orgMemberRecord
+	if err := row.Scan(&m.OrgID, &m.UserID, &m.Role, &m.JoinedAt, &m.UserName, &m.UserEmail); err != nil {
+		if err == sql.ErrNoRows {
+			return orgMemberRecord{}, false, nil
+		}
+		return orgMemberRecord{}, false, err
+	}
+	return m, true, nil
+}
+
+func (store *sqlStore) AddOrgMember(ctx context.Context, orgID, userID, role string) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO org_memberships (org_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(org_id, user_id) DO UPDATE SET role = excluded.role`,
+		orgID, userID, role, store.now())
+	return err
+}
+
+func (store *sqlStore) RemoveOrgMember(ctx context.Context, orgID, userID string) error {
+	result, err := store.execContext(ctx, `DELETE FROM org_memberships WHERE org_id = ? AND user_id = ?`, orgID, userID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("member not found")
+	}
+	return nil
+}
+
+func (store *sqlStore) ListOrgMembers(ctx context.Context, orgID string) ([]orgMemberRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT m.org_id, m.user_id, m.role, m.joined_at, COALESCE(u.name,''), COALESCE(u.email,'')
+		 FROM org_memberships m
+		 LEFT JOIN users u ON m.user_id = u.id
+		 WHERE m.org_id = ?
+		 ORDER BY m.joined_at ASC`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]orgMemberRecord, 0)
+	for rows.Next() {
+		var m orgMemberRecord
+		if err := rows.Scan(&m.OrgID, &m.UserID, &m.Role, &m.JoinedAt, &m.UserName, &m.UserEmail); err != nil {
+			return nil, err
+		}
+		items = append(items, m)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) CreateOrgInvite(ctx context.Context, orgID, createdBy string, expiresAt time.Time, maxUses int) (orgInviteRecord, error) {
+	code, err := generateInviteCode()
+	if err != nil {
+		return orgInviteRecord{}, err
+	}
+	invite := orgInviteRecord{
+		ID:        newResourceID("inv"),
+		OrgID:     orgID,
+		Code:      code,
+		CreatedBy: createdBy,
+		ExpiresAt: expiresAt,
+		MaxUses:   maxUses,
+		UseCount:  0,
+		CreatedAt: store.now(),
+	}
+	_, err = store.execContext(ctx,
+		`INSERT INTO org_invites (id, org_id, code, created_by, expires_at, max_uses, use_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		invite.ID, invite.OrgID, invite.Code, invite.CreatedBy, invite.ExpiresAt, invite.MaxUses, invite.UseCount, invite.CreatedAt)
+	if err != nil {
+		return orgInviteRecord{}, err
+	}
+	return invite, nil
+}
+
+func (store *sqlStore) GetOrgInviteByCode(ctx context.Context, code string) (orgInviteRecord, bool, error) {
+	row := store.queryRowContext(ctx,
+		`SELECT id, org_id, code, created_by, expires_at, max_uses, use_count, created_at FROM org_invites WHERE code = ? LIMIT 1`, code)
+	var inv orgInviteRecord
+	if err := row.Scan(&inv.ID, &inv.OrgID, &inv.Code, &inv.CreatedBy, &inv.ExpiresAt, &inv.MaxUses, &inv.UseCount, &inv.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return orgInviteRecord{}, false, nil
+		}
+		return orgInviteRecord{}, false, err
+	}
+	return inv, true, nil
+}
+
+func (store *sqlStore) ConsumeOrgInvite(ctx context.Context, code, userID string) (string, error) {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+
+	var inv orgInviteRecord
+	row := tx.QueryRowContext(ctx, store.rebind(`SELECT id, org_id, expires_at, max_uses, use_count FROM org_invites WHERE code = ? LIMIT 1`), code)
+	if err := row.Scan(&inv.ID, &inv.OrgID, &inv.ExpiresAt, &inv.MaxUses, &inv.UseCount); err != nil {
+		_ = tx.Rollback()
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("invite not found")
+		}
+		return "", err
+	}
+
+	if store.now().After(inv.ExpiresAt) {
+		_ = tx.Rollback()
+		return "", fmt.Errorf("invite has expired")
+	}
+	if inv.MaxUses > 0 && inv.UseCount >= inv.MaxUses {
+		_ = tx.Rollback()
+		return "", fmt.Errorf("invite has reached its usage limit")
+	}
+
+	if _, err := tx.ExecContext(ctx, store.rebind(`UPDATE org_invites SET use_count = use_count + 1 WHERE id = ?`), inv.ID); err != nil {
+		_ = tx.Rollback()
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, store.rebind(
+		`INSERT INTO org_memberships (org_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(org_id, user_id) DO NOTHING`),
+		inv.OrgID, userID, "member", store.now()); err != nil {
+		_ = tx.Rollback()
+		return "", err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return inv.OrgID, nil
+}
+
+func generateInviteCode() (string, error) {
+	b := make([]byte, 18)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

@@ -18,9 +18,13 @@ export async function getAdminRequestHeaders(): Promise<HeadersInit> {
   }
 
   const token = await createBackendAdminToken(session);
-  return {
+  const headers: Record<string, string> = {
     authorization: `Bearer ${token}`,
   };
+  if (session.activeOrgId) {
+    headers["X-Org-ID"] = session.activeOrgId;
+  }
+  return headers;
 }
 
 export function hasAdminRequestAuthorization(headers: HeadersInit) {

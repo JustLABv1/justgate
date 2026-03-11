@@ -53,7 +53,7 @@ export function SignInPanel({
     });
 
     if (!result || result.error) {
-      setError("Local sign-in failed.");
+      setError(result?.error || "Sign-in failed.");
       return;
     }
 

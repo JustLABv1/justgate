@@ -7,11 +7,13 @@ import {
     fallbackTokens,
     type AdminOverview,
     type AuditEvent,
+    type MemberSummary,
+    type OrgSummary,
     type QueryResult,
     type RouteSummary,
     type TenantSummary,
-  type TopologySnapshot,
     type TokenSummary,
+    type TopologySnapshot,
 } from "@/lib/contracts";
 
 const backendUrl = getBackendBaseUrl();
@@ -63,6 +65,14 @@ export function getTokens() {
 
 export function getAuditEvents() {
   return fetchBackend<AuditEvent[]>("/api/v1/admin/audit", fallbackAuditEvents);
+}
+
+export function getOrgs() {
+  return fetchBackend<OrgSummary[]>("/api/v1/admin/orgs", []);
+}
+
+export function getOrgMembers(orgID: string) {
+  return fetchBackend<MemberSummary[]>(`/api/v1/admin/orgs/${encodeURIComponent(orgID)}/members`, []);
 }
 
 export async function getTopology(): Promise<QueryResult<TopologySnapshot>> {

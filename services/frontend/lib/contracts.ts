@@ -113,3 +113,27 @@ export const fallbackTopology: TopologySnapshot = {
   tokens: fallbackTokens,
   auditEvents: fallbackAuditEvents,
 };
+
+export interface OrgSummary {
+  id: string;
+  name: string;
+  role: string;
+  createdAt: string;
+}
+
+export interface MemberSummary {
+  userID: string;
+  userName: string;
+  userEmail: string;
+  role: string;
+  joinedAt: string;
+}
+
+export interface InviteResult {
+  code: string;
+  orgID: string;
+  expiresAt: string;
+  maxUses: number;
+  useCount: number;
+}
+

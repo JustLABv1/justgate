@@ -1,20 +1,20 @@
 "use client";
 
-import { 
-  Button, 
-  Form, 
-  Input, 
-  Label, 
-  ListBox, 
-  Modal, 
-  Select, 
-  TextField,
-  Tabs
+import type { IssuedToken, OrgSummary, TenantSummary } from "@/lib/contracts";
+import {
+  Button,
+  Form,
+  Input,
+  Label,
+  ListBox,
+  Modal,
+  Select,
+  TextField
 } from "@heroui/react";
-import { Plus, CheckCircle2, ArrowRight, Copy, Check } from "lucide-react";
+import { ArrowRight, Building2, Check, CheckCircle2, Copy, Plus } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useState, useTransition, useCallback, type FormEvent } from "react";
-import type { TenantSummary, IssuedToken } from "@/lib/contracts";
+import { useCallback, useState, useTransition, type FormEvent } from "react";
 
 interface OnboardingModalProps {
   tenantIDs: string[];
@@ -34,10 +34,18 @@ function toApiExpiryFromDays(value: string) {
 
 export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModalProps) {
   const router = useRouter();
+  const { data: session, update } = useSession();
   const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<string>("tenant");
   const [isPending, startTransition] = useTransition();
-  
+
+  const hasOrg = Boolean(session?.activeOrgId);
+
+  const [activeTab, setActiveTab] = useState<string>("org");
+
+  // Org state
+  const [orgError, setOrgError] = useState<string>();
+  const [createdOrg, setCreatedOrg] = useState<OrgSummary>();
+
   // Tenant state
   const [tenantError, setTenantError] = useState<string>();
   const [createdTenant, setCreatedTenant] = useState<TenantSummary>();
@@ -45,10 +53,12 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
   // Route state
   const [routeError, setRouteError] = useState<string>();
   const [routeSuccess, setRouteSuccess] = useState<string>();
-  
+  const [routeTenantID, setRouteTenantID] = useState<string>("");
+
   // Token state
   const [tokenError, setTokenError] = useState<string>();
   const [issuedToken, setIssuedToken] = useState<IssuedToken>();
+  const [tokenTenantID, setTokenTenantID] = useState<string>("");
 
   const [localTenantIDs, setLocalTenantIDs] = useState<string[]>(tenantIDs);
   const [secretCopied, setSecretCopied] = useState(false);
@@ -61,14 +71,48 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
   }, []);
 
   function resetWizard() {
-    setActiveTab("tenant");
+    setActiveTab(hasOrg ? "tenant" : "org");
+    setOrgError(undefined);
+    setCreatedOrg(undefined);
     setTenantError(undefined);
     setCreatedTenant(undefined);
     setRouteError(undefined);
     setRouteSuccess(undefined);
+    setRouteTenantID(tenantIDs[0] ?? "");
     setTokenError(undefined);
     setIssuedToken(undefined);
+    setTokenTenantID(tenantIDs[0] ?? "");
     setLocalTenantIDs(tenantIDs);
+  }
+
+  async function handleOrgSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setOrgError(undefined);
+
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const payload = { name: String(formData.get("name") || "") };
+
+    const response = await fetch("/api/admin/orgs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      setOrgError(result?.error || "Organisation creation failed");
+      return;
+    }
+
+    const org = result as OrgSummary;
+    setCreatedOrg(org);
+    // Persist activeOrgId in session so subsequent requests include X-Org-ID
+    await update({ activeOrgId: org.id });
+    startTransition(() => {
+      router.refresh();
+    });
   }
 
   async function handleTenantSubmit(event: FormEvent<HTMLFormElement>) {
@@ -102,6 +146,9 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
     if (!localTenantIDs.includes(payload.tenantID)) {
         setLocalTenantIDs(prev => [...prev, payload.tenantID]);
     }
+    // Pre-select the newly created tenant for route and token steps
+    setRouteTenantID(payload.tenantID);
+    setTokenTenantID(payload.tenantID);
     
     startTransition(() => {
       router.refresh();
@@ -117,7 +164,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
     const formData = new FormData(form);
     const payload = {
       slug: String(formData.get("slug") || ""),
-      tenantID: String(formData.get("tenantID") || ""),
+      tenantID: routeTenantID,
       targetPath: String(formData.get("targetPath") || ""),
       requiredScope: String(formData.get("requiredScope") || ""),
       methods: String(formData.get("methods") || ""),
@@ -149,7 +196,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
     const formData = new FormData(form);
     const payload = {
       name: String(formData.get("name") || ""),
-      tenantID: String(formData.get("tenantID") || ""),
+      tenantID: tokenTenantID,
       scopes: String(formData.get("scopes") || ""),
       expiresAt: toApiExpiryFromDays(String(formData.get("expiresAt") || "")),
     };
@@ -183,7 +230,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
         }
       }}
     >
-      <Button className="rounded-full bg-foreground px-6 text-background" isDisabled={disabled} onPress={() => setIsOpen(true)}>
+      <Button className="rounded-full bg-foreground px-6 text-background" isDisabled={disabled} onPress={() => { setActiveTab(hasOrg ? "tenant" : "org"); setIsOpen(true); }}>
         <Plus size={16} />
         Onboard Tenant
       </Button>
@@ -195,59 +242,96 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
               <div className="space-y-2">
                 <div className="enterprise-kicker">Guided setup</div>
                 <Modal.Heading className="text-[1.9rem] font-semibold tracking-[-0.04em]">Onboarding Wizard</Modal.Heading>
-                <p className="max-w-2xl text-sm leading-6 text-muted-foreground">Create the tenant first, then attach a route, then issue a token that is limited to that tenant and route scope.</p>
-                <div className="enterprise-stat-grid pt-2">
-                  {[
-                    { label: "Tenant", done: Boolean(createdTenant) },
-                    { label: "Route", done: Boolean(routeSuccess) },
-                    { label: "Token", done: Boolean(issuedToken) },
-                  ].map((step, index) => (
-                    <div key={step.label} className="enterprise-panel flex items-center justify-between px-4 py-3">
-                      <div>
-                        <div className="enterprise-kicker">Step {index + 1}</div>
-                        <div className="mt-1 text-sm font-semibold text-foreground">{step.label}</div>
-                      </div>
-                      <div className={`flex h-8 w-8 items-center justify-center rounded-full border ${step.done ? "border-success/30 bg-success/12 text-success" : "border-border bg-background/80 text-muted-foreground"}`}>
-                        {step.done ? <CheckCircle2 size={15} /> : index + 1}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <p className="max-w-2xl text-sm leading-6 text-muted-foreground">Set up your organisation, then create the tenant, route and token for your first integration.</p>
               </div>
             </Modal.Header>
             <Modal.Body className="pb-8">
-              <Tabs 
-                aria-label="Onboarding steps" 
-                selectedKey={activeTab} 
-                onSelectionChange={(key) => setActiveTab(key as string)}
-                className="w-full"
-                variant="secondary"
-              >
-                <Tabs.List className="mb-6 w-full justify-start gap-6 border-b border-border/80 pb-2">
-                  <Tabs.Tab id="tenant" className="flex items-center gap-2 py-2.5 px-0 outline-none">
-                    <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${createdTenant ? 'bg-success text-success-foreground' : 'bg-muted text-muted-foreground'}`}>
-                      {createdTenant ? <CheckCircle2 size={14} /> : "1"}
-                    </div>
-                    <span className="font-medium">Tenant</span>
-                  </Tabs.Tab>
-                  <Tabs.Tab id="route" className="flex items-center gap-2 py-2.5 px-0 outline-none">
-                    <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${routeSuccess ? 'bg-success text-success-foreground' : 'bg-muted text-muted-foreground'}`}>
-                      {routeSuccess ? <CheckCircle2 size={14} /> : "2"}
-                    </div>
-                    <span className="font-medium">Route</span>
-                  </Tabs.Tab>
-                  <Tabs.Tab id="token" className="flex items-center gap-2 py-2.5 px-0 outline-none">
-                    <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${issuedToken ? 'bg-success text-success-foreground' : 'bg-muted text-muted-foreground'}`}>
-                      {issuedToken ? <CheckCircle2 size={14} /> : "3"}
-                    </div>
-                    <span className="font-medium">Token</span>
-                  </Tabs.Tab>
-                </Tabs.List>
+              {/* Stepper nav */}
+              {(() => {
+                const steps = [
+                  { id: "org", label: "Organisation", done: Boolean(createdOrg) || hasOrg },
+                  { id: "tenant", label: "Tenant", done: Boolean(createdTenant) },
+                  { id: "route", label: "Route", done: Boolean(routeSuccess) },
+                  { id: "token", label: "Token", done: Boolean(issuedToken) },
+                ];
+                return (
+                  <nav className="mb-6 flex items-center">
+                    {steps.map((step, i) => (
+                      <div key={step.id} className="flex items-center">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab(step.id)}
+                          className="flex items-center gap-2"
+                        >
+                          <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold transition-colors ${
+                            step.done
+                              ? "border-success/40 bg-success/15 text-success"
+                              : activeTab === step.id
+                              ? "border-foreground bg-foreground text-background"
+                              : "border-border bg-background text-muted-foreground"
+                          }`}>
+                            {step.done ? <CheckCircle2 size={12} /> : i + 1}
+                          </div>
+                          <span className={`text-[13px] font-medium transition-colors ${
+                            activeTab === step.id ? "text-foreground" : "text-muted-foreground"
+                          }`}>{step.label}</span>
+                        </button>
+                        {i < steps.length - 1 && (
+                          <div className={`mx-3 h-px w-6 shrink-0 ${step.done ? "bg-success/40" : "bg-border"}`} />
+                        )}
+                      </div>
+                    ))}
+                  </nav>
+                );
+              })()}
 
-                <Tabs.Panel id="tenant">
+              {activeTab === "org" && (
                   <div className="space-y-6">
                     <div>
-                      <h3 className="text-lg font-medium">Step 1: Create Tenant</h3>
+                      <h3 className="text-lg font-medium">Step 1: Create Organisation</h3>
+                      <p className="text-sm text-muted-foreground">Organisations let you isolate tenants, routes and tokens across teams. You can invite teammates later.</p>
+                    </div>
+                    {(createdOrg || hasOrg) ? (
+                      <div className="enterprise-feedback enterprise-feedback--success space-y-4 p-6 text-center">
+                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success/20 text-success">
+                          <CheckCircle2 size={24} />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-foreground">Organisation Ready</p>
+                          <p className="text-sm text-muted-foreground">
+                            {createdOrg ? `"${createdOrg.name}" was created.` : "Your active organisation is selected."}
+                          </p>
+                        </div>
+                        <Button onPress={() => setActiveTab("tenant")} className="bg-foreground text-background">
+                          Next: Create Tenant
+                          <ArrowRight size={16} />
+                        </Button>
+                      </div>
+                    ) : (
+                      <Form className="grid gap-5" onSubmit={handleOrgSubmit}>
+                        <div className="enterprise-panel grid gap-4 p-4">
+                          <TextField className="grid gap-2">
+                            <Label>Organisation name</Label>
+                            <Input name="name" placeholder="Acme Platform" required variant="secondary" />
+                            <div className="enterprise-note">Your team or company name — visible to all members.</div>
+                          </TextField>
+                        </div>
+                        {orgError && (
+                          <div className="enterprise-feedback enterprise-feedback--error">{orgError}</div>
+                        )}
+                        <Button type="submit" className="mt-1 h-11 rounded-[1rem] bg-foreground text-background" isDisabled={isPending}>
+                          <Building2 size={16} />
+                          {isPending ? "Creating..." : "Create Organisation"}
+                        </Button>
+                      </Form>
+                    )}
+                  </div>
+              )}
+
+              {activeTab === "tenant" && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-lg font-medium">Step 2: Create Tenant</h3>
                       <p className="text-sm text-muted-foreground">Define where traffic for this customer or environment should go and which tenant header the proxy should inject upstream.</p>
                     </div>
                     {createdTenant ? (
@@ -259,7 +343,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                           <p className="font-semibold text-foreground">Tenant Created</p>
                           <p className="text-sm text-muted-foreground">Tenant {createdTenant.name} ({createdTenant.tenantID}) is ready.</p>
                         </div>
-                        <Button 
+                      <Button 
                           onPress={() => setActiveTab("route")}
                           className="bg-foreground text-background"
                         >
@@ -302,12 +386,12 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                       </Form>
                     )}
                   </div>
-                </Tabs.Panel>
+              )}
 
-                <Tabs.Panel id="route">
+              {activeTab === "route" && (
                   <div className="space-y-6">
                     <div>
-                      <h3 className="text-lg font-medium">Step 2: Register Route</h3>
+                      <h3 className="text-lg font-medium">Step 3: Register Route</h3>
                       <p className="text-sm text-muted-foreground">Create the public proxy entry point that agents or operators will call for this tenant.</p>
                     </div>
                     {routeSuccess ? (
@@ -333,9 +417,9 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                           <TextField className="grid gap-2">
                             <Label>Proxy slug</Label>
                             <Input name="slug" placeholder="metrics-ingest" required variant="secondary" />
-                            <div className="enterprise-note">Becomes the public path /proxy/&lt;slug&gt;. Keep it short and stable.</div>
+                            <div className="enterprise-note">Becomes the public path /proxy/&lt;slug&gt;. Keep it short and stable — no slashes.</div>
                           </TextField>
-                          <Select className="w-full" isRequired name="tenantID" defaultValue={createdTenant?.tenantID} variant="secondary">
+                          <Select className="w-full" isRequired value={routeTenantID} onChange={(v) => setRouteTenantID(String(v))} variant="secondary">
                             <Label>Tenant ID</Label>
                             <Select.Trigger>
                               <Select.Value />
@@ -379,12 +463,12 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                       </Form>
                     )}
                   </div>
-                </Tabs.Panel>
+              )}
 
-                <Tabs.Panel id="token">
+              {activeTab === "token" && (
                   <div className="space-y-6">
                     <div>
-                      <h3 className="text-lg font-medium">Step 3: Issue Token</h3>
+                      <h3 className="text-lg font-medium">Step 4: Issue Token</h3>
                       <p className="text-sm text-muted-foreground">Create the credential that clients will use. The token should include the scope required by the route you just created.</p>
                     </div>
                     {issuedToken ? (
@@ -407,7 +491,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                               onPress={() => handleCopySecret(issuedToken.secret)}
                               size="sm"
                               variant="ghost"
-                              title="Copy secret"
+                              aria-label="Copy secret"
                             >
                               {secretCopied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
                             </Button>
@@ -433,7 +517,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                             <Input name="name" placeholder="grafana-agent" required variant="secondary" />
                             <div className="enterprise-note">Friendly label for the client or workload that will use this token.</div>
                           </TextField>
-                          <Select className="w-full" isRequired name="tenantID" defaultValue={createdTenant?.tenantID} variant="secondary">
+                          <Select className="w-full" isRequired value={tokenTenantID} onChange={(v) => setTokenTenantID(String(v))} variant="secondary">
                             <Label>Tenant ID</Label>
                             <Select.Trigger>
                               <Select.Value />
@@ -472,8 +556,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                       </Form>
                     )}
                   </div>
-                </Tabs.Panel>
-              </Tabs>
+              )}
             </Modal.Body>
           </Modal.Dialog>
         </Modal.Container>

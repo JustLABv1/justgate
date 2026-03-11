@@ -76,6 +76,52 @@ var schemaMigrations = []migration{
 			)`,
 		},
 	},
+	{
+		version: 3,
+		name:    "create_org_tables",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS users (
+				id TEXT PRIMARY KEY,
+				email TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				source TEXT NOT NULL DEFAULT 'local',
+				created_at TIMESTAMP NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS organizations (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				created_by TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS org_memberships (
+				org_id TEXT NOT NULL,
+				user_id TEXT NOT NULL,
+				role TEXT NOT NULL DEFAULT 'member',
+				joined_at TIMESTAMP NOT NULL,
+				PRIMARY KEY (org_id, user_id)
+			)`,
+			`CREATE TABLE IF NOT EXISTS org_invites (
+				id TEXT PRIMARY KEY,
+				org_id TEXT NOT NULL,
+				code TEXT NOT NULL UNIQUE,
+				created_by TEXT NOT NULL,
+				expires_at TIMESTAMP NOT NULL,
+				max_uses INTEGER NOT NULL DEFAULT 1,
+				use_count INTEGER NOT NULL DEFAULT 0,
+				created_at TIMESTAMP NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_org_memberships_user ON org_memberships (user_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_org_invites_code ON org_invites (code)`,
+		},
+	},
+	{
+		version: 4,
+		name:    "add_org_id_to_tenants",
+		statements: []string{
+			`ALTER TABLE tenants ADD COLUMN org_id TEXT NOT NULL DEFAULT ''`,
+			`CREATE INDEX IF NOT EXISTS idx_tenants_org ON tenants (org_id)`,
+		},
+	},
 }
 
 func (store *sqlStore) runMigrations(ctx context.Context) error {
