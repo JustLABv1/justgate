@@ -3,7 +3,7 @@ import { DeleteTenantButton } from "@/components/admin/delete-tenant-button";
 import { SectionPage } from "@/components/admin/section-page";
 import { UpdateTenantForm } from "@/components/admin/update-tenant-form";
 import { getTenants } from "@/lib/backend-client";
-import { ArrowRight, Shield, Building2 } from "lucide-react";
+import { ArrowRight, Building2, Shield } from "lucide-react";
 import Link from "next/link";
 
 export default async function TenantsPage() {
@@ -44,7 +44,25 @@ export default async function TenantsPage() {
               >
                 <div className="min-w-0 flex-1 space-y-1.5">
                   <div className="font-mono text-sm font-semibold tracking-tight text-foreground uppercase">{tenant.tenantID}</div>
-                  <div className="font-mono text-xs text-muted-foreground truncate">{tenant.upstreamURL}</div>
+                  <div className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground truncate">
+                    <span
+                      className="inline-block h-2 w-2 shrink-0 rounded-full"
+                      style={{
+                        background: tenant.upstreamStatus === "up"
+                          ? "var(--success)"
+                          : tenant.upstreamStatus === "down"
+                            ? "var(--destructive)"
+                            : "var(--muted)",
+                      }}
+                      title={tenant.upstreamStatus === "up"
+                        ? `Up — ${tenant.upstreamLatencyMs ?? 0}ms`
+                        : tenant.upstreamStatus === "down"
+                          ? `Down — ${tenant.upstreamError || "unreachable"}`
+                          : "No health check"
+                      }
+                    />
+                    {tenant.upstreamURL}
+                  </div>
                   <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
                     <span className="flex items-center gap-1.5">
                       <Shield size={10} className="text-muted-foreground/50" />

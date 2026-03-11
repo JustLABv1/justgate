@@ -1,10 +1,10 @@
 "use client";
 
 import type { TenantSummary } from "@/lib/contracts";
-import type { ReactNode } from "react";
 import { Button, Chip, Form, Input, Label, Modal, TextField } from "@heroui/react";
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
 
 interface CreateTenantFormProps {
@@ -19,6 +19,7 @@ interface CreateTenantFormProps {
 function toFormState() {
   return {
     headerName: "X-Scope-OrgID",
+    healthCheckPath: "",
     name: "",
     tenantID: "",
     upstreamURL: "",
@@ -51,6 +52,7 @@ export function CreateTenantForm({ existingCount, disabled = false, isOpen, onOp
         tenantID: formState.tenantID,
         upstreamURL: formState.upstreamURL,
         headerName: formState.headerName,
+        healthCheckPath: formState.healthCheckPath || undefined,
         authMode: "header",
       };
 
@@ -128,6 +130,11 @@ export function CreateTenantForm({ existingCount, disabled = false, isOpen, onOp
                     <Label>Injected header</Label>
                     <Input required value={formState.headerName} onChange={(event) => setFormState((current) => ({ ...current, headerName: event.target.value }))} />
                     <div className="enterprise-note">Tenant identity header added upstream.</div>
+                  </TextField>
+                  <TextField className="grid gap-2">
+                    <Label>Health check path</Label>
+                    <Input placeholder="/ready" value={formState.healthCheckPath} onChange={(event) => setFormState((current) => ({ ...current, healthCheckPath: event.target.value }))} />
+                    <div className="enterprise-note">Optional path to probe for upstream health.</div>
                   </TextField>
                 </div>
                 {error ? <div className="enterprise-feedback enterprise-feedback--error">{error}</div> : null}

@@ -8,6 +8,8 @@ import {
     type AdminOverview,
     type AuditEvent,
     type MemberSummary,
+    type OIDCConfig,
+    type OIDCOrgMapping,
     type OrgSummary,
     type QueryResult,
     type RouteSummary,
@@ -104,4 +106,22 @@ export async function getTopology(): Promise<QueryResult<TopologySnapshot>> {
     backendUrl,
     error: errors || undefined,
   } satisfies QueryResult<TopologySnapshot>;
+}
+
+const fallbackOIDCConfig: OIDCConfig = {
+  issuer: "",
+  clientID: "",
+  hasSecret: false,
+  displayName: "Single Sign-On",
+  groupsClaim: "",
+  enabled: false,
+  updatedAt: "",
+};
+
+export function getOIDCConfig() {
+  return fetchBackend<OIDCConfig>("/api/v1/admin/settings/oidc", fallbackOIDCConfig);
+}
+
+export function getOIDCOrgMappings() {
+  return fetchBackend<OIDCOrgMapping[]>("/api/v1/admin/settings/oidc/mappings", []);
 }

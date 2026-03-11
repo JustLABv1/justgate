@@ -28,7 +28,7 @@ type ConnectionMode =
 
 type GraphNode = {
   id: string;
-  kind: "token" | "route" | "tenant" | "draft";
+  kind: "token" | "route" | "tenant" | "draft" | "upstream";
   label: string;
   meta: string;
   stats?: string;
@@ -41,7 +41,7 @@ type GraphEdge = {
   id: string;
   from: string;
   to: string;
-  kind: "access" | "binding" | "draft";
+  kind: "access" | "binding" | "draft" | "upstream";
   hot: boolean;
 };
 
@@ -51,11 +51,12 @@ type CameraState = {
   y: number;
 };
 
-const SCENE_WIDTH = 1840;
+const SCENE_WIDTH = 2420;
 const LANE_X = {
   token: 240,
   route: 920,
   tenant: 1600,
+  upstream: 2120,
 };
 const CAMERA_MARGIN = 160;
 const SCALE_LIMITS = {
@@ -394,18 +395,57 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
       } satisfies GraphNode;
     });
 
-    const tenantNodes: GraphNode[] = tenants.map((tenant, index) => ({
-      id: `tenant:${tenant.id}`,
-      kind: "tenant",
-      label: tenant.name,
-      meta: `${tenant.tenantID} • ${tenant.upstreamURL}`,
-      stats: tenant.headerName,
-      x: LANE_X.tenant,
-      y: tenantY[index] ?? sceneHeight / 2,
-      tone: "var(--foreground)",
-    }));
+    const tenantNodes: GraphNode[] = tenants.map((tenant, index) => {
+      const statusTone = tenant.upstreamStatus === "up"
+        ? "var(--success)"
+        : tenant.upstreamStatus === "down"
+          ? "var(--destructive)"
+          : "var(--muted)";
+      return {
+        id: `tenant:${tenant.id}`,
+        kind: "tenant",
+        label: tenant.name,
+        meta: `${tenant.tenantID} • ${tenant.upstreamURL}`,
+        stats: tenant.upstreamStatus === "up"
+          ? `${tenant.headerName} • ↑ ${tenant.upstreamLatencyMs ?? 0}ms`
+          : tenant.upstreamStatus === "down"
+            ? `${tenant.headerName} • ↓ unreachable`
+            : tenant.headerName,
+        x: LANE_X.tenant,
+        y: tenantY[index] ?? sceneHeight / 2,
+        tone: statusTone,
+      };
+    });
 
-    const allNodes = [...tokenNodes, ...routeNodes, ...tenantNodes];
+    const upstreamNodes: GraphNode[] = tenants.map((tenant, index) => {
+      const statusTone = tenant.upstreamStatus === "up"
+        ? "var(--success)"
+        : tenant.upstreamStatus === "down"
+          ? "var(--destructive)"
+          : "var(--muted)";
+      let urlLabel = tenant.upstreamURL;
+      try { urlLabel = new URL(tenant.upstreamURL).host; } catch { /* keep full URL */ }
+      return {
+        id: `upstream:${tenant.id}`,
+        kind: "upstream",
+        label: urlLabel,
+        meta: tenant.upstreamStatus === "up"
+          ? `↑ Reachable · ${tenant.upstreamLatencyMs ?? 0}ms`
+          : tenant.upstreamStatus === "down"
+            ? `↓ ${tenant.upstreamError || "Unreachable"}`
+            : "No health data",
+        stats: tenant.upstreamLastChecked
+          ? `Checked ${new Date(tenant.upstreamLastChecked).toLocaleTimeString()}`
+          : tenant.healthCheckPath
+            ? "Awaiting first check"
+            : undefined,
+        x: LANE_X.upstream,
+        y: tenantY[index] ?? sceneHeight / 2,
+        tone: statusTone,
+      };
+    });
+
+    const allNodes = [...tokenNodes, ...routeNodes, ...tenantNodes, ...upstreamNodes];
     const tenantNodeByTenantID = new Map(tenants.map((tenant, index) => [tenant.tenantID, tenantNodes[index]]));
     const routeNodeByRouteID = new Map(routes.map((route, index) => [route.id, routeNodes[index]]));
     const hotRouteKeys = new Set(activeAudits.map((event) => `route:${event.routeSlug}:${event.tenantID}`));
@@ -444,6 +484,14 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
       })
       .filter(Boolean) as GraphEdge[];
 
+    const upstreamEdges: GraphEdge[] = tenants.map((tenant) => ({
+      id: `edge:upstream:${tenant.id}`,
+      from: `tenant:${tenant.id}`,
+      to: `upstream:${tenant.id}`,
+      kind: "upstream",
+      hot: false,
+    }));
+
     return {
       nodes: allNodes,
       recentAudits,
@@ -452,6 +500,7 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
       tenantEdges,
       tenantNodeByTenantID,
       tokenEdges,
+      upstreamEdges,
     };
   }, [snapshot]);
 
@@ -590,7 +639,7 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
 
     if (selectedNodeId) {
       activeNodes.add(selectedNodeId);
-      for (const edge of [...graph.tokenEdges, ...graph.tenantEdges]) {
+      for (const edge of [...graph.tokenEdges, ...graph.tenantEdges, ...graph.upstreamEdges]) {
         if (edge.from === selectedNodeId || edge.to === selectedNodeId) {
           activeEdges.add(edge.id);
           activeNodes.add(edge.from);
@@ -714,7 +763,7 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
     }
   }
 
-  const graphEdges = [...graph.tokenEdges, ...graph.tenantEdges, ...draftGraph.draftEdges];
+  const graphEdges = [...graph.tokenEdges, ...graph.tenantEdges, ...graph.upstreamEdges, ...draftGraph.draftEdges];
   const graphNodes = [...graph.nodes, ...draftGraph.draftNodes];
   const isLive = snapshot.source === "backend";
   const modalTrigger = <span aria-hidden className="hidden" />;
@@ -772,6 +821,12 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
         { label: "Tenant ID", value: selectedTenantForInspector.tenantID },
         { label: "Header", value: selectedTenantForInspector.headerName },
         { label: "Upstream", value: selectedTenantForInspector.upstreamURL },
+        ...(selectedTenantForInspector.upstreamStatus
+          ? [
+              { label: "Status", value: selectedTenantForInspector.upstreamStatus === "up" ? `Up (${selectedTenantForInspector.upstreamLatencyMs ?? 0}ms)` : selectedTenantForInspector.upstreamStatus === "down" ? `Down — ${selectedTenantForInspector.upstreamError || "unreachable"}` : "Unknown" },
+              ...(selectedTenantForInspector.upstreamLastChecked ? [{ label: "Last checked", value: new Date(selectedTenantForInspector.upstreamLastChecked).toLocaleTimeString() }] : []),
+            ]
+          : []),
       ]
     : selectedRouteForInspector
       ? [
@@ -887,6 +942,7 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
                 <div className="absolute left-[90px] top-[54px] text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Tokens</div>
                 <div className="absolute left-[770px] top-[54px] text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Routes</div>
                 <div className="absolute left-[1450px] top-[54px] text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Tenants</div>
+                <div className="absolute left-[1970px] top-[54px] text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Upstream</div>
               </div>
 
               <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${SCENE_WIDTH} ${graph.sceneHeight}`}>
@@ -940,7 +996,7 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
               {graphNodes.map((node) => {
                 const selected = selectedNodeId === node.id;
                 const active = emphasis.nodes.size === 0 || emphasis.nodes.has(node.id);
-                const badge = node.kind === "tenant" ? "Tenant" : node.kind === "route" ? "Route" : node.kind === "token" ? "Token" : "Draft";
+                const badge = node.kind === "tenant" ? "Tenant" : node.kind === "route" ? "Route" : node.kind === "token" ? "Token" : node.kind === "upstream" ? "Upstream" : "Draft";
 
                 return (
                   <button

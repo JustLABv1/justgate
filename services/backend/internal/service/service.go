@@ -65,6 +65,15 @@ type dataStore interface {
 	CreateOrgInvite(ctx context.Context, orgID, createdBy string, expiresAt time.Time, maxUses int) (orgInviteRecord, error)
 	GetOrgInviteByCode(ctx context.Context, code string) (orgInviteRecord, bool, error)
 	ConsumeOrgInvite(ctx context.Context, code, userID string) (string, error)
+	// OIDC config
+	GetOIDCConfig(ctx context.Context) (oidcConfigRecord, bool, error)
+	UpsertOIDCConfig(ctx context.Context, cfg oidcConfigRecord) error
+	ListOIDCOrgMappings(ctx context.Context) ([]oidcOrgMappingRecord, error)
+	CreateOIDCOrgMapping(ctx context.Context, mapping oidcOrgMappingRecord) error
+	DeleteOIDCOrgMapping(ctx context.Context, id string) error
+	// Upstream health
+	UpsertUpstreamHealth(ctx context.Context, health upstreamHealthRecord) error
+	ListUpstreamHealth(ctx context.Context) ([]upstreamHealthRecord, error)
 }
 
 type createOrgRequest struct {
@@ -108,6 +117,7 @@ type Service struct {
 	store  dataStore
 	start  time.Time
 	logger *slog.Logger
+	stop   chan struct{}
 }
 
 type overviewResponse struct {
@@ -130,12 +140,17 @@ type stats struct {
 }
 
 type tenantSummary struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	TenantID   string `json:"tenantID"`
-	Upstream   string `json:"upstreamURL"`
-	AuthMode   string `json:"authMode"`
-	HeaderName string `json:"headerName"`
+	ID                  string `json:"id"`
+	Name                string `json:"name"`
+	TenantID            string `json:"tenantID"`
+	Upstream            string `json:"upstreamURL"`
+	AuthMode            string `json:"authMode"`
+	HeaderName          string `json:"headerName"`
+	HealthCheckPath     string `json:"healthCheckPath,omitempty"`
+	UpstreamStatus      string `json:"upstreamStatus,omitempty"`
+	UpstreamLatencyMs   int    `json:"upstreamLatencyMs,omitempty"`
+	UpstreamLastChecked string `json:"upstreamLastChecked,omitempty"`
+	UpstreamError       string `json:"upstreamError,omitempty"`
 }
 
 type routeSummary struct {
@@ -180,11 +195,12 @@ type topologyResponse struct {
 }
 
 type createTenantRequest struct {
-	Name       string `json:"name"`
-	TenantID   string `json:"tenantID"`
-	Upstream   string `json:"upstreamURL"`
-	AuthMode   string `json:"authMode"`
-	HeaderName string `json:"headerName"`
+	Name            string `json:"name"`
+	TenantID        string `json:"tenantID"`
+	Upstream        string `json:"upstreamURL"`
+	AuthMode        string `json:"authMode"`
+	HeaderName      string `json:"headerName"`
+	HealthCheckPath string `json:"healthCheckPath"`
 }
 
 type createRouteRequest struct {
@@ -233,13 +249,14 @@ type routeRecord struct {
 }
 
 type tenantRecord struct {
-	ID         string
-	Name       string
-	TenantID   string
-	Upstream   string
-	AuthMode   string
-	HeaderName string
-	OrgID      string
+	ID              string
+	Name            string
+	TenantID        string
+	Upstream        string
+	AuthMode        string
+	HeaderName      string
+	OrgID           string
+	HealthCheckPath string
 }
 
 type tokenRecord struct {
@@ -309,6 +326,32 @@ type orgInviteRecord struct {
 	CreatedAt time.Time
 }
 
+type oidcConfigRecord struct {
+	ID                    string
+	Issuer                string
+	ClientID              string
+	ClientSecretEncrypted string
+	DisplayName           string
+	GroupsClaim           string
+	Enabled               bool
+	UpdatedAt             time.Time
+}
+
+type oidcOrgMappingRecord struct {
+	ID        string
+	OIDCGroup string
+	OrgID     string
+	CreatedAt time.Time
+}
+
+type upstreamHealthRecord struct {
+	TenantID      string
+	Status        string
+	LastCheckedAt time.Time
+	LatencyMs     int
+	Error         string
+}
+
 type requestContextKey string
 
 const (
@@ -356,12 +399,15 @@ func New(config Config) (*Service, error) {
 		store:  store,
 		start:  time.Now().UTC(),
 		logger: slog.Default(),
+		stop:   make(chan struct{}),
 	}
 
 	service.logStartup()
 	if config.AdminJWTSecret == defaultAdminJWTSecret {
 		service.logger.Warn("using default admin JWT secret; set JUST_GATE_BACKEND_JWT_SECRET outside local development")
 	}
+
+	go service.runHealthChecker()
 
 	return service, nil
 }
@@ -371,7 +417,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/api/v1/auth/local/register", s.handleRegisterLocalAdmin)
 	mux.HandleFunc("/api/v1/auth/local/verify", s.handleVerifyLocalAdmin)
-	mux.HandleFunc("/api/v1/admin/overview", s.withAdminAuth(s.handleOverview))
+	mux.HandleFunc("/api/v1/admin/overview", s.withAdminAuth(s.withOrgContext(s.handleOverview)))
 	mux.HandleFunc("/api/v1/admin/routes", s.withAdminAuth(s.withOrgContext(s.handleRoutes)))
 	mux.HandleFunc("/api/v1/admin/routes/", s.withAdminAuth(s.withOrgContext(s.handleRouteByID)))
 	mux.HandleFunc("/api/v1/admin/tenants", s.withAdminAuth(s.withOrgContext(s.handleTenants)))
@@ -383,6 +429,10 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/topology/stream", s.handleTopologyStream)
 	mux.HandleFunc("/api/v1/admin/orgs", s.withAdminAuth(s.handleOrgs))
 	mux.HandleFunc("/api/v1/admin/orgs/", s.withAdminAuth(s.handleOrgByID))
+	mux.HandleFunc("/api/v1/admin/settings/oidc", s.withAdminAuth(s.handleOIDCSettings))
+	mux.HandleFunc("/api/v1/admin/settings/oidc/mappings", s.withAdminAuth(s.handleOIDCMappings))
+	mux.HandleFunc("/api/v1/admin/settings/oidc/mappings/", s.withAdminAuth(s.handleOIDCMappings))
+	mux.HandleFunc("/api/v1/internal/oidc-provider-config", s.withAdminAuth(s.handleInternalOIDCProviderConfig))
 	mux.HandleFunc("/proxy/", s.handleProxy)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -607,12 +657,13 @@ func (s *Service) handleTenants(writer http.ResponseWriter, request *http.Reques
 	items := make([]tenantSummary, 0, len(tenants))
 	for _, tenant := range tenants {
 		items = append(items, tenantSummary{
-			ID:         tenant.ID,
-			Name:       tenant.Name,
-			TenantID:   tenant.TenantID,
-			Upstream:   tenant.Upstream,
-			AuthMode:   tenant.AuthMode,
-			HeaderName: tenant.HeaderName,
+			ID:              tenant.ID,
+			Name:            tenant.Name,
+			TenantID:        tenant.TenantID,
+			Upstream:        tenant.Upstream,
+			AuthMode:        tenant.AuthMode,
+			HeaderName:      tenant.HeaderName,
+			HealthCheckPath: tenant.HealthCheckPath,
 		})
 	}
 
@@ -815,15 +866,31 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 	}
 
 	tenantItems := make([]tenantSummary, 0, len(tenants))
+
+	// Load upstream health data to enrich tenant summaries
+	healthRecords, _ := s.store.ListUpstreamHealth(ctx)
+	healthMap := make(map[string]upstreamHealthRecord, len(healthRecords))
+	for _, h := range healthRecords {
+		healthMap[h.TenantID] = h
+	}
+
 	for _, tenant := range tenants {
-		tenantItems = append(tenantItems, tenantSummary{
-			ID:         tenant.ID,
-			Name:       tenant.Name,
-			TenantID:   tenant.TenantID,
-			Upstream:   tenant.Upstream,
-			AuthMode:   tenant.AuthMode,
-			HeaderName: tenant.HeaderName,
-		})
+		ts := tenantSummary{
+			ID:              tenant.ID,
+			Name:            tenant.Name,
+			TenantID:        tenant.TenantID,
+			Upstream:        tenant.Upstream,
+			AuthMode:        tenant.AuthMode,
+			HeaderName:      tenant.HeaderName,
+			HealthCheckPath: tenant.HealthCheckPath,
+		}
+		if h, ok := healthMap[tenant.TenantID]; ok {
+			ts.UpstreamStatus = h.Status
+			ts.UpstreamLatencyMs = h.LatencyMs
+			ts.UpstreamLastChecked = h.LastCheckedAt.Format(time.RFC3339)
+			ts.UpstreamError = h.Error
+		}
+		tenantItems = append(tenantItems, ts)
 	}
 
 	routeItems := make([]routeSummary, 0, len(routes))
@@ -897,12 +964,90 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 	}, nil
 }
 
+func (s *Service) runHealthChecker() {
+	client := &http.Client{Timeout: 5 * time.Second}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// Run immediately on start, then every 30 seconds
+	s.checkUpstreamHealth(client)
+
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-ticker.C:
+			s.checkUpstreamHealth(client)
+		}
+	}
+}
+
+func (s *Service) checkUpstreamHealth(client *http.Client) {
+	ctx := context.Background()
+	tenants, err := s.store.ListTenants(ctx)
+	if err != nil {
+		s.logger.Warn("health checker: failed to list tenants", "error", err.Error())
+		return
+	}
+
+	for _, tenant := range tenants {
+		checkURL := tenant.Upstream
+		if tenant.HealthCheckPath != "" {
+			checkURL = strings.TrimRight(tenant.Upstream, "/") + "/" + strings.TrimLeft(tenant.HealthCheckPath, "/")
+		}
+
+		start := time.Now()
+		req, err := http.NewRequestWithContext(ctx, http.MethodHead, checkURL, nil)
+		if err != nil {
+			_ = s.store.UpsertUpstreamHealth(ctx, upstreamHealthRecord{
+				TenantID:      tenant.TenantID,
+				Status:        "down",
+				LastCheckedAt: time.Now().UTC(),
+				LatencyMs:     0,
+				Error:         fmt.Sprintf("invalid URL: %s", err.Error()),
+			})
+			continue
+		}
+
+		resp, err := client.Do(req)
+		latency := time.Since(start).Milliseconds()
+
+		if err != nil {
+			_ = s.store.UpsertUpstreamHealth(ctx, upstreamHealthRecord{
+				TenantID:      tenant.TenantID,
+				Status:        "down",
+				LastCheckedAt: time.Now().UTC(),
+				LatencyMs:     int(latency),
+				Error:         err.Error(),
+			})
+			continue
+		}
+		resp.Body.Close()
+
+		status := "up"
+		errMsg := ""
+		if resp.StatusCode >= 500 {
+			status = "down"
+			errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+
+		_ = s.store.UpsertUpstreamHealth(ctx, upstreamHealthRecord{
+			TenantID:      tenant.TenantID,
+			Status:        status,
+			LastCheckedAt: time.Now().UTC(),
+			LatencyMs:     int(latency),
+			Error:         errMsg,
+		})
+	}
+}
+
 func normalizeTenantPayload(payload *createTenantRequest, defaultHeaderName string) error {
 	payload.Name = strings.TrimSpace(payload.Name)
 	payload.TenantID = strings.TrimSpace(payload.TenantID)
 	payload.Upstream = strings.TrimSpace(payload.Upstream)
 	payload.HeaderName = strings.TrimSpace(payload.HeaderName)
 	payload.AuthMode = strings.TrimSpace(payload.AuthMode)
+	payload.HealthCheckPath = strings.TrimSpace(payload.HealthCheckPath)
 
 	if payload.Name == "" || payload.TenantID == "" || payload.Upstream == "" {
 		return fmt.Errorf("name, tenantID, and upstreamURL are required")
@@ -939,12 +1084,13 @@ func (s *Service) handleCreateTenant(writer http.ResponseWriter, request *http.R
 	}
 
 	writeJSON(writer, http.StatusCreated, tenantSummary{
-		ID:         tenant.ID,
-		Name:       tenant.Name,
-		TenantID:   tenant.TenantID,
-		Upstream:   tenant.Upstream,
-		AuthMode:   tenant.AuthMode,
-		HeaderName: tenant.HeaderName,
+		ID:              tenant.ID,
+		Name:            tenant.Name,
+		TenantID:        tenant.TenantID,
+		Upstream:        tenant.Upstream,
+		AuthMode:        tenant.AuthMode,
+		HeaderName:      tenant.HeaderName,
+		HealthCheckPath: tenant.HealthCheckPath,
 	})
 }
 
@@ -978,12 +1124,13 @@ func (s *Service) handleTenantByID(writer http.ResponseWriter, request *http.Req
 		}
 
 		writeJSON(writer, http.StatusOK, tenantSummary{
-			ID:         tenant.ID,
-			Name:       tenant.Name,
-			TenantID:   tenant.TenantID,
-			Upstream:   tenant.Upstream,
-			AuthMode:   tenant.AuthMode,
-			HeaderName: tenant.HeaderName,
+			ID:              tenant.ID,
+			Name:            tenant.Name,
+			TenantID:        tenant.TenantID,
+			Upstream:        tenant.Upstream,
+			AuthMode:        tenant.AuthMode,
+			HeaderName:      tenant.HeaderName,
+			HealthCheckPath: tenant.HealthCheckPath,
 		})
 	case http.MethodDelete:
 		if err := s.store.DeleteTenant(request.Context(), tenantID); err != nil {

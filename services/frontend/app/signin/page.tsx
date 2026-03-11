@@ -55,7 +55,7 @@ export default async function SignInPage({
           callbackUrl={callbackUrl}
           localAccountsEnabled={isLocalAccountsEnabled()}
           localRegistrationEnabled={isLocalRegistrationEnabled()}
-          oidcEnabled={isOIDCEnabled()}
+          oidcEnabled={await isOIDCEnabled()}
         />
       </div>
     </div>

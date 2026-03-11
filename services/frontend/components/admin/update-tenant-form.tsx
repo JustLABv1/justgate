@@ -1,10 +1,10 @@
 "use client";
 
 import type { TenantSummary } from "@/lib/contracts";
-import type { ReactNode } from "react";
 import { Button, Form, Input, Label, Modal, TextField } from "@heroui/react";
 import { PenSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 import { type FormEvent, useState, useTransition } from "react";
 
 interface UpdateTenantFormProps {
@@ -19,6 +19,7 @@ interface UpdateTenantFormProps {
 function toFormState(tenant: TenantSummary | undefined) {
   return {
     headerName: tenant?.headerName || "X-Scope-OrgID",
+    healthCheckPath: tenant?.healthCheckPath || "",
     name: tenant?.name || "",
     tenantID: tenant?.tenantID || "",
     upstreamURL: tenant?.upstreamURL || "",
@@ -44,6 +45,7 @@ export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isO
         body: JSON.stringify({
           authMode: "header",
           headerName: formState.headerName,
+          healthCheckPath: formState.healthCheckPath || undefined,
           name: formState.name,
           tenantID: formState.tenantID,
           upstreamURL: formState.upstreamURL,
@@ -107,6 +109,11 @@ export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isO
                     <Label>Injected header</Label>
                     <Input onChange={(event) => setFormState((current) => ({ ...current, headerName: event.target.value }))} value={formState.headerName} />
                     <div className="enterprise-note">Identity header attached upstream.</div>
+                  </TextField>
+                  <TextField className="grid gap-2">
+                    <Label>Health check path</Label>
+                    <Input placeholder="/ready" onChange={(event) => setFormState((current) => ({ ...current, healthCheckPath: event.target.value }))} value={formState.healthCheckPath} />
+                    <div className="enterprise-note">Optional path to probe for upstream health.</div>
                   </TextField>
                 </div>
                 {error ? <div className="enterprise-feedback enterprise-feedback--error">{error}</div> : null}

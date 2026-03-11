@@ -1,3 +1,4 @@
+import { AddMemberModal } from "@/components/admin/add-member-modal";
 import { InviteModal } from "@/components/admin/invite-modal";
 import { SectionPage } from "@/components/admin/section-page";
 import { TeamMembersTable } from "@/components/admin/team-members-table";
@@ -38,7 +39,10 @@ export default async function TeamPage() {
             {membersResult.data.length} member{membersResult.data.length !== 1 ? "s" : ""}
             {activeOrg ? ` in ${activeOrg.name}` : ""}
           </div>
-          <InviteModal orgID={orgID} isOwner={isOwner ?? false} />
+          <div className="flex items-center gap-2">
+            <AddMemberModal orgID={orgID} isOwner={isOwner ?? false} />
+            <InviteModal orgID={orgID} isOwner={isOwner ?? false} />
+          </div>
         </div>
 
         <TeamMembersTable

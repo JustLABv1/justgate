@@ -26,6 +26,11 @@ export interface TenantSummary {
   upstreamURL: string;
   authMode: string;
   headerName: string;
+  healthCheckPath?: string;
+  upstreamStatus?: string;
+  upstreamLatencyMs?: number;
+  upstreamLastChecked?: string;
+  upstreamError?: string;
 }
 
 export interface RouteSummary {
@@ -135,5 +140,22 @@ export interface InviteResult {
   expiresAt: string;
   maxUses: number;
   useCount: number;
+}
+
+export interface OIDCConfig {
+  issuer: string;
+  clientID: string;
+  hasSecret: boolean;
+  displayName: string;
+  groupsClaim: string;
+  enabled: boolean;
+  updatedAt: string;
+}
+
+export interface OIDCOrgMapping {
+  id: string;
+  oidcGroup: string;
+  orgID: string;
+  createdAt: string;
 }
 

@@ -122,6 +122,37 @@ var schemaMigrations = []migration{
 			`CREATE INDEX IF NOT EXISTS idx_tenants_org ON tenants (org_id)`,
 		},
 	},
+	{
+		version: 5,
+		name:    "create_oidc_config_and_upstream_health",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS oidc_config (
+				id TEXT PRIMARY KEY DEFAULT 'global',
+				issuer TEXT NOT NULL DEFAULT '',
+				client_id TEXT NOT NULL DEFAULT '',
+				client_secret_encrypted TEXT NOT NULL DEFAULT '',
+				display_name TEXT NOT NULL DEFAULT 'Single Sign-On',
+				groups_claim TEXT NOT NULL DEFAULT '',
+				enabled BOOLEAN NOT NULL DEFAULT 0,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS oidc_org_mappings (
+				id TEXT PRIMARY KEY,
+				oidc_group TEXT NOT NULL UNIQUE,
+				org_id TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_oidc_org_mappings_group ON oidc_org_mappings (oidc_group)`,
+			`CREATE TABLE IF NOT EXISTS upstream_health (
+				tenant_id TEXT PRIMARY KEY,
+				status TEXT NOT NULL DEFAULT 'unknown',
+				last_checked_at TIMESTAMP NOT NULL,
+				latency_ms INTEGER NOT NULL DEFAULT 0,
+				error TEXT NOT NULL DEFAULT ''
+			)`,
+			`ALTER TABLE tenants ADD COLUMN health_check_path TEXT NOT NULL DEFAULT ''`,
+		},
+	},
 }
 
 func (store *sqlStore) runMigrations(ctx context.Context) error {

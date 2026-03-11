@@ -1,7 +1,8 @@
 "use client";
 
+import { CreateOrgModal } from "@/components/admin/create-org-modal";
 import type { OrgSummary } from "@/lib/contracts";
-import { Building2, Check, ChevronDown, Plus } from "lucide-react";
+import { Building2, Check, ChevronDown } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
@@ -29,6 +30,8 @@ export function OrgSwitcher() {
   useEffect(() => {
     if (!isOpen) return;
     function onClickOutside(e: MouseEvent) {
+      // Don't close when clicking inside a portaled modal/dialog
+      if ((e.target as Element).closest?.('[role="dialog"]')) return;
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsOpen(false);
       }
@@ -76,14 +79,7 @@ export function OrgSwitcher() {
             </button>
           ))}
           <div className="my-1 border-t border-border" />
-          <button
-            type="button"
-            onClick={() => { setIsOpen(false); router.push("/"); }}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-surface/60 hover:text-foreground"
-          >
-            <Plus size={14} />
-            New organisation
-          </button>
+          <CreateOrgModal onCreated={(org) => setOrgs((prev) => [...prev, org])} />
         </div>
       )}
     </div>

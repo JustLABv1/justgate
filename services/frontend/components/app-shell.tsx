@@ -1,7 +1,7 @@
 "use client";
 
 import { AdminNav } from "@/components/admin/nav";
-import { SignOutButton } from "@/components/admin/sign-out-button";
+import { UserMenu } from "@/components/admin/user-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@heroui/react";
 import { Menu, ShieldCheck, X } from "lucide-react";
@@ -14,13 +14,11 @@ interface AppShellProps {
 }
 
 const authRoutes = new Set(["/signin"]);
-const wideRoutes = new Set(["/topology"]);
 
 export function AppShell({ children, signedInUser }: AppShellProps) {
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const isAuthRoute = authRoutes.has(pathname);
-  const isWideRoute = wideRoutes.has(pathname);
 
   if (isAuthRoute) {
     return (
@@ -38,7 +36,7 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-md">
-        <div className={`mx-auto flex h-14 items-center justify-between gap-4 px-4 sm:px-6 ${isWideRoute ? "max-w-[1800px]" : "max-w-6xl"}`}>
+        <div className="mx-auto flex h-14 items-center justify-between gap-4 px-4 sm:px-6 max-w-[1800px]">
           <div className="flex items-center gap-3">
             <Button
               aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
@@ -55,15 +53,15 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
 
           <div className="flex items-center gap-3">
             {signedInUser ? (
-              <span className="hidden text-[13px] text-muted-foreground md:block">{signedInUser}</span>
-            ) : null}
-            <ThemeToggle />
-            {signedInUser ? <SignOutButton /> : null}
+              <UserMenu user={signedInUser} />
+            ) : (
+              <ThemeToggle />
+            )}
           </div>
         </div>
       </header>
 
-      <div className={`relative mx-auto grid w-full gap-0 ${isWideRoute ? "max-w-[1800px] lg:grid-cols-[220px_minmax(0,1fr)]" : "max-w-6xl lg:grid-cols-[220px_minmax(0,1fr)]"}`}>
+      <div className="relative mx-auto grid w-full gap-0 max-w-[1800px] lg:grid-cols-[220px_minmax(0,1fr)]">
         <aside
           className={[
             "lg:sticky lg:top-14 lg:block lg:h-[calc(100vh-3.5rem)] lg:overflow-y-auto lg:border-r lg:border-border",

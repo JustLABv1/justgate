@@ -96,9 +96,9 @@ func (store *sqlStore) ListTenants(ctx context.Context) ([]tenantRecord, error) 
 	var rows *sql.Rows
 	var err error
 	if orgID := orgIDFromContext(ctx); orgID != "" {
-		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, upstream_url, auth_mode, header_name, org_id FROM tenants WHERE org_id = ? ORDER BY created_at DESC`, orgID)
+		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, upstream_url, auth_mode, header_name, org_id, health_check_path FROM tenants WHERE org_id = ? ORDER BY created_at DESC`, orgID)
 	} else {
-		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, upstream_url, auth_mode, header_name, org_id FROM tenants ORDER BY created_at DESC`)
+		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, upstream_url, auth_mode, header_name, org_id, health_check_path FROM tenants ORDER BY created_at DESC`)
 	}
 	if err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func (store *sqlStore) ListTenants(ctx context.Context) ([]tenantRecord, error) 
 	items := make([]tenantRecord, 0)
 	for rows.Next() {
 		var tenant tenantRecord
-		if err := rows.Scan(&tenant.ID, &tenant.Name, &tenant.TenantID, &tenant.Upstream, &tenant.AuthMode, &tenant.HeaderName, &tenant.OrgID); err != nil {
+		if err := rows.Scan(&tenant.ID, &tenant.Name, &tenant.TenantID, &tenant.Upstream, &tenant.AuthMode, &tenant.HeaderName, &tenant.OrgID, &tenant.HealthCheckPath); err != nil {
 			return nil, err
 		}
 		items = append(items, tenant)
@@ -191,16 +191,17 @@ func (store *sqlStore) ListAudits(ctx context.Context) ([]auditRecord, error) {
 func (store *sqlStore) CreateTenant(ctx context.Context, payload createTenantRequest) (tenantRecord, error) {
 	orgID := orgIDFromContext(ctx)
 	tenant := tenantRecord{
-		ID:         newResourceID("tenant"),
-		Name:       payload.Name,
-		TenantID:   payload.TenantID,
-		Upstream:   payload.Upstream,
-		AuthMode:   payload.AuthMode,
-		HeaderName: payload.HeaderName,
-		OrgID:      orgID,
+		ID:              newResourceID("tenant"),
+		Name:            payload.Name,
+		TenantID:        payload.TenantID,
+		Upstream:        payload.Upstream,
+		AuthMode:        payload.AuthMode,
+		HeaderName:      payload.HeaderName,
+		OrgID:           orgID,
+		HealthCheckPath: payload.HealthCheckPath,
 	}
 
-	_, err := store.execContext(ctx, `INSERT INTO tenants (id, name, tenant_id, upstream_url, auth_mode, header_name, org_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, tenant.ID, tenant.Name, tenant.TenantID, tenant.Upstream, tenant.AuthMode, tenant.HeaderName, orgID, store.now())
+	_, err := store.execContext(ctx, `INSERT INTO tenants (id, name, tenant_id, upstream_url, auth_mode, header_name, org_id, health_check_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, tenant.ID, tenant.Name, tenant.TenantID, tenant.Upstream, tenant.AuthMode, tenant.HeaderName, orgID, tenant.HealthCheckPath, store.now())
 	if err != nil {
 		return tenantRecord{}, translateDBError(err, "tenantID already exists")
 	}
@@ -217,7 +218,7 @@ func (store *sqlStore) UpdateTenant(ctx context.Context, tenantID string, payloa
 		return tenantRecord{}, err
 	}
 
-	result, err := store.execContext(ctx, `UPDATE tenants SET name = ?, tenant_id = ?, upstream_url = ?, auth_mode = ?, header_name = ? WHERE id = ?`, payload.Name, payload.TenantID, payload.Upstream, payload.AuthMode, payload.HeaderName, tenantID)
+	result, err := store.execContext(ctx, `UPDATE tenants SET name = ?, tenant_id = ?, upstream_url = ?, auth_mode = ?, header_name = ?, health_check_path = ? WHERE id = ?`, payload.Name, payload.TenantID, payload.Upstream, payload.AuthMode, payload.HeaderName, payload.HealthCheckPath, tenantID)
 	if err != nil {
 		return tenantRecord{}, translateDBError(err, "tenantID already exists")
 	}
@@ -237,12 +238,13 @@ func (store *sqlStore) UpdateTenant(ctx context.Context, tenantID string, payloa
 	}
 
 	return tenantRecord{
-		ID:         tenantID,
-		Name:       payload.Name,
-		TenantID:   payload.TenantID,
-		Upstream:   payload.Upstream,
-		AuthMode:   payload.AuthMode,
-		HeaderName: payload.HeaderName,
+		ID:              tenantID,
+		Name:            payload.Name,
+		TenantID:        payload.TenantID,
+		Upstream:        payload.Upstream,
+		AuthMode:        payload.AuthMode,
+		HeaderName:      payload.HeaderName,
+		HealthCheckPath: payload.HealthCheckPath,
 	}, nil
 }
 
@@ -798,4 +800,103 @@ func generateInviteCode() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// ── OIDC config store methods ──────────────────────────────────────────
+
+func (store *sqlStore) GetOIDCConfig(ctx context.Context) (oidcConfigRecord, bool, error) {
+	var cfg oidcConfigRecord
+	err := store.queryRowContext(ctx, `SELECT id, issuer, client_id, client_secret_encrypted, display_name, groups_claim, enabled, updated_at FROM oidc_config WHERE id = 'global' LIMIT 1`).Scan(
+		&cfg.ID, &cfg.Issuer, &cfg.ClientID, &cfg.ClientSecretEncrypted, &cfg.DisplayName, &cfg.GroupsClaim, &cfg.Enabled, &cfg.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return oidcConfigRecord{}, false, nil
+		}
+		return oidcConfigRecord{}, false, err
+	}
+	return cfg, true, nil
+}
+
+func (store *sqlStore) UpsertOIDCConfig(ctx context.Context, cfg oidcConfigRecord) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO oidc_config (id, issuer, client_id, client_secret_encrypted, display_name, groups_claim, enabled, updated_at)
+		 VALUES ('global', ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET issuer=?, client_id=?, client_secret_encrypted=?, display_name=?, groups_claim=?, enabled=?, updated_at=?`,
+		cfg.Issuer, cfg.ClientID, cfg.ClientSecretEncrypted, cfg.DisplayName, cfg.GroupsClaim, cfg.Enabled, cfg.UpdatedAt,
+		cfg.Issuer, cfg.ClientID, cfg.ClientSecretEncrypted, cfg.DisplayName, cfg.GroupsClaim, cfg.Enabled, cfg.UpdatedAt,
+	)
+	return err
+}
+
+func (store *sqlStore) ListOIDCOrgMappings(ctx context.Context) ([]oidcOrgMappingRecord, error) {
+	rows, err := store.queryContext(ctx, `SELECT m.id, m.oidc_group, m.org_id, m.created_at FROM oidc_org_mappings m ORDER BY m.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]oidcOrgMappingRecord, 0)
+	for rows.Next() {
+		var m oidcOrgMappingRecord
+		if err := rows.Scan(&m.ID, &m.OIDCGroup, &m.OrgID, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, m)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) CreateOIDCOrgMapping(ctx context.Context, mapping oidcOrgMappingRecord) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO oidc_org_mappings (id, oidc_group, org_id, created_at) VALUES (?, ?, ?, ?)`,
+		mapping.ID, mapping.OIDCGroup, mapping.OrgID, mapping.CreatedAt,
+	)
+	return translateDBError(err, "mapping for this group already exists")
+}
+
+func (store *sqlStore) DeleteOIDCOrgMapping(ctx context.Context, id string) error {
+	result, err := store.execContext(ctx, `DELETE FROM oidc_org_mappings WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("mapping not found")
+	}
+	return nil
+}
+
+// ── Upstream health store methods ──────────────────────────────────────
+
+func (store *sqlStore) UpsertUpstreamHealth(ctx context.Context, health upstreamHealthRecord) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO upstream_health (tenant_id, status, last_checked_at, latency_ms, error)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(tenant_id) DO UPDATE SET status=?, last_checked_at=?, latency_ms=?, error=?`,
+		health.TenantID, health.Status, health.LastCheckedAt, health.LatencyMs, health.Error,
+		health.Status, health.LastCheckedAt, health.LatencyMs, health.Error,
+	)
+	return err
+}
+
+func (store *sqlStore) ListUpstreamHealth(ctx context.Context) ([]upstreamHealthRecord, error) {
+	rows, err := store.queryContext(ctx, `SELECT tenant_id, status, last_checked_at, latency_ms, error FROM upstream_health`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]upstreamHealthRecord, 0)
+	for rows.Next() {
+		var h upstreamHealthRecord
+		if err := rows.Scan(&h.TenantID, &h.Status, &h.LastCheckedAt, &h.LatencyMs, &h.Error); err != nil {
+			return nil, err
+		}
+		items = append(items, h)
+	}
+	return items, rows.Err()
 }

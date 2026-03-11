@@ -1,7 +1,7 @@
 "use client";
 
 import { OrgSwitcher } from "@/components/admin/org-switcher";
-import { History, KeyRound, LayoutDashboard, Orbit, Settings2, Users2, UsersRound } from "lucide-react";
+import { History, KeyRound, LayoutDashboard, Orbit, Settings, Settings2, Users2, UsersRound } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
 const links = [
@@ -12,6 +12,7 @@ const links = [
   { href: "/tokens", label: "Tokens", icon: KeyRound },
   { href: "/audit", label: "Audit Log", icon: History },
   { href: "/team", label: "Team", icon: UsersRound },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 interface AdminNavProps {
