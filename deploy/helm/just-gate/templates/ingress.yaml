@@ -1,0 +1,45 @@
+{{- if .Values.ingress.enabled }}
+{{- $frontendPort := .Values.frontend.port }}
+{{- $backendPort  := .Values.backend.port }}
+{{- $mode         := .Values.mode }}
+{{- $fullName     := include "just-gate.fullname" . }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "just-gate.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                {{- if eq $mode "monolithic" }}
+                name: {{ $fullName }}
+                port:
+                  number: {{ $frontendPort }}
+                {{- else }}
+                name: {{ $fullName }}-frontend
+                port:
+                  number: {{ $frontendPort }}
+                {{- end }}
+          {{- end }}
+    {{- end }}
+{{- end }}

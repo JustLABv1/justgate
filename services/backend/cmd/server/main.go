@@ -18,17 +18,14 @@ func main() {
 	}
 
 	adminJWTSecret := os.Getenv("JUST_GATE_BACKEND_JWT_SECRET")
-	mimirHeaderName := os.Getenv("MIMIR_TENANT_HEADER")
-	if mimirHeaderName == "" {
-		mimirHeaderName = "X-Scope-OrgID"
-	}
+	tenantHeaderName := os.Getenv("JUST_GATE_TENANT_HEADER")
 	databaseURL := os.Getenv("JUST_GATE_DATABASE_URL")
 
 	svc, err := service.New(service.Config{
-		Version:         "0.1.0-dev",
-		AdminJWTSecret:  adminJWTSecret,
-		DatabaseURL:     databaseURL,
-		MimirHeaderName: mimirHeaderName,
+		Version:          "0.1.0-dev",
+		AdminJWTSecret:   adminJWTSecret,
+		DatabaseURL:      databaseURL,
+		TenantHeaderName: tenantHeaderName,
 	})
 	if err != nil {
 		slog.Error("failed to initialize backend service", "error", err)

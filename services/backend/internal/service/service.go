@@ -26,11 +26,11 @@ import (
 const defaultAdminJWTSecret = "just-gate-local-backend-jwt-secret"
 
 type Config struct {
-	Version         string
-	StoreKind       string
-	AdminJWTSecret  string
-	DatabaseURL     string
-	MimirHeaderName string
+	Version          string
+	StoreKind        string
+	AdminJWTSecret   string
+	DatabaseURL      string
+	TenantHeaderName string
 }
 
 type dataStore interface {
@@ -342,10 +342,10 @@ func New(config Config) (*Service, error) {
 	if config.DatabaseURL == "" {
 		config.DatabaseURL = defaultDatabaseURL()
 	}
-	if config.MimirHeaderName == "" {
-		config.MimirHeaderName = "X-Scope-OrgID"
+	if config.TenantHeaderName == "" {
+		config.TenantHeaderName = "X-Scope-OrgID"
 	}
-	storeKind, store, err := newSQLStore(config.DatabaseURL, config.MimirHeaderName)
+	storeKind, store, err := newSQLStore(config.DatabaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -927,7 +927,7 @@ func (s *Service) handleCreateTenant(writer http.ResponseWriter, request *http.R
 		return
 	}
 
-	if err := normalizeTenantPayload(&payload, s.config.MimirHeaderName); err != nil {
+	if err := normalizeTenantPayload(&payload, s.config.TenantHeaderName); err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -962,7 +962,7 @@ func (s *Service) handleTenantByID(writer http.ResponseWriter, request *http.Req
 			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := normalizeTenantPayload(&payload, s.config.MimirHeaderName); err != nil {
+		if err := normalizeTenantPayload(&payload, s.config.TenantHeaderName); err != nil {
 			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -1317,7 +1317,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		originalDirector(proxyRequest)
 		proxyRequest.URL.Path = joinURLPath(targetURL.Path, route.TargetPath, remainingPath)
 		proxyRequest.Host = targetURL.Host
-		proxyRequest.Header.Set(s.config.MimirHeaderName, token.TenantID)
+		proxyRequest.Header.Set(s.config.TenantHeaderName, token.TenantID)
 		proxyRequest.Header.Set("X-Proxy-Route", route.Slug)
 		proxyRequest.Header.Set("X-Proxy-Token", token.ID)
 	}
@@ -1405,7 +1405,7 @@ func (s *Service) logStartup() {
 		"version", s.config.Version,
 		"store_kind", s.config.StoreKind,
 		"database", summarizeDatabaseTarget(s.config.DatabaseURL),
-		"mimir_header_name", s.config.MimirHeaderName,
+		"tenant_header_name", s.config.TenantHeaderName,
 		"started_at", s.start.Format(time.RFC3339),
 	)
 }

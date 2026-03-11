@@ -22,7 +22,7 @@ type sqlStore struct {
 	now     func() time.Time
 }
 
-func newSQLStore(databaseURL, headerName string) (string, *sqlStore, error) {
+func newSQLStore(databaseURL string) (string, *sqlStore, error) {
 	driverName, dsn, storeKind := databaseConfig(databaseURL)
 	database, err := sql.Open(driverName, dsn)
 	if err != nil {

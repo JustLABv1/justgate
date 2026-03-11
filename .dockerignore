@@ -1,0 +1,7 @@
+services/backend/*.db
+services/backend/*.db-shm
+services/backend/*.db-wal
+services/frontend/node_modules
+services/frontend/.next
+services/frontend/.env*
+services/frontend/*.local

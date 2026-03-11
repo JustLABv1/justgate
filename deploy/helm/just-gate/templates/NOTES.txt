@@ -1,0 +1,48 @@
+1. just-gate has been deployed in {{ .Values.mode | upper }} mode.
+
+{{- if eq .Values.mode "monolithic" }}
+
+  Single pod running backend (port {{ .Values.backend.port }}) and frontend (port {{ .Values.frontend.port }}).
+
+  Access the UI:
+    kubectl port-forward svc/{{ include "just-gate.fullname" . }} {{ .Values.frontend.port }}:{{ .Values.frontend.port }}
+    → open http://localhost:{{ .Values.frontend.port }}
+
+{{- else }}
+
+  Separate Deployments for backend and frontend.
+
+  Access the UI:
+    kubectl port-forward svc/{{ include "just-gate.fullname" . }}-frontend {{ .Values.frontend.port }}:{{ .Values.frontend.port }}
+    → open http://localhost:{{ .Values.frontend.port }}
+
+  Access the backend API directly:
+    kubectl port-forward svc/{{ include "just-gate.fullname" . }}-backend {{ .Values.backend.port }}:{{ .Values.backend.port }}
+
+{{- end }}
+
+{{- if .Values.postgresql.enabled }}
+
+  PostgreSQL: {{ include "just-gate.fullname" . }}-postgresql:5432
+  Database:   {{ .Values.postgresql.auth.database }}
+  User:       {{ .Values.postgresql.auth.username }}
+
+{{- else }}
+
+  Storage backend: SQLite
+  {{- if .Values.persistence.enabled }}
+  Data volume:     {{ include "just-gate.fullname" . }}-data ({{ .Values.persistence.size }})
+  {{- else }}
+  WARNING: persistence is disabled – data will be lost on pod restart!
+  {{- end }}
+
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+
+  Ingress hosts:
+  {{- range .Values.ingress.hosts }}
+    http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+  {{- end }}
+
+{{- end }}

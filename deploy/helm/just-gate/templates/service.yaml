@@ -1,0 +1,22 @@
+# ── Service (monolithic mode) ──────────────────────────────────────────────────
+{{- if eq .Values.mode "monolithic" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "just-gate.fullname" . }}
+  labels:
+    {{- include "just-gate.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "just-gate.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: frontend
+      port: {{ .Values.frontend.port }}
+      targetPort: frontend
+      protocol: TCP
+    - name: backend
+      port: {{ .Values.backend.port }}
+      targetPort: backend
+      protocol: TCP
+{{- end }}

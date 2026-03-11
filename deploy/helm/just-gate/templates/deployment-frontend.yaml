@@ -1,0 +1,75 @@
+# ── Frontend Deployment (microservice mode) ───────────────────────────────────
+{{- if eq .Values.mode "microservice" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "just-gate.fullname" . }}-frontend
+  labels:
+    {{- include "just-gate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "just-gate.frontendSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "just-gate.frontendSelectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "just-gate.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: frontend
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.frontend.repository }}:{{ .Values.image.frontend.tag }}"
+          imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.port }}
+              protocol: TCP
+          env:
+            {{- include "just-gate.frontendEnv" . | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
