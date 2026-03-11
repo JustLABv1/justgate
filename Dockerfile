@@ -7,7 +7,8 @@
 
 # ── Build: Backend ────────────────────────────────────────────────────────────
 FROM golang:1.25-alpine AS backend-builder
-RUN apk upgrade --no-cache
+RUN apk upgrade --no-cache \
+ && (apk del --no-cache py3-setuptools py3-setuptools-pyc py3-pip || true)
 WORKDIR /build
 
 COPY services/backend/go.mod services/backend/go.sum ./
@@ -22,6 +23,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # ── Build: Frontend ───────────────────────────────────────────────────────────
 FROM node:22-alpine AS frontend-builder
 RUN apk upgrade --no-cache \
+ && (apk del --no-cache py3-setuptools py3-setuptools-pyc py3-pip || true) \
  && corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /build
 
@@ -37,6 +39,7 @@ RUN pnpm build
 FROM node:22-alpine
 
 RUN apk upgrade --no-cache \
+ && (apk del --no-cache py3-setuptools py3-setuptools-pyc py3-pip || true) \
  && apk add --no-cache ca-certificates tzdata supervisor \
  && addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 nextjs
