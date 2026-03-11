@@ -110,13 +110,14 @@ jobs:
         run: |
           CHART_VERSION="${{ github.ref_name }}"
           CHART_VERSION="${CHART_VERSION#v}"
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
           sed -i "s/^version:.*/version: ${CHART_VERSION}/" deploy/helm/just-gate/Chart.yaml
           sed -i "s/^appVersion:.*/appVersion: \"${CHART_VERSION}\"/" deploy/helm/just-gate/Chart.yaml
 
           helm dependency update deploy/helm/just-gate
           helm package deploy/helm/just-gate --version "${CHART_VERSION}" --app-version "${CHART_VERSION}"
-          helm push "just-gate-${CHART_VERSION}.tgz" oci://${{ env.REGISTRY }}/${{ github.repository_owner }}
+          helm push "just-gate-${CHART_VERSION}.tgz" oci://${{ env.REGISTRY }}/${OWNER}
 
       # ── Changelog & Release ─────────────────────────────────────────────────
       - name: Generate changelog
@@ -146,7 +147,7 @@ jobs:
 
           REGISTRY="${{ env.REGISTRY }}"
           REPO="${{ github.repository }}"
-          OWNER="${{ github.repository_owner }}"
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
           BODY="${BODY}### Docker Images\n\`\`\`sh\n"
           BODY="${BODY}# Combined (backend + frontend)\n"
