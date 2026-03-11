@@ -133,7 +133,7 @@ var schemaMigrations = []migration{
 				client_secret_encrypted TEXT NOT NULL DEFAULT '',
 				display_name TEXT NOT NULL DEFAULT 'Single Sign-On',
 				groups_claim TEXT NOT NULL DEFAULT '',
-				enabled BOOLEAN NOT NULL DEFAULT 0,
+				enabled BOOLEAN NOT NULL DEFAULT FALSE,
 				updated_at TIMESTAMP NOT NULL
 			)`,
 			`CREATE TABLE IF NOT EXISTS oidc_org_mappings (

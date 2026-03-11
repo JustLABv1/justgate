@@ -1,7 +1,5 @@
 # ── Build stage ──────────────────────────────────────────────────────────────
-FROM golang:1.25-alpine AS builder
-RUN apk upgrade --no-cache \
- && (apk del --no-cache py3-setuptools py3-setuptools-pyc py3-pip || true)
+FROM cgr.dev/chainguard/go:latest-dev AS builder
 
 WORKDIR /app
 
