@@ -112,7 +112,7 @@ http://{{ include "justgate.fullname" . }}-backend:{{ .Values.backend.port }}
 Shared backend environment variables (used in both monolithic and microservice deployments).
 */}}
 {{- define "justgate.backendEnv" -}}
-- name: PORT
+- name: BACKEND_PORT
   value: {{ .Values.backend.port | quote }}
 - name: JUST_GATE_TENANT_HEADER
   value: {{ .Values.backend.tenantHeaderName | quote }}

@@ -12,16 +12,16 @@ fullnameOverride: ""
 image:
   # Used in monolithic mode
   monolith:
-    repository: just-gate
+    repository: justgate
     tag: latest
     pullPolicy: IfNotPresent
   # Used in microservice mode
   backend:
-    repository: just-gate-backend
+    repository: justgate-backend
     tag: latest
     pullPolicy: IfNotPresent
   frontend:
-    repository: just-gate-frontend
+    repository: justgate-frontend
     tag: latest
     pullPolicy: IfNotPresent
 
