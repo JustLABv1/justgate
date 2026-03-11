@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -14,15 +14,15 @@
 /coverage
 
 # next.js
-/.next/
+.next/
 /out/
 
 # production
 /build
-proxy-backend/*.db
-proxy-backend/*.sqlite
-proxy-backend/*.db-shm
-proxy-backend/*.db-wal
+services/backend/*.db
+services/backend/*.sqlite
+services/backend/*.db-shm
+services/backend/*.db-wal
 
 # misc
 .DS_Store
