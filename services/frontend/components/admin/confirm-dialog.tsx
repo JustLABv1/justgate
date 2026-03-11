@@ -36,46 +36,47 @@ export function ConfirmDialog({
     <>
       {trigger(() => setOpen(true))}
 
-      <Modal.Dialog
-        isOpen={open}
-        onOpenChange={setOpen}
-        className="rounded-[20px] border border-border bg-overlay shadow-[var(--overlay-shadow)]"
-        style={{ maxWidth: "400px" }}
-      >
-        <Modal.Header className="px-6 pt-6 pb-0">
-          <div className="flex flex-col items-center gap-3 text-center">
-            <div className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${isDanger ? "bg-danger/10 text-danger" : "bg-warning/10 text-warning"}`}>
-              <AlertTriangle size={20} />
-            </div>
-            <div>
-              <Modal.Heading className="text-base font-semibold tracking-[-0.02em] text-foreground">
-                {title}
-              </Modal.Heading>
-              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{description}</p>
-            </div>
-          </div>
-        </Modal.Header>
+      <Modal isOpen={open} onOpenChange={setOpen}>
+        <Modal.Backdrop>
+          <Modal.Container placement="center" size="sm">
+            <Modal.Dialog className="rounded-[20px] border border-border bg-overlay shadow-[var(--overlay-shadow)]">
+              <Modal.Header className="px-6 pt-6 pb-0">
+                <div className="flex flex-col items-center gap-3 text-center">
+                  <div className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${isDanger ? "bg-danger/10 text-danger" : "bg-warning/10 text-warning"}`}>
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div>
+                    <Modal.Heading className="text-base font-semibold tracking-[-0.02em] text-foreground">
+                      {title}
+                    </Modal.Heading>
+                    <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{description}</p>
+                  </div>
+                </div>
+              </Modal.Header>
 
-        <Modal.Body className="px-6 pb-6 pt-5">
-          <div className="flex gap-2.5">
-            <Button
-              className="h-10 flex-1 rounded-xl border border-border bg-panel text-sm font-medium text-foreground"
-              onPress={() => setOpen(false)}
-              isDisabled={isPending}
-              variant="ghost"
-            >
-              Cancel
-            </Button>
-            <Button
-              className={`h-10 flex-1 rounded-xl text-sm font-medium ${isDanger ? "bg-danger text-danger-foreground" : "bg-warning text-warning-foreground"}`}
-              onPress={() => { onConfirm(); setOpen(false); }}
-              isDisabled={isPending}
-            >
-              {isPending ? "Please wait…" : confirmLabel}
-            </Button>
-          </div>
-        </Modal.Body>
-      </Modal.Dialog>
+              <Modal.Body className="px-6 pb-6 pt-5">
+                <div className="flex gap-2.5">
+                  <Button
+                    className="h-10 flex-1 rounded-xl border border-border bg-panel text-sm font-medium text-foreground"
+                    onPress={() => setOpen(false)}
+                    isDisabled={isPending}
+                    variant="ghost"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    className={`h-10 flex-1 rounded-xl text-sm font-medium ${isDanger ? "bg-danger text-danger-foreground" : "bg-warning text-warning-foreground"}`}
+                    onPress={() => { onConfirm(); setOpen(false); }}
+                    isDisabled={isPending}
+                  >
+                    {isPending ? "Please wait…" : confirmLabel}
+                  </Button>
+                </div>
+              </Modal.Body>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal>
     </>
   );
 }
