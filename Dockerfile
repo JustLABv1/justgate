@@ -15,7 +15,7 @@ RUN go mod download
 COPY services/backend/ .
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w" \
-    -o /bin/just-gate-backend \
+    -o /bin/justgate-backend \
     ./cmd/server
 
 # ── Build: Frontend ───────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ USER root
 RUN apk add --no-cache ca-certificates tzdata supervisor
 
 # Backend binary
-COPY --from=backend-builder /bin/just-gate-backend /usr/local/bin/just-gate-backend
+COPY --from=backend-builder /bin/justgate-backend /usr/local/bin/justgate-backend
 
 # Frontend standalone bundle
 WORKDIR /app
