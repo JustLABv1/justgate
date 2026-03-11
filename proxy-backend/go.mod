@@ -1,4 +1,4 @@
-module just-proxy-guard/proxy-backend
+module just-gate/proxy-backend
 
 go 1.25.0
 

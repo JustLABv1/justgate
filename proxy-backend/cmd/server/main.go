@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"just-proxy-guard/proxy-backend/internal/service"
+	"just-gate/proxy-backend/internal/service"
 )
 
 func main() {
@@ -17,12 +17,12 @@ func main() {
 		port = "9090"
 	}
 
-	adminJWTSecret := os.Getenv("JUST_PROXY_GUARD_BACKEND_JWT_SECRET")
+	adminJWTSecret := os.Getenv("JUST_GATE_BACKEND_JWT_SECRET")
 	mimirHeaderName := os.Getenv("MIMIR_TENANT_HEADER")
 	if mimirHeaderName == "" {
 		mimirHeaderName = "X-Scope-OrgID"
 	}
-	databaseURL := os.Getenv("JUST_PROXY_GUARD_DATABASE_URL")
+	databaseURL := os.Getenv("JUST_GATE_DATABASE_URL")
 
 	svc, err := service.New(service.Config{
 		Version:         "0.1.0-dev",
@@ -40,7 +40,7 @@ func main() {
 		Handler: svc.Handler(),
 	}
 
-	slog.Info("just-proxy-guard backend listening", "addr", server.Addr)
+	slog.Info("just-gate backend listening", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("backend server stopped unexpectedly", "error", err)
 		os.Exit(1)

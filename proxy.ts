@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-const authSecret = process.env.NEXTAUTH_SECRET || "just-proxy-guard-local-auth-secret";
+const authSecret = process.env.NEXTAUTH_SECRET || "just-gate-local-auth-secret";
 
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;

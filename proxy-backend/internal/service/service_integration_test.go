@@ -185,8 +185,8 @@ func newAdminJWT(t *testing.T, secret string) string {
 		"name":  "Integration Admin",
 		"roles": []string{"admin"},
 		"scope": "admin:control",
-		"aud":   "just-proxy-guard-backend",
-		"iss":   "just-proxy-guard-admin",
+		"aud":   "just-gate-backend",
+		"iss":   "just-gate-admin",
 		"iat":   time.Now().Unix(),
 		"exp":   time.Now().Add(5 * time.Minute).Unix(),
 	}

@@ -4,8 +4,8 @@ import type { Session } from "next-auth";
 import { SignJWT } from "jose";
 
 const backendJwtSecret = new TextEncoder().encode(
-  process.env.JUST_PROXY_GUARD_BACKEND_JWT_SECRET ||
-    "just-proxy-guard-local-backend-jwt-secret",
+  process.env.JUST_GATE_BACKEND_JWT_SECRET ||
+    "just-gate-local-backend-jwt-secret",
 );
 
 export async function createBackendAdminToken(session: Session) {
@@ -22,8 +22,8 @@ export async function createBackendAdminToken(session: Session) {
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(subject)
-    .setIssuer("just-proxy-guard-admin")
-    .setAudience("just-proxy-guard-backend")
+    .setIssuer("just-gate-admin")
+    .setAudience("just-gate-backend")
     .setIssuedAt()
     .setExpirationTime("5m")
     .sign(backendJwtSecret);

@@ -18,8 +18,8 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Just Proxy Guard",
-  description: "Tenant-aware proxy guard for Grafana Mimir and agent traffic.",
+  title: "JustGate",
+  description: "Tenant-aware gateway for Grafana Mimir and agent traffic.",
 };
 
 export default async function RootLayout({

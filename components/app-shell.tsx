@@ -50,7 +50,7 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
               {mobileNavOpen ? <X size={16} /> : <Menu size={16} />}
             </Button>
             <ShieldCheck size={18} className="text-foreground" />
-            <span className="text-sm font-semibold tracking-tight text-foreground">Proxy Guard</span>
+            <span className="text-sm font-semibold tracking-tight text-foreground">JustGate</span>
           </div>
 
           <div className="flex items-center gap-3">

@@ -23,7 +23,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const defaultAdminJWTSecret = "just-proxy-guard-local-backend-jwt-secret"
+const defaultAdminJWTSecret = "just-gate-local-backend-jwt-secret"
 
 type Config struct {
 	Version         string
@@ -251,7 +251,7 @@ func New(config Config) (*Service, error) {
 
 	service.logStartup()
 	if config.AdminJWTSecret == defaultAdminJWTSecret {
-		service.logger.Warn("using default admin JWT secret; set JUST_PROXY_GUARD_BACKEND_JWT_SECRET outside local development")
+		service.logger.Warn("using default admin JWT secret; set JUST_GATE_BACKEND_JWT_SECRET outside local development")
 	}
 
 	return service, nil
@@ -1271,7 +1271,7 @@ func clientAddress(request *http.Request) string {
 func summarizeDatabaseTarget(databaseURL string) string {
 	trimmed := strings.TrimSpace(databaseURL)
 	if trimmed == "" {
-		return "sqlite://just-proxy-guard.db"
+		return "sqlite://just-gate.db"
 	}
 
 	if strings.HasPrefix(trimmed, "postgres://") || strings.HasPrefix(trimmed, "postgresql://") {
@@ -1289,7 +1289,7 @@ func summarizeDatabaseTarget(databaseURL string) string {
 	if strings.HasPrefix(trimmed, "sqlite://") {
 		path := strings.TrimPrefix(trimmed, "sqlite://")
 		if path == "" {
-			path = "just-proxy-guard.db"
+			path = "just-gate.db"
 		}
 		return "sqlite://" + path
 	}

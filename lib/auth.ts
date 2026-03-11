@@ -2,15 +2,15 @@ import type { NextAuthOptions } from "next-auth";
 import { getServerSession } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 
-const oidcIssuer = process.env.JUST_PROXY_GUARD_OIDC_ISSUER?.replace(/\/$/, "");
-const oidcClientId = process.env.JUST_PROXY_GUARD_OIDC_CLIENT_ID;
-const oidcClientSecret = process.env.JUST_PROXY_GUARD_OIDC_CLIENT_SECRET;
+const oidcIssuer = process.env.JUST_GATE_OIDC_ISSUER?.replace(/\/$/, "");
+const oidcClientId = process.env.JUST_GATE_OIDC_CLIENT_ID;
+const oidcClientSecret = process.env.JUST_GATE_OIDC_CLIENT_SECRET;
 const backendUrl =
-  process.env.JUST_PROXY_GUARD_BACKEND_URL?.replace(/\/$/, "") ||
+  process.env.JUST_GATE_BACKEND_URL?.replace(/\/$/, "") ||
   "http://localhost:9090";
-const localAccountsEnabled = process.env.JUST_PROXY_GUARD_LOCAL_ACCOUNTS_ENABLED !== "false";
-const localRegistrationEnabled = process.env.JUST_PROXY_GUARD_LOCAL_REGISTRATION_ENABLED !== "false";
-const authSecret = process.env.NEXTAUTH_SECRET || "just-proxy-guard-local-auth-secret";
+const localAccountsEnabled = process.env.JUST_GATE_LOCAL_ACCOUNTS_ENABLED !== "false";
+const localRegistrationEnabled = process.env.JUST_GATE_LOCAL_REGISTRATION_ENABLED !== "false";
+const authSecret = process.env.NEXTAUTH_SECRET || "just-gate-local-auth-secret";
 
 export function isOIDCEnabled() {
   return Boolean(oidcIssuer && oidcClientId && oidcClientSecret);
@@ -29,7 +29,7 @@ const providers: NonNullable<NextAuthOptions["providers"]> = [];
 if (isOIDCEnabled()) {
   providers.push({
     id: "oidc",
-    name: process.env.JUST_PROXY_GUARD_OIDC_NAME || "Single Sign-On",
+    name: process.env.JUST_GATE_OIDC_NAME || "Single Sign-On",
     type: "oauth",
     wellKnown: `${oidcIssuer}/.well-known/openid-configuration`,
     clientId: oidcClientId,

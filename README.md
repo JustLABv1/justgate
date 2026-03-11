@@ -1,6 +1,6 @@
-# just-proxy-guard
+# JustGate
 
-Multi-tenant proxy guard for agent and observability traffic.
+Multi-tenant gateway for agent and observability traffic.
 
 The admin surface is a Next.js 16 app using HeroUI. All control-plane reads and writes flow through the Go backend. The Go backend owns persistence, validates admin identity, issues runtime proxy behavior, and records audit activity.
 
@@ -8,7 +8,7 @@ The admin surface is a Next.js 16 app using HeroUI. All control-plane reads and 
 
 - Frontend: authenticated admin UI for tenants, routes, tokens, and audit state.
 - Backend: Go control plane and `/proxy/{slug}/...` runtime surface.
-- Persistence: SQLite by default, PostgreSQL when `JUST_PROXY_GUARD_DATABASE_URL` uses a Postgres DSN.
+- Persistence: SQLite by default, PostgreSQL when `JUST_GATE_DATABASE_URL` uses a Postgres DSN.
 - Migrations: versioned backend migrations tracked in `schema_migrations`.
 - Admin auth: NextAuth on the frontend, then a short-lived signed admin JWT passed to Go.
 
@@ -39,32 +39,32 @@ Frontend:
 
 ```bash
 NEXTAUTH_SECRET=replace-me
-JUST_PROXY_GUARD_BACKEND_URL=http://localhost:9090
-JUST_PROXY_GUARD_BACKEND_JWT_SECRET=replace-me
+JUST_GATE_BACKEND_URL=http://localhost:9090
+JUST_GATE_BACKEND_JWT_SECRET=replace-me
 ```
 
 Backend:
 
 ```bash
-JUST_PROXY_GUARD_BACKEND_JWT_SECRET=replace-me
-JUST_PROXY_GUARD_DATABASE_URL=sqlite://just-proxy-guard.db
+JUST_GATE_BACKEND_JWT_SECRET=replace-me
+JUST_GATE_DATABASE_URL=sqlite://just-gate.db
 MIMIR_TENANT_HEADER=X-Scope-OrgID
 ```
 
 Optional OIDC configuration:
 
 ```bash
-JUST_PROXY_GUARD_OIDC_ISSUER=https://issuer.example.com
-JUST_PROXY_GUARD_OIDC_CLIENT_ID=client-id
-JUST_PROXY_GUARD_OIDC_CLIENT_SECRET=client-secret
-JUST_PROXY_GUARD_OIDC_NAME=Corporate SSO
+JUST_GATE_OIDC_ISSUER=https://issuer.example.com
+JUST_GATE_OIDC_CLIENT_ID=client-id
+JUST_GATE_OIDC_CLIENT_SECRET=client-secret
+JUST_GATE_OIDC_NAME=Corporate SSO
 ```
 
 Local accounts:
 
 ```bash
-JUST_PROXY_GUARD_LOCAL_ACCOUNTS_ENABLED=true
-JUST_PROXY_GUARD_LOCAL_REGISTRATION_ENABLED=true
+JUST_GATE_LOCAL_ACCOUNTS_ENABLED=true
+JUST_GATE_LOCAL_REGISTRATION_ENABLED=true
 ```
 
 When local accounts are enabled, the sign-in page supports both registration and credential login backed by the Go service.

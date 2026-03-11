@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { createBackendAdminToken } from "@/lib/backend-admin-token";
 
 const backendUrl =
-  process.env.JUST_PROXY_GUARD_BACKEND_URL?.replace(/\/$/, "") ||
+  process.env.JUST_GATE_BACKEND_URL?.replace(/\/$/, "") ||
   "http://localhost:9090";
 
 export function getBackendBaseUrl() {
