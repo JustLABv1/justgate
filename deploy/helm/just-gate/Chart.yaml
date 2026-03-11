@@ -1,6 +1,6 @@
 apiVersion: v2
-name: just-gate
-description: just-gate – multi-tenant observability proxy with admin UI
+name: justgate
+description: justgate – multi-tenant observability proxy with admin UI
 type: application
 version: 1.0.1
 appVersion: "1.0.1"

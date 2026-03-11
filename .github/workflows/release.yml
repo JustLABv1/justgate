@@ -146,7 +146,7 @@ jobs:
           if [ -n "$OTHERS" ]; then BODY="${BODY}### Other Changes\n${OTHERS}\n\n"; fi
 
           REGISTRY="${{ env.REGISTRY }}"
-          REPO="${{ github.repository }}"
+          REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
           BODY="${BODY}### Docker Images\n\`\`\`sh\n"
@@ -158,7 +158,7 @@ jobs:
           BODY="${BODY}docker pull ${REGISTRY}/${REPO}-frontend:${CHART_VERSION}\n"
           BODY="${BODY}\`\`\`\n\n"
           BODY="${BODY}### Helm Chart\n\`\`\`sh\n"
-          BODY="${BODY}helm install just-gate oci://${REGISTRY}/${OWNER}/just-gate --version ${CHART_VERSION}\n"
+          BODY="${BODY}helm install justgate oci://${REGISTRY}/${OWNER}/justgate --version ${CHART_VERSION}\n"
           BODY="${BODY}\`\`\`"
 
           {

@@ -1,14 +1,14 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "just-gate.name" -}}
+{{- define "justgate.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "just-gate.fullname" -}}
+{{- define "justgate.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -24,16 +24,16 @@ Create a default fully qualified app name.
 {{/*
 Create chart label.
 */}}
-{{- define "just-gate.chart" -}}
+{{- define "justgate.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels.
 */}}
-{{- define "just-gate.labels" -}}
-helm.sh/chart: {{ include "just-gate.chart" . }}
-{{ include "just-gate.selectorLabels" . }}
+{{- define "justgate.labels" -}}
+helm.sh/chart: {{ include "justgate.chart" . }}
+{{ include "justgate.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -43,16 +43,16 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels.
 */}}
-{{- define "just-gate.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "just-gate.name" . }}
+{{- define "justgate.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "justgate.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
 Selector labels – backend component (microservice mode).
 */}}
-{{- define "just-gate.backendSelectorLabels" -}}
-app.kubernetes.io/name: {{ include "just-gate.name" . }}-backend
+{{- define "justgate.backendSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "justgate.name" . }}-backend
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: backend
 {{- end }}
@@ -60,8 +60,8 @@ app.kubernetes.io/component: backend
 {{/*
 Selector labels – frontend component (microservice mode).
 */}}
-{{- define "just-gate.frontendSelectorLabels" -}}
-app.kubernetes.io/name: {{ include "just-gate.name" . }}-frontend
+{{- define "justgate.frontendSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "justgate.name" . }}-frontend
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: frontend
 {{- end }}
@@ -69,9 +69,9 @@ app.kubernetes.io/component: frontend
 {{/*
 ServiceAccount name.
 */}}
-{{- define "just-gate.serviceAccountName" -}}
+{{- define "justgate.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "just-gate.fullname" .) .Values.serviceAccount.name }}
+{{- default (include "justgate.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
@@ -81,37 +81,37 @@ ServiceAccount name.
 Computed database URL.
 Priority: explicit .Values.backend.databaseUrl > postgresql subchart > sqlite fallback.
 */}}
-{{- define "just-gate.databaseUrl" -}}
+{{- define "justgate.databaseUrl" -}}
 {{- if .Values.backend.databaseUrl -}}
 {{- .Values.backend.databaseUrl -}}
 {{- else if .Values.postgresql.enabled -}}
 {{- printf "postgresql://%s:%s@%s-postgresql:5432/%s"
     .Values.postgresql.auth.username
     .Values.postgresql.auth.password
-    (include "just-gate.fullname" .)
+    (include "justgate.fullname" .)
     .Values.postgresql.auth.database -}}
 {{- else -}}
-sqlite:///data/just-gate.db
+sqlite:///data/justgate.db
 {{- end -}}
 {{- end }}
 
 {{/*
 Computed backend URL for the frontend.
 */}}
-{{- define "just-gate.backendUrl" -}}
+{{- define "justgate.backendUrl" -}}
 {{- if .Values.frontend.backendUrl -}}
 {{- .Values.frontend.backendUrl -}}
 {{- else if eq .Values.mode "monolithic" -}}
 http://localhost:{{ .Values.backend.port }}
 {{- else -}}
-http://{{ include "just-gate.fullname" . }}-backend:{{ .Values.backend.port }}
+http://{{ include "justgate.fullname" . }}-backend:{{ .Values.backend.port }}
 {{- end -}}
 {{- end }}
 
 {{/*
 Shared backend environment variables (used in both monolithic and microservice deployments).
 */}}
-{{- define "just-gate.backendEnv" -}}
+{{- define "justgate.backendEnv" -}}
 - name: PORT
   value: {{ .Values.backend.port | quote }}
 - name: JUST_GATE_TENANT_HEADER
@@ -119,19 +119,19 @@ Shared backend environment variables (used in both monolithic and microservice d
 - name: JUST_GATE_BACKEND_JWT_SECRET
   valueFrom:
     secretKeyRef:
-      name: {{ include "just-gate.fullname" . }}-secrets
+      name: {{ include "justgate.fullname" . }}-secrets
       key: backendJwtSecret
 - name: JUST_GATE_DATABASE_URL
   valueFrom:
     secretKeyRef:
-      name: {{ include "just-gate.fullname" . }}-secrets
+      name: {{ include "justgate.fullname" . }}-secrets
       key: databaseUrl
 {{- end }}
 
 {{/*
 Shared frontend environment variables.
 */}}
-{{- define "just-gate.frontendEnv" -}}
+{{- define "justgate.frontendEnv" -}}
 - name: NODE_ENV
   value: production
 - name: PORT
@@ -141,12 +141,12 @@ Shared frontend environment variables.
 - name: NEXTAUTH_SECRET
   valueFrom:
     secretKeyRef:
-      name: {{ include "just-gate.fullname" . }}-secrets
+      name: {{ include "justgate.fullname" . }}-secrets
       key: nextauthSecret
 - name: NEXTAUTH_URL
   value: {{ .Values.frontend.nextauthUrl | quote }}
 - name: JUST_GATE_BACKEND_URL
-  value: {{ include "just-gate.backendUrl" . | quote }}
+  value: {{ include "justgate.backendUrl" . | quote }}
 - name: JUST_GATE_LOCAL_ACCOUNTS_ENABLED
   value: {{ .Values.frontend.localAccountsEnabled | quote }}
 - name: JUST_GATE_LOCAL_REGISTRATION_ENABLED
@@ -157,12 +157,12 @@ Shared frontend environment variables.
 - name: JUST_GATE_OIDC_CLIENT_ID
   valueFrom:
     secretKeyRef:
-      name: {{ include "just-gate.fullname" . }}-secrets
+      name: {{ include "justgate.fullname" . }}-secrets
       key: oidcClientId
 - name: JUST_GATE_OIDC_CLIENT_SECRET
   valueFrom:
     secretKeyRef:
-      name: {{ include "just-gate.fullname" . }}-secrets
+      name: {{ include "justgate.fullname" . }}-secrets
       key: oidcClientSecret
 {{- if .Values.frontend.oidc.name }}
 - name: JUST_GATE_OIDC_NAME

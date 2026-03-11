@@ -3,14 +3,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "just-gate.fullname" . }}-backend
+  name: {{ include "justgate.fullname" . }}-backend
   labels:
-    {{- include "just-gate.labels" . | nindent 4 }}
+    {{- include "justgate.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
   type: {{ .Values.service.type }}
   selector:
-    {{- include "just-gate.backendSelectorLabels" . | nindent 4 }}
+    {{- include "justgate.backendSelectorLabels" . | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.backend.port }}

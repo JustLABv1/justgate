@@ -230,19 +230,37 @@ docker compose up -d
 
 The Helm chart lives in `deploy/helm/just-gate` and supports two deployment modes.
 
-**Add the Bitnami dependency and install:**
+**From the OCI registry (recommended):**
 
 ```bash
-helm dependency update deploy/helm/just-gate
-
 # Monolithic (default) — single pod, SQLite
-helm install just-gate deploy/helm/just-gate \
+helm install justgate oci://ghcr.io/justlabv1/justgate --version <version> \
   --set frontend.nextauthUrl=https://just-gate.example.com \
   --set frontend.nextauthSecret=$(openssl rand -hex 32) \
   --set backend.jwtSecret=$(openssl rand -hex 32)
 
 # Microservice mode with PostgreSQL
-helm install just-gate deploy/helm/just-gate \
+helm install justgate oci://ghcr.io/justlabv1/justgate --version <version> \
+  --set mode=microservice \
+  --set postgresql.auth.password=change-me \
+  --set frontend.nextauthUrl=https://just-gate.example.com \
+  --set frontend.nextauthSecret=$(openssl rand -hex 32) \
+  --set backend.jwtSecret=$(openssl rand -hex 32)
+```
+
+**From source:**
+
+```bash
+helm dependency update deploy/helm/just-gate
+
+# Monolithic (default) — single pod, SQLite
+helm install justgate deploy/helm/just-gate \
+  --set frontend.nextauthUrl=https://just-gate.example.com \
+  --set frontend.nextauthSecret=$(openssl rand -hex 32) \
+  --set backend.jwtSecret=$(openssl rand -hex 32)
+
+# Microservice mode with PostgreSQL
+helm install justgate deploy/helm/just-gate \
   --set mode=microservice \
   --set postgresql.auth.password=change-me \
   --set frontend.nextauthUrl=https://just-gate.example.com \
@@ -313,5 +331,5 @@ JustGate is released under the [Business Source License 1.1](LICENSE).
 - **Commercial license required** for use in any product or service operated by a for-profit organisation
 - The license converts to [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) on **11 March 2030**
 
-For commercial licensing enquiries, please contact **licensing@justlab.dev**.
+For commercial licensing enquiries, please contact **kontakt@justlab.app**.
 

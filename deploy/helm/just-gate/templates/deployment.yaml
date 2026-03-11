@@ -4,14 +4,14 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "just-gate.fullname" . }}
+  name: {{ include "justgate.fullname" . }}
   labels:
-    {{- include "just-gate.labels" . | nindent 4 }}
+    {{- include "justgate.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "just-gate.selectorLabels" . | nindent 6 }}
+      {{- include "justgate.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- with .Values.podAnnotations }}
@@ -19,13 +19,13 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "just-gate.selectorLabels" . | nindent 8 }}
+        {{- include "justgate.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "just-gate.serviceAccountName" . }}
+      serviceAccountName: {{ include "justgate.serviceAccountName" . }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -46,8 +46,8 @@ spec:
               containerPort: {{ .Values.frontend.port }}
               protocol: TCP
           env:
-            {{- include "just-gate.backendEnv" . | nindent 12 }}
-            {{- include "just-gate.frontendEnv" . | nindent 12 }}
+            {{- include "justgate.backendEnv" . | nindent 12 }}
+            {{- include "justgate.frontendEnv" . | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -73,7 +73,7 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: {{ include "just-gate.fullname" . }}-data
+            claimName: {{ include "justgate.fullname" . }}-data
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
