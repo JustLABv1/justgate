@@ -117,7 +117,7 @@ jobs:
 
           helm dependency update deploy/helm/just-gate
           helm package deploy/helm/just-gate --version "${CHART_VERSION}" --app-version "${CHART_VERSION}"
-          helm push "just-gate-${CHART_VERSION}.tgz" oci://${{ env.REGISTRY }}/${OWNER}
+          helm push "justgate-${CHART_VERSION}.tgz" oci://${{ env.REGISTRY }}/${OWNER}
 
       # ── Changelog & Release ─────────────────────────────────────────────────
       - name: Generate changelog
