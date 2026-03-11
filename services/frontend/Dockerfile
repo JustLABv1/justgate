@@ -1,6 +1,7 @@
 # ── Base ──────────────────────────────────────────────────────────────────────
 FROM node:22-alpine AS base
 RUN apk upgrade --no-cache \
+ && (apk del --no-cache py3-setuptools py3-setuptools-pyc py3-pip || true) \
  && corepack enable && corepack prepare pnpm@latest --activate
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
@@ -22,7 +23,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-RUN addgroup --system --gid 1001 nodejs \
+RUN apk upgrade --no-cache \
+ && (apk del --no-cache py3-setuptools py3-setuptools-pyc py3-pip || true) \
+ && addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 nextjs
 
 COPY --from=builder /app/public ./public
