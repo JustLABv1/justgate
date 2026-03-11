@@ -50,6 +50,12 @@ export function AdminNav({ onNavigate }: AdminNavProps) {
           </button>
         );
       })}
+
+      <div className="mt-4 px-3">
+        <span className="inline-flex items-center rounded-full border border-border/60 bg-surface/60 px-2.5 py-1 text-[10px] font-medium text-muted-foreground/70">
+          v{process.env.NEXT_PUBLIC_APP_VERSION ?? "1.0.0"}
+        </span>
+      </div>
     </nav>
   );
 }

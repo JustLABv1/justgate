@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="services/frontend/public/justgate_logo.png" alt="JustGate Logo" width="80" height="80" />
+
 # JustGate
 
 **Multi-tenant proxy gateway with an admin UI**

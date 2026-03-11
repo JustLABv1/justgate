@@ -4,7 +4,7 @@ import { AdminNav } from "@/components/admin/nav";
 import { UserMenu } from "@/components/admin/user-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@heroui/react";
-import { Menu, ShieldCheck, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { type ReactNode, useState } from "react";
 
@@ -47,7 +47,8 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
             >
               {mobileNavOpen ? <X size={16} /> : <Menu size={16} />}
             </Button>
-            <ShieldCheck size={18} className="text-foreground" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/justgate_logo.png" alt="JustGate" width={24} height={24} className="rounded-sm" />
             <span className="text-sm font-semibold tracking-tight text-foreground">JustGate</span>
           </div>
 
