@@ -2,8 +2,8 @@ apiVersion: v2
 name: justgate
 description: justgate – multi-tenant observability proxy with admin UI
 type: application
-version: 1.0.8
-appVersion: "1.0.8"
+version: 1.0.9
+appVersion: "1.0.9"
 
 dependencies:
   - name: postgresql

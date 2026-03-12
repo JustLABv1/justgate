@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -35,6 +37,8 @@ type Config struct {
 	OIDCClientID     string
 	OIDCClientSecret string
 	OIDCDisplayName  string
+	// Path to a PEM file containing extra CA certificates for outbound TLS.
+	ExtraCAFile string
 }
 
 type dataStore interface {
@@ -117,11 +121,12 @@ type acceptInviteRequest struct {
 }
 
 type Service struct {
-	config Config
-	store  dataStore
-	start  time.Time
-	logger *slog.Logger
-	stop   chan struct{}
+	config    Config
+	store     dataStore
+	start     time.Time
+	logger    *slog.Logger
+	stop      chan struct{}
+	transport *http.Transport
 }
 
 type overviewResponse struct {
@@ -398,12 +403,18 @@ func New(config Config) (*Service, error) {
 	}
 	config.StoreKind = storeKind
 
+	transport, err := buildTransport(config.ExtraCAFile)
+	if err != nil {
+		return nil, fmt.Errorf("loading extra CA file %q: %w", config.ExtraCAFile, err)
+	}
+
 	service := &Service{
-		config: config,
-		store:  store,
-		start:  time.Now().UTC(),
-		logger: slog.Default(),
-		stop:   make(chan struct{}),
+		config:    config,
+		store:     store,
+		start:     time.Now().UTC(),
+		logger:    slog.Default(),
+		stop:      make(chan struct{}),
+		transport: transport,
 	}
 
 	service.logStartup()
@@ -1006,7 +1017,10 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 }
 
 func (s *Service) runHealthChecker() {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: s.transport,
+	}
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -1500,6 +1514,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy.Transport = s.transport
 	originalDirector := proxy.Director
 	proxy.Director = func(proxyRequest *http.Request) {
 		originalDirector(proxyRequest)
@@ -1684,6 +1699,35 @@ func extractBearerToken(headerValue string) string {
 	}
 
 	return strings.TrimSpace(strings.TrimPrefix(headerValue, prefix))
+}
+
+// buildTransport returns an *http.Transport that trusts the system CA pool plus
+// any extra PEM-encoded certificates found in extraCAFile. When extraCAFile is
+// empty the returned transport is a clone of http.DefaultTransport.
+func buildTransport(extraCAFile string) (*http.Transport, error) {
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	if extraCAFile == "" {
+		return base, nil
+	}
+
+	pem, err := os.ReadFile(extraCAFile)
+	if err != nil {
+		return nil, err
+	}
+
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+	pool.AppendCertsFromPEM(pem)
+
+	if base.TLSClientConfig == nil {
+		base.TLSClientConfig = &tls.Config{}
+	}
+	base.TLSClientConfig = base.TLSClientConfig.Clone()
+	base.TLSClientConfig.RootCAs = pool
+
+	return base, nil
 }
 
 func writeJSON(writer http.ResponseWriter, status int, payload any) {

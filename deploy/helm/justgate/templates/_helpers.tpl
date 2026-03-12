@@ -141,6 +141,10 @@ http://{{ include "justgate.fullname" . }}-backend:{{ .Values.backend.port }}
 Shared backend environment variables (used in both monolithic and microservice deployments).
 */}}
 {{- define "justgate.backendEnv" -}}
+{{- if .Values.customCAs.enabled }}
+- name: JUST_GATE_EXTRA_CA_FILE
+  value: /etc/ssl/custom-ca/ca-bundle.crt
+{{- end }}
 - name: BACKEND_PORT
   value: {{ .Values.backend.port | quote }}
 - name: JUST_GATE_TENANT_HEADER
