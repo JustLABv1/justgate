@@ -7,8 +7,18 @@ const backendUrl =
   process.env.JUST_GATE_BACKEND_URL?.replace(/\/$/, "") ||
   "http://localhost:9090";
 
+/** Internal URL used for server-side backend API calls (pod-internal, never shown to users). */
 export function getBackendBaseUrl() {
   return backendUrl;
+}
+
+/**
+ * Public-facing base URL for displaying links to the user.
+ * Uses NEXTAUTH_URL (the ingress / public URL) so that displayed proxy route
+ * URLs match what is actually reachable from outside the cluster.
+ */
+export function getPublicBaseUrl() {
+  return process.env.NEXTAUTH_URL?.replace(/\/$/, "") || "";
 }
 
 export async function getAdminRequestHeaders(): Promise<HeadersInit> {

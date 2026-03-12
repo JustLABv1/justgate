@@ -2,12 +2,12 @@ import { CreateRouteForm } from "@/components/admin/create-route-form";
 import { RoutesTable } from "@/components/admin/routes-table";
 import { SectionPage } from "@/components/admin/section-page";
 import { getRoutes, getTenants } from "@/lib/backend-client";
-import { getBackendBaseUrl } from "@/lib/backend-server";
+import { getPublicBaseUrl } from "@/lib/backend-server";
 import Link from "next/link";
 
 export default async function RoutesPage() {
   const [result, tenants] = await Promise.all([getRoutes(), getTenants()]);
-  const backendBaseUrl = getBackendBaseUrl();
+  const backendBaseUrl = getPublicBaseUrl();
 
   return (
     <SectionPage

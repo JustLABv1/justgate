@@ -26,6 +26,15 @@ spec:
     - host: {{ .host | quote }}
       http:
         paths:
+          {{- if eq $mode "monolithic" }}
+          - path: /proxy/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ $backendPort }}
+          {{- end }}
           {{- range .paths }}
           - path: {{ .path }}
             pathType: {{ .pathType }}
