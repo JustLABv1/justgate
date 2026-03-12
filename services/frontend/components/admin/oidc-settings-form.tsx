@@ -62,6 +62,11 @@ export function OIDCSettingsForm({ initial }: OIDCSettingsFormProps) {
         <p className="mt-0.5 text-[11px] text-muted-foreground">Configure an external identity provider for single sign-on.</p>
       </div>
       <div className="px-5 py-5">
+        {initial.fromEnv && (
+          <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-300">
+            These settings are currently sourced from <strong>environment variables</strong>. Saving will persist them to the database and take effect after the next frontend restart, allowing them to be managed from this page going forward.
+          </div>
+        )}
         <Form onSubmit={handleSubmit} className="space-y-5">
           <div className="flex items-center gap-3">
             <Switch

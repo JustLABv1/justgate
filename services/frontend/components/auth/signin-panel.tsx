@@ -11,6 +11,7 @@ type AuthMode = "signin" | "register";
 interface SignInPanelProps {
   callbackUrl: string;
   oidcEnabled: boolean;
+  oidcDisplayName?: string;
   localAccountsEnabled: boolean;
   localRegistrationEnabled: boolean;
 }
@@ -18,6 +19,7 @@ interface SignInPanelProps {
 export function SignInPanel({
   callbackUrl,
   oidcEnabled,
+  oidcDisplayName,
   localAccountsEnabled,
   localRegistrationEnabled,
 }: SignInPanelProps) {
@@ -127,7 +129,7 @@ export function SignInPanel({
             onPress={handleOIDCSignIn}
           >
             <ArrowUpRight size={16} />
-            Continue with OIDC
+            {oidcDisplayName || "Single Sign-On"}
           </Button>
         ) : null}
 

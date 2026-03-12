@@ -150,6 +150,8 @@ export interface OIDCConfig {
   groupsClaim: string;
   enabled: boolean;
   updatedAt: string;
+  /** True when the values are sourced from environment variables (no DB record yet). */
+  fromEnv?: boolean;
 }
 
 export interface OIDCOrgMapping {

@@ -107,6 +107,11 @@ export async function isOIDCEnabled(): Promise<boolean> {
   return oidcEnabledCache;
 }
 
+export async function getOIDCDisplayName(): Promise<string> {
+  const cfg = await getResolvedOIDC();
+  return cfg?.displayName || "Single Sign-On";
+}
+
 export function isLocalAccountsEnabled() {
   return localAccountsEnabled;
 }

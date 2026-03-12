@@ -31,6 +31,15 @@ Route authenticated bearer tokens to upstream services, inject tenant identity h
   - [Frontend Environment](#frontend-environment)
 - [Deployment](#deployment)
   - [Kubernetes / Helm](#kubernetes--helm)
+- [OIDC / Single Sign-On](#oidc--single-sign-on)
+  - [How auto-discovery works](#how-auto-discovery-works)
+  - [Issuer URL format](#issuer-url-format)
+  - [Troubleshooting the 503 / 5xx discovery error](#troubleshooting-the-503--5xx-discovery-error)
+  - [Option A — Helm / env vars](#option-a--helm--env-vars-static)
+  - [Option B — Admin UI](#option-b--admin-ui-dynamic)
+  - [Keycloak client configuration](#keycloak-client-configuration)
+  - [Internal CA / self-signed certificates](#internal-ca--self-signed-certificates)
+  - [OIDC org mappings](#oidc-org-mappings)
 - [API Overview](#api-overview)
 - [Contributing](#contributing)
 - [License](#license)
@@ -280,6 +289,174 @@ helm install justgate deploy/helm/justgate \
 | `persistence.size` | `1Gi` | SQLite PVC size (PostgreSQL disabled only) |
 
 See [`deploy/helm/justgate/values.yaml`](deploy/helm/justgate/values.yaml) for the full reference.
+
+---
+
+## OIDC / Single Sign-On
+
+JustGate supports OIDC-based single sign-on on top of (or instead of) local accounts. There are two ways to configure it:
+
+| Method | When it takes effect | Suitable for |
+|---|---|---|
+| **Helm values** / env vars | On pod start (static) | GitOps, initial bootstrap |
+| **Admin UI** (Settings → OIDC) | Immediately (stored in DB) | Runtime changes, secret rotation |
+
+The Admin UI takes precedence over Helm/env vars when an enabled OIDC config is found in the database.
+
+---
+
+### How auto-discovery works
+
+next-auth uses OIDC **Discovery** to configure itself. On startup it fetches:
+
+```
+GET <issuer>/.well-known/openid-configuration
+```
+
+The response must return **HTTP 200** with a valid JSON document. If the pod gets anything else (503, 404, connection refused, TLS error) the sign-in flow will fail immediately with `SIGNIN_OAUTH_ERROR`.
+
+---
+
+### Issuer URL format
+
+The issuer URL is the most common source of errors. It must match exactly what the identity provider publishes in the discovery document.
+
+| Provider | Issuer URL pattern |
+|---|---|
+| **Keycloak** | `https://<host>/realms/<realm-name>` |
+| **Keycloak (legacy < 17)** | `https://<host>/auth/realms/<realm-name>` |
+| **Dex** | `https://<host>/dex` |
+| **Auth0** | `https://<tenant>.eu.auth0.com` |
+| **Azure AD** | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
+| **Google** | `https://accounts.google.com` |
+| **Authentik** | `https://<host>/application/o/<app-slug>/` |
+| **GitLab** | `https://gitlab.com` |
+
+> **Keycloak example:** if your realm is called `myrealm`, the issuer is  
+> `https://keycloak.example.com/realms/myrealm`  
+> You can verify this by opening that URL in a browser — you should see a JSON document.
+
+---
+
+### Troubleshooting the 503 / 5xx discovery error
+
+The error `expected 200 OK, got: 503 Service Unavailable` means next-auth reached the server but got a failure response while fetching the discovery document. Common causes:
+
+1. **Wrong realm / path** — the URL resolves but the realm doesn't exist or the path is wrong.  
+   Verify manually: `curl -v https://<issuer>/.well-known/openid-configuration`
+
+2. **Provider temporarily unavailable** — the IdP is overloaded or starting up.
+
+3. **Pod cannot reach the IdP** — if the IdP is on an internal network, DNS may resolve but routing rules / NetworkPolicies may block the traffic.  
+   Test from inside the cluster:  
+   ```bash
+   kubectl exec -it <justgate-pod> -- wget -qO- https://<issuer>/.well-known/openid-configuration
+   ```
+
+4. **Internal / self-signed CA** — the discovery request fails TLS verification (shows as `unable to get local issuer certificate`). Fix: configure `customCAs` in Helm (see below).
+
+5. **Trailing slash mismatch** — JustGate strips a trailing slash from the issuer automatically, but the discovery URL the IdP returns in its token may include/exclude one. If you still see issues, ensure your IdP and the issuer value you supply have the same format.
+
+---
+
+### Option A — Helm / env vars (static)
+
+Set these in your `values.yaml` (or via `--set`):
+
+```yaml
+frontend:
+  nextauthUrl: "https://justgate.example.com"   # public URL of the app
+  oidc:
+    issuer: "https://keycloak.example.com/realms/myrealm"
+    clientId: "justgate"
+    clientSecret: "your-client-secret"
+    name: "Login with Keycloak"                 # optional button label
+```
+
+Or with `--set` flags:
+
+```bash
+helm upgrade justgate oci://ghcr.io/justlabv1/justgate \
+  --set frontend.nextauthUrl=https://justgate.example.com \
+  --set frontend.oidc.issuer=https://keycloak.example.com/realms/myrealm \
+  --set frontend.oidc.clientId=justgate \
+  --set frontend.oidc.clientSecret=<secret>
+```
+
+> **Note:** `clientId` and `clientSecret` are written into a Kubernetes `Secret` automatically by the chart. You do not need to create it manually.
+
+---
+
+### Option B — Admin UI (dynamic)
+
+1. Sign in as an admin and navigate to **Settings → OIDC**.
+2. Toggle **Enabled**.
+3. Fill in the fields:
+
+| Field | Description |
+|---|---|
+| **Issuer URL** | Full issuer URL including realm (see table above). No trailing slash. |
+| **Client ID** | The client/application ID registered in your IdP. |
+| **Client Secret** | The client secret. Leave blank to keep the stored value. |
+| **Button Label** | Text shown on the sign-in page (default: `Single Sign-On`). |
+| **Groups Claim** | JWT claim containing groups/roles for org mapping (e.g. `groups` or `realm_access.roles`). Optional. |
+
+4. Click **Save**. Changes take effect on the next request (no restart needed).
+
+> The client secret is AES-encrypted before being written to the database.
+
+---
+
+### Keycloak client configuration
+
+In Keycloak, create a new client for JustGate:
+
+| Setting | Value |
+|---|---|
+| **Client type** | `OpenID Connect` |
+| **Client ID** | `justgate` (or whatever you set as `clientId`) |
+| **Client authentication** | `On` (confidential client) |
+| **Valid redirect URIs** | `https://justgate.example.com/api/auth/callback/oidc` |
+| **Web origins** | `https://justgate.example.com` |
+
+Retrieve the client secret from the **Credentials** tab.
+
+---
+
+### Internal CA / self-signed certificates
+
+If your IdP uses a certificate signed by an internal CA, mount the CA bundle via Helm:
+
+```yaml
+customCAs:
+  enabled: true
+  # Inline PEM — paste the full CA certificate
+  certificates: |
+    -----BEGIN CERTIFICATE-----
+    MIIBxTCCAW+gAwIBAgIJA...
+    -----END CERTIFICATE-----
+```
+
+Or reference an existing ConfigMap / Secret:
+
+```yaml
+customCAs:
+  enabled: true
+  existingConfigMap: my-ca-bundle   # must have a 'ca-bundle.crt' key
+```
+
+The chart automatically sets `NODE_EXTRA_CA_CERTS` for the Next.js process.
+
+---
+
+### OIDC org mappings
+
+JustGate can automatically assign users to organisations based on OIDC groups/roles:
+
+1. Set the **Groups Claim** field to the JWT claim that contains groups (e.g. `groups`).
+2. In **Settings → OIDC → Org Mappings**, map OIDC group names to JustGate organisations.
+
+When a user signs in via OIDC, JustGate reads the groups claim from the ID token and adds the user to mapped organisations automatically.
 
 ---
 

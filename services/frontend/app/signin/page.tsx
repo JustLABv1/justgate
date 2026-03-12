@@ -1,5 +1,5 @@
 import { SignInPanel } from "@/components/auth/signin-panel";
-import { isLocalAccountsEnabled, isLocalRegistrationEnabled, isOIDCEnabled } from "@/lib/auth";
+import { getOIDCDisplayName, isLocalAccountsEnabled, isLocalRegistrationEnabled, isOIDCEnabled } from "@/lib/auth";
 import { ShieldCheck } from "lucide-react";
 
 export default async function SignInPage({
@@ -56,6 +56,7 @@ export default async function SignInPage({
           localAccountsEnabled={isLocalAccountsEnabled()}
           localRegistrationEnabled={isLocalRegistrationEnabled()}
           oidcEnabled={await isOIDCEnabled()}
+          oidcDisplayName={await getOIDCDisplayName()}
         />
       </div>
     </div>

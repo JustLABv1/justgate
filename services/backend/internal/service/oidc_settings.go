@@ -33,6 +33,7 @@ type oidcConfigResponse struct {
 	GroupsClaim string `json:"groupsClaim"`
 	Enabled     bool   `json:"enabled"`
 	UpdatedAt   string `json:"updatedAt"`
+	FromEnv     bool   `json:"fromEnv,omitempty"`
 }
 
 type oidcOrgMappingRequest struct {
@@ -58,6 +59,22 @@ func (s *Service) handleOIDCSettings(writer http.ResponseWriter, request *http.R
 			return
 		}
 		if !ok {
+			// No DB record – fall back to environment variable config if present.
+			if s.config.OIDCIssuer != "" || s.config.OIDCClientID != "" {
+				displayName := s.config.OIDCDisplayName
+				if displayName == "" {
+					displayName = "Single Sign-On"
+				}
+				writeJSON(writer, http.StatusOK, oidcConfigResponse{
+					Issuer:      s.config.OIDCIssuer,
+					ClientID:    s.config.OIDCClientID,
+					HasSecret:   s.config.OIDCClientSecret != "",
+					DisplayName: displayName,
+					Enabled:     true,
+					FromEnv:     true,
+				})
+				return
+			}
 			writeJSON(writer, http.StatusOK, oidcConfigResponse{
 				DisplayName: "Single Sign-On",
 			})

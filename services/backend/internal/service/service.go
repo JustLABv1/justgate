@@ -31,6 +31,10 @@ type Config struct {
 	AdminJWTSecret   string
 	DatabaseURL      string
 	TenantHeaderName string
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCDisplayName  string
 }
 
 type dataStore interface {
@@ -417,7 +421,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/api/v1/auth/local/register", s.handleRegisterLocalAdmin)
 	mux.HandleFunc("/api/v1/auth/local/verify", s.handleVerifyLocalAdmin)
-	mux.HandleFunc("/api/v1/admin/overview", s.withAdminAuth(s.withOrgContext(s.handleOverview)))
+	mux.HandleFunc("/api/v1/admin/overview", s.withAdminAuth(s.withOptionalOrgContext(s.handleOverview)))
 	mux.HandleFunc("/api/v1/admin/routes", s.withAdminAuth(s.withOrgContext(s.handleRoutes)))
 	mux.HandleFunc("/api/v1/admin/routes/", s.withAdminAuth(s.withOrgContext(s.handleRouteByID)))
 	mux.HandleFunc("/api/v1/admin/tenants", s.withAdminAuth(s.withOrgContext(s.handleTenants)))
@@ -477,6 +481,29 @@ func (s *Service) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 			CreatedAt: time.Now().UTC(),
 		})
 		ctx := context.WithValue(request.Context(), contextKeyAdminID, identity.Subject)
+		next(writer, request.WithContext(ctx))
+	}
+}
+
+func (s *Service) withOptionalOrgContext(next http.HandlerFunc) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		orgID := strings.TrimSpace(request.Header.Get("X-Org-ID"))
+		if orgID == "" {
+			next(writer, request)
+			return
+		}
+		adminID := adminIDFromContext(request.Context())
+		membership, ok, err := s.store.GetOrgMembership(request.Context(), orgID, adminID)
+		if err != nil {
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to verify organisation membership"})
+			return
+		}
+		if !ok {
+			writeJSON(writer, http.StatusForbidden, map[string]string{"error": "not a member of this organisation"})
+			return
+		}
+		ctx := context.WithValue(request.Context(), contextKeyOrgID, orgID)
+		ctx = context.WithValue(ctx, contextKeyOrgRole, membership.Role)
 		next(writer, request.WithContext(ctx))
 	}
 }
@@ -594,6 +621,20 @@ func (s *Service) handleVerifyLocalAdmin(writer http.ResponseWriter, request *ht
 }
 
 func (s *Service) handleOverview(writer http.ResponseWriter, request *http.Request) {
+	// Without an active org (e.g. first install), still confirm the backend is reachable.
+	if orgIDFromContext(request.Context()) == "" {
+		writeJSON(writer, http.StatusOK, overviewResponse{
+			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+			Runtime: runtimeState{
+				Status:    "online",
+				Version:   s.config.Version,
+				StoreKind: s.config.StoreKind,
+			},
+			Stats: stats{},
+		})
+		return
+	}
+
 	topology, err := s.buildTopologyResponse(request.Context())
 	if err != nil {
 		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": err.Error()})
