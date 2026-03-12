@@ -34,6 +34,13 @@ spec:
                 name: {{ $fullName }}
                 port:
                   number: {{ $backendPort }}
+          - path: /api/v1/admin/topology/stream
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ $backendPort }}
           {{- end }}
           {{- range .paths }}
           - path: {{ .path }}
