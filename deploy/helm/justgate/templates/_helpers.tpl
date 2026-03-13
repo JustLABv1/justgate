@@ -172,7 +172,9 @@ Shared frontend environment variables.
 - name: NODE_ENV
   value: production
 - name: PORT
-  value: {{ .Values.frontend.port | quote }}
+  # In monolithic mode nginx occupies port 3000 and proxies to Next.js on 3001.
+  # In microservice mode the frontend image listens directly on frontend.port.
+  value: {{ if eq .Values.mode "monolithic" }}"3001"{{ else }}{{ .Values.frontend.port | quote }}{{ end }}
 - name: HOSTNAME
   value: "0.0.0.0"
 - name: NEXTAUTH_SECRET

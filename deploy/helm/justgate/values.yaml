@@ -46,6 +46,11 @@ backend:
 
 # ── Frontend configuration ─────────────────────────────────────────────────────
 frontend:
+  # In monolithic mode this is the port nginx listens on (public entry point).
+  # nginx routes /api/v1/* and /proxy/* internally to the backend (9090) and
+  # everything else to Next.js (3001).  Do not change unless you also update
+  # the nginx.conf and supervisord.conf inside the image.
+  # In microservice mode this is the port the standalone Next.js image listens on.
   port: 3000
   # NextAuth.js secret – leave empty to have Helm generate one.
   nextauthSecret: ""

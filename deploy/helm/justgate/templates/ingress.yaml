@@ -26,19 +26,20 @@ spec:
     - host: {{ .host | quote }}
       http:
         paths:
-          {{- if eq $mode "monolithic" }}
+          {{- if eq $mode "microservice" }}
+          {{- /* microservice: /proxy/ and admin streams go to the backend service */}}
           - path: /proxy/
             pathType: Prefix
             backend:
               service:
-                name: {{ $fullName }}
+                name: {{ $fullName }}-backend
                 port:
                   number: {{ $backendPort }}
-          - path: /api/v1/admin/topology/stream
+          - path: /api/v1/
             pathType: Prefix
             backend:
               service:
-                name: {{ $fullName }}
+                name: {{ $fullName }}-backend
                 port:
                   number: {{ $backendPort }}
           {{- end }}
@@ -48,6 +49,8 @@ spec:
             backend:
               service:
                 {{- if eq $mode "monolithic" }}
+                {{- /* monolithic: nginx (port 3000) handles /proxy/, /api/v1/* and
+                       WebSocket upgrades internally – route everything here. */}}
                 name: {{ $fullName }}
                 port:
                   number: {{ $frontendPort }}

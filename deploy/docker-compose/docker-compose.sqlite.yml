@@ -26,10 +26,10 @@ services:
       # - ./certs/my-ca.pem:/certs/my-ca.pem:ro
     environment:
       # ── Ports ────────────────────────────────────────────────────
-      # Container-internal ports are always fixed at 3000 (frontend) and
-      # 9090 (backend).  FRONTEND_PORT / BACKEND_PORT in .env only change
-      # the host-side mapping and are NOT passed into the container.
-      PORT:                  3000
+      # Container-internal ports are always fixed at 3000 (nginx entry point),
+      # 3001 (Next.js, nginx-internal), and 9090 (backend).
+      # FRONTEND_PORT / BACKEND_PORT in .env only change the host-side mapping.
+      PORT:                  3001
       BACKEND_PORT:          9090
       JUST_GATE_BACKEND_URL: http://localhost:9090
 
