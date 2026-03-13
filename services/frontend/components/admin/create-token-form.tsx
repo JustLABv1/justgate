@@ -48,8 +48,8 @@ export function CreateTokenForm({
   existingCount,
   tenantIDs,
   disabled = false,
-  isOpen,
-  onOpenChange,
+  isOpen: controlledIsOpen,
+  onOpenChange: controlledOnOpenChange,
   trigger,
   initialTenantID,
   initialScopes,
@@ -62,6 +62,10 @@ export function CreateTokenForm({
   const [formState, setFormState] = useState(() => toFormState(initialTenantID, initialScopes));
   const [pendingReload, setPendingReload] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+
+  const isControlled = controlledIsOpen !== undefined;
+  const isOpen = isControlled ? controlledIsOpen : internalOpen;
 
   const handleCopySecret = useCallback((secret: string) => {
     navigator.clipboard.writeText(secret).then(() => {
@@ -80,8 +84,8 @@ export function CreateTokenForm({
       setPendingReload(false);
       router.refresh();
     }
-
-    onOpenChange?.(open);
+    if (!isControlled) setInternalOpen(open);
+    controlledOnOpenChange?.(open);
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -115,7 +119,7 @@ export function CreateTokenForm({
       setFormState(toFormState(initialTenantID, initialScopes));
       setPendingReload(true);
       onCreated?.(result as IssuedToken);
-      onOpenChange?.(false);
+      handleOpenChange(false);
     });
   }
 

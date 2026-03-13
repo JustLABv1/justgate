@@ -35,8 +35,8 @@ export function CreateRouteForm({
   existingCount,
   tenantIDs,
   disabled = false,
-  isOpen,
-  onOpenChange,
+  isOpen: controlledIsOpen,
+  onOpenChange: controlledOnOpenChange,
   trigger,
   initialTenantID,
   onCreated,
@@ -46,6 +46,10 @@ export function CreateRouteForm({
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState(initialTenantID));
+  const [internalOpen, setInternalOpen] = useState(false);
+
+  const isControlled = controlledIsOpen !== undefined;
+  const isOpen = isControlled ? controlledIsOpen : internalOpen;
 
   function handleOpenChange(open: boolean) {
     if (open) {
@@ -53,8 +57,8 @@ export function CreateRouteForm({
       setError(undefined);
       setSuccess(undefined);
     }
-
-    onOpenChange?.(open);
+    if (!isControlled) setInternalOpen(open);
+    controlledOnOpenChange?.(open);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -89,7 +93,7 @@ export function CreateRouteForm({
       setSuccess(`Created /proxy/${result?.slug || payload.slug}.`);
       setFormState(toFormState(initialTenantID));
       onCreated?.(result?.slug || payload.slug);
-      onOpenChange?.(false);
+      handleOpenChange(false);
       router.refresh();
     });
   }

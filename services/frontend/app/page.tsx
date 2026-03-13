@@ -1,13 +1,16 @@
+import { DashboardCharts } from "@/components/admin/dashboard-charts";
 import { OnboardingModal } from "@/components/admin/onboarding-modal";
-import { getCircuitBreakers, getExpiringTokens, getTopology } from "@/lib/backend-client";
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, Clock, Globe, Lock, Server, TimerReset } from "lucide-react";
+import { getCircuitBreakers, getExpiringTokens, getTopology, getTrafficOverview, getTrafficStats } from "@/lib/backend-client";
+import { Activity, AlertTriangle, ArrowRight, BarChart3, CheckCircle2, Clock, Globe, Lock, Server, TimerReset } from "lucide-react";
 import Link from "next/link";
 
 export default async function Home() {
-  const [topology, circuitBreakersResult, expiringTokensResult] = await Promise.all([
+  const [topology, circuitBreakersResult, expiringTokensResult, statsResult, overviewResult] = await Promise.all([
     getTopology(),
     getCircuitBreakers(),
     getExpiringTokens(7),
+    getTrafficStats(24),
+    getTrafficOverview(),
   ]);
   const stats = {
     tenants: topology.data.stats.tenants,
@@ -256,6 +259,15 @@ export default async function Home() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* ── Traffic analytics ───────────────────────────────────── */}
+      <div className="space-y-1">
+        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <BarChart3 size={11} />
+          Traffic Analytics — last 24 hours
+        </div>
+        <DashboardCharts stats={statsResult.data} overview={overviewResult.data} />
       </div>
     </div>
   );

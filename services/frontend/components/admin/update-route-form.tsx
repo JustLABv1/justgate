@@ -32,12 +32,21 @@ function toFormState(route: RouteSummary | undefined) {
   };
 }
 
-export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = false, isOpen, onOpenChange, trigger }: UpdateRouteFormProps) {
+export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = false, isOpen: controlledIsOpen, onOpenChange: controlledOnOpenChange, trigger }: UpdateRouteFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState(route));
+  const [internalOpen, setInternalOpen] = useState(false);
+
+  const isControlled = controlledIsOpen !== undefined;
+  const isOpen = isControlled ? controlledIsOpen : internalOpen;
+
+  function handleOpenChange(open: boolean) {
+    if (!isControlled) setInternalOpen(open);
+    controlledOnOpenChange?.(open);
+  }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -69,13 +78,13 @@ export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = f
       }
 
       setSuccess(`Updated /proxy/${(result as RouteSummary).slug}.`);
-      onOpenChange?.(false);
+      handleOpenChange(false);
       router.refresh();
     });
   }
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
+    <Modal isOpen={isOpen} onOpenChange={handleOpenChange}>
       {trigger ?? (
         <Button className="h-8 rounded-full px-3 text-foreground" isDisabled={disabled} size="sm" variant="ghost">
           <PenSquare size={14} />

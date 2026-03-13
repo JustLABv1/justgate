@@ -27,12 +27,16 @@ function toFormState() {
   };
 }
 
-export function CreateTenantForm({ existingCount, disabled = false, isOpen, onOpenChange, trigger, onCreated }: CreateTenantFormProps) {
+export function CreateTenantForm({ existingCount, disabled = false, isOpen: controlledIsOpen, onOpenChange: controlledOnOpenChange, trigger, onCreated }: CreateTenantFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
   const [createdTenant, setCreatedTenant] = useState<TenantSummary>();
   const [formState, setFormState] = useState(() => toFormState());
+  const [internalOpen, setInternalOpen] = useState(false);
+
+  const isControlled = controlledIsOpen !== undefined;
+  const isOpen = isControlled ? controlledIsOpen : internalOpen;
 
   function handleOpenChange(open: boolean) {
     if (open) {
@@ -40,8 +44,8 @@ export function CreateTenantForm({ existingCount, disabled = false, isOpen, onOp
       setError(undefined);
       setCreatedTenant(undefined);
     }
-
-    onOpenChange?.(open);
+    if (!isControlled) setInternalOpen(open);
+    controlledOnOpenChange?.(open);
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -74,7 +78,7 @@ export function CreateTenantForm({ existingCount, disabled = false, isOpen, onOp
       setCreatedTenant(result as TenantSummary);
       setFormState(toFormState());
       onCreated?.(result as TenantSummary);
-      onOpenChange?.(false);
+      handleOpenChange(false);
       router.refresh();
     });
   }

@@ -27,12 +27,21 @@ function toFormState(tenant: TenantSummary | undefined) {
   };
 }
 
-export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isOpen, onOpenChange, trigger }: UpdateTenantFormProps) {
+export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isOpen: controlledIsOpen, onOpenChange: controlledOnOpenChange, trigger }: UpdateTenantFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState(tenant));
+  const [internalOpen, setInternalOpen] = useState(false);
+
+  const isControlled = controlledIsOpen !== undefined;
+  const isOpen = isControlled ? controlledIsOpen : internalOpen;
+
+  function handleOpenChange(open: boolean) {
+    if (!isControlled) setInternalOpen(open);
+    controlledOnOpenChange?.(open);
+  }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -60,13 +69,13 @@ export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isO
       }
 
       setSuccess(`Updated tenant ${formState.tenantID}.`);
-      onOpenChange?.(false);
+      handleOpenChange(false);
       router.refresh();
     });
   }
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
+    <Modal isOpen={isOpen} onOpenChange={handleOpenChange}>
       {trigger ?? (
         <Button className="h-8 rounded-full px-3 text-foreground" isDisabled={disabled} size="sm" variant="ghost">
           <PenSquare size={14} />

@@ -76,7 +76,7 @@ export default async function TenantsPage() {
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5 pt-0.5 opacity-60 transition-opacity group-hover:opacity-100">
                   <UpdateTenantForm key={`${tenant.id}:${tenant.tenantID}:${tenant.upstreamURL}:${tenant.headerName}:${tenant.name}`} disabled={result.source !== "backend"} tenant={tenant} />
-                  <DeleteTenantButton disabled={result.source !== "backend"} tenantID={tenant.tenantID} />
+                  <DeleteTenantButton disabled={result.source !== "backend"} id={tenant.id} />
                 </div>
               </div>
             ))}

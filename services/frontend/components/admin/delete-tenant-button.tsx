@@ -7,12 +7,13 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 interface DeleteTenantButtonProps {
-  tenantID: string;
+  /** The internal UUID of the tenant (tenant.id), not the tenant slug. */
+  id: string;
   label?: string;
   disabled?: boolean;
 }
 
-export function DeleteTenantButton({ tenantID, label = "Delete", disabled = false }: DeleteTenantButtonProps) {
+export function DeleteTenantButton({ id, label = "Delete", disabled = false }: DeleteTenantButtonProps) {
   const router = useRouter();
   const [error, setError] = useState<string>();
   const [isPending, startTransition] = useTransition();
@@ -21,7 +22,7 @@ export function DeleteTenantButton({ tenantID, label = "Delete", disabled = fals
     startTransition(async () => {
       setError(undefined);
 
-      const response = await fetch(`/api/admin/tenants/${tenantID}`, { method: "DELETE" });
+      const response = await fetch(`/api/admin/tenants/${id}`, { method: "DELETE" });
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
