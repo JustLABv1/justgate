@@ -1,0 +1,80 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  JustGate – Docker Compose (PostgreSQL)
+#
+#  Runs the full stack (frontend + backend) in a single container backed by a
+#  dedicated PostgreSQL 16 service.  Preferred for production and multi-user
+#  installations where durability and concurrent access matter.
+#
+#  Quickstart (from the deploy/docker-compose/ directory):
+#    1.  cp .env.example .env        # copy and customise – set all required
+#                                    # values including POSTGRES_PASSWORD
+#    2.  docker compose -f docker-compose.postgres.yml up
+#
+#  The admin UI will be available at http://localhost:3000
+# ══════════════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-justgate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       ${POSTGRES_DB:-justgate}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # Postgres is intentionally not exposed on the host; only justgate can reach
+    # it via the internal Docker network.  Uncomment the lines below if you need
+    # direct access (e.g. for migrations or inspection with psql).
+    # ports:
+    #   - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-justgate} -d ${POSTGRES_DB:-justgate}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── JustGate ────────────────────────────────────────────────────────────────
+  justgate:
+    image: ghcr.io/justlabv1/justgate:${JUSTGATE_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"   # Admin UI  (Next.js)
+      - "9090:9090"   # Gateway / backend API
+    volumes:
+      # Uncomment to mount a custom CA certificate:
+      # - ./certs/my-ca.pem:/certs/my-ca.pem:ro
+      []  # no volumes needed for postgres mode
+    environment:
+      # ── Required secrets ─────────────────────────────────────────
+      NEXTAUTH_SECRET:              ${NEXTAUTH_SECRET}
+      JUST_GATE_BACKEND_JWT_SECRET: ${JUST_GATE_BACKEND_JWT_SECRET}
+
+      # ── Public URL ───────────────────────────────────────────────
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+
+      # ── Database ─────────────────────────────────────────────────
+      # Connection URL for the postgres service above.
+      # The hostname "postgres" resolves to the postgres container via the
+      # internal Docker network created by this Compose project.
+      JUST_GATE_DATABASE_URL: >-
+        postgres://${POSTGRES_USER:-justgate}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-justgate}?sslmode=disable
+
+      # ── Optional ─────────────────────────────────────────────────
+      JUSTGATE_INITIAL_ADMIN_EMAIL: ${JUSTGATE_INITIAL_ADMIN_EMAIL:-}
+      JUST_GATE_OIDC_ISSUER:        ${JUST_GATE_OIDC_ISSUER:-}
+      JUST_GATE_OIDC_CLIENT_ID:     ${JUST_GATE_OIDC_CLIENT_ID:-}
+      JUST_GATE_OIDC_CLIENT_SECRET: ${JUST_GATE_OIDC_CLIENT_SECRET:-}
+      JUST_GATE_OIDC_NAME:          ${JUST_GATE_OIDC_NAME:-}
+      JUST_GATE_REDIS_URL:          ${JUST_GATE_REDIS_URL:-}
+      JUST_GATE_EXTRA_CA_FILE:      ${JUST_GATE_EXTRA_CA_FILE:-}
+
+volumes:
+  postgres-data:
+    driver: local

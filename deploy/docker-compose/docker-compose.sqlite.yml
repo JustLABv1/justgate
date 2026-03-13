@@ -1,0 +1,51 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  JustGate – Docker Compose (SQLite)
+#
+#  Runs the full stack (frontend + backend) in a single container.
+#  SQLite data is persisted in a named Docker volume.  No external database
+#  service is required – ideal for single-node / dev installations.
+#
+#  Quickstart (from the deploy/docker-compose/ directory):
+#    1.  cp .env.example .env        # copy and customise – set NEXTAUTH_SECRET
+#                                    # and JUST_GATE_BACKEND_JWT_SECRET at minimum
+#    2.  docker compose -f docker-compose.sqlite.yml up
+#
+#  The admin UI will be available at http://localhost:3000
+# ══════════════════════════════════════════════════════════════════════════════
+
+services:
+  justgate:
+    image: ghcr.io/justlabv1/justgate:${JUSTGATE_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "3000:3000"   # Admin UI  (Next.js)
+      - "9090:9090"   # Gateway / backend API
+    volumes:
+      - justgate-data:/data
+      # Uncomment to mount a custom CA certificate:
+      # - ./certs/my-ca.pem:/certs/my-ca.pem:ro
+    environment:
+      # ── Required secrets ─────────────────────────────────────────
+      NEXTAUTH_SECRET:              ${NEXTAUTH_SECRET}
+      JUST_GATE_BACKEND_JWT_SECRET: ${JUST_GATE_BACKEND_JWT_SECRET}
+
+      # ── Public URL ───────────────────────────────────────────────
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+
+      # ── Database ─────────────────────────────────────────────────
+      # SQLite file stored in the persistent /data volume.
+      # To use a different path change the value and update the volume mount.
+      JUST_GATE_DATABASE_URL: sqlite:///data/justgate.db
+
+      # ── Optional ─────────────────────────────────────────────────
+      JUSTGATE_INITIAL_ADMIN_EMAIL: ${JUSTGATE_INITIAL_ADMIN_EMAIL:-}
+      JUST_GATE_OIDC_ISSUER:        ${JUST_GATE_OIDC_ISSUER:-}
+      JUST_GATE_OIDC_CLIENT_ID:     ${JUST_GATE_OIDC_CLIENT_ID:-}
+      JUST_GATE_OIDC_CLIENT_SECRET: ${JUST_GATE_OIDC_CLIENT_SECRET:-}
+      JUST_GATE_OIDC_NAME:          ${JUST_GATE_OIDC_NAME:-}
+      JUST_GATE_REDIS_URL:          ${JUST_GATE_REDIS_URL:-}
+      JUST_GATE_EXTRA_CA_FILE:      ${JUST_GATE_EXTRA_CA_FILE:-}
+
+volumes:
+  justgate-data:
+    driver: local
