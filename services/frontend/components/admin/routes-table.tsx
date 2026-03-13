@@ -4,7 +4,7 @@ import { DeleteRouteButton } from "@/components/admin/delete-route-button";
 import { UpdateRouteForm } from "@/components/admin/update-route-form";
 import type { RouteSummary } from "@/lib/contracts";
 import { Button } from "@heroui/react";
-import { ArrowRight, Copy, Shield, Terminal, Waypoints, ArrowUpRight } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Copy, Shield, Terminal, Waypoints } from "lucide-react";
 
 interface RoutesTableProps {
   routes: RouteSummary[];
@@ -91,6 +91,20 @@ export function RoutesTable({ routes, tenantIDs, actionsDisabled = false, backen
                     <span className="text-muted-foreground/60">scope:</span>
                     <span>{route.requiredScope}</span>
                   </span>
+                  {route.rateLimitRPM > 0 && (
+                    <span className="flex items-center gap-1.5" title={`Rate limit: ${route.rateLimitRPM} req/min, burst ${route.rateLimitBurst}`}>
+                      <div className="h-1 w-1 rounded-full bg-border" />
+                      <span className="text-muted-foreground/60">limit:</span>
+                      <span>{route.rateLimitRPM}/min</span>
+                    </span>
+                  )}
+                  {route.allowCIDRs && (
+                    <span className="flex items-center gap-1.5" title={`Allow: ${route.allowCIDRs}`}>
+                      <div className="h-1 w-1 rounded-full bg-border" />
+                      <span className="text-muted-foreground/60">allow:</span>
+                      <span className="truncate max-w-[120px]">{route.allowCIDRs}</span>
+                    </span>
+                  )}
                 </div>
               </div>
 

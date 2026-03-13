@@ -1,6 +1,8 @@
 import { CreateTenantForm } from "@/components/admin/create-tenant-form";
 import { DeleteTenantButton } from "@/components/admin/delete-tenant-button";
+import { HealthHistory } from "@/components/admin/health-history";
 import { SectionPage } from "@/components/admin/section-page";
+import { TenantUpstreams } from "@/components/admin/tenant-upstreams";
 import { UpdateTenantForm } from "@/components/admin/update-tenant-form";
 import { getTenants } from "@/lib/backend-client";
 import { ArrowRight, Building2, Shield } from "lucide-react";
@@ -69,6 +71,8 @@ export default async function TenantsPage() {
                       {tenant.headerName}
                     </span>
                   </div>
+                  <TenantUpstreams tenantInternalID={tenant.id} />
+                  <HealthHistory tenantID={tenant.tenantID} />
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5 pt-0.5 opacity-60 transition-opacity group-hover:opacity-100">
                   <UpdateTenantForm key={`${tenant.id}:${tenant.tenantID}:${tenant.upstreamURL}:${tenant.headerName}:${tenant.name}`} disabled={result.source !== "backend"} tenant={tenant} />

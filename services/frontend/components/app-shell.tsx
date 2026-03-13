@@ -1,5 +1,6 @@
 "use client";
 
+import { GlobalSearch } from "@/components/admin/global-search";
 import { AdminNav } from "@/components/admin/nav";
 import { UserMenu } from "@/components/admin/user-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -53,6 +54,7 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
           </div>
 
           <div className="flex items-center gap-3">
+            <GlobalSearch />
             {signedInUser ? (
               <UserMenu user={signedInUser} />
             ) : (

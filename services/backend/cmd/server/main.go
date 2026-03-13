@@ -35,6 +35,9 @@ func main() {
 		OIDCDisplayName:           os.Getenv("JUST_GATE_OIDC_NAME"),
 		ExtraCAFile:               os.Getenv("JUST_GATE_EXTRA_CA_FILE"),
 		InitialPlatformAdminEmail: os.Getenv("JUSTGATE_INITIAL_ADMIN_EMAIL"),
+		RedisURL:                  os.Getenv("JUST_GATE_REDIS_URL"),
+		InstanceID:                os.Getenv("JUST_GATE_INSTANCE_ID"),
+		Region:                    os.Getenv("JUST_GATE_REGION"),
 	})
 	if err != nil {
 		slog.Error("failed to initialize backend service", "error", err)

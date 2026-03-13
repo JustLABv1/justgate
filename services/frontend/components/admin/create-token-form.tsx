@@ -39,6 +39,8 @@ function toFormState(initialTenantID = "", initialScopes = "") {
     name: "",
     scopes: initialScopes,
     tenantID: initialTenantID,
+    rateLimitRPM: 0,
+    rateLimitBurst: 0,
   };
 }
 
@@ -91,6 +93,8 @@ export function CreateTokenForm({
         tenantID: formState.tenantID,
         scopes: formState.scopes,
         expiresAt: toApiExpiry(formState.expiresAt),
+        rateLimitRPM: formState.rateLimitRPM || undefined,
+        rateLimitBurst: formState.rateLimitBurst || undefined,
       };
 
       const response = await fetch("/api/admin/tokens", {
@@ -181,6 +185,33 @@ export function CreateTokenForm({
                     <Input required type="datetime-local" value={formState.expiresAt} onChange={(event) => setFormState((current) => ({ ...current, expiresAt: event.target.value }))} />
                     <div className="enterprise-note">Local timestamp when the token becomes invalid.</div>
                   </TextField>
+                </div>
+                <div className="enterprise-panel grid gap-4 p-4">
+                  <div className="enterprise-kicker">Rate limiting</div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <TextField className="grid gap-2">
+                      <Label>Requests / min</Label>
+                      <Input
+                        min={0}
+                        placeholder="0 = unlimited"
+                        type="number"
+                        value={formState.rateLimitRPM === 0 ? "" : String(formState.rateLimitRPM)}
+                        onChange={(event) => setFormState((current) => ({ ...current, rateLimitRPM: Number(event.target.value) || 0 }))}
+                      />
+                      <div className="enterprise-note">Overrides the route-level rate limit for this token.</div>
+                    </TextField>
+                    <TextField className="grid gap-2">
+                      <Label>Burst size</Label>
+                      <Input
+                        min={0}
+                        placeholder="0 = unlimited"
+                        type="number"
+                        value={formState.rateLimitBurst === 0 ? "" : String(formState.rateLimitBurst)}
+                        onChange={(event) => setFormState((current) => ({ ...current, rateLimitBurst: Number(event.target.value) || 0 }))}
+                      />
+                      <div className="enterprise-note">Maximum concurrent requests in one window.</div>
+                    </TextField>
+                  </div>
                 </div>
                 {error ? <div className="enterprise-feedback enterprise-feedback--error">{error}</div> : null}
                 {issuedToken ? (

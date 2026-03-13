@@ -3,7 +3,7 @@
 import { DeleteTokenButton } from "@/components/admin/delete-token-button";
 import { RevokeTokenButton } from "@/components/admin/revoke-token-button";
 import type { TokenSummary } from "@/lib/contracts";
-import { Shield, Clock, KeyRound, ArrowUpRight, Activity } from "lucide-react";
+import { Activity, ArrowUpRight, Clock, KeyRound, Shield } from "lucide-react";
 
 const EXPIRY_WARNING_DAYS = 7;
 
@@ -103,6 +103,13 @@ export function TokensTable({ tokens, actionsDisabled = false }: TokensTableProp
                     </span>
                   ))}
                 </span>
+                {token.rateLimitRPM > 0 && (
+                  <span className="flex items-center gap-1.5" title={`Rate limit: ${token.rateLimitRPM} req/min, burst ${token.rateLimitBurst}`}>
+                    <div className="h-1 w-1 rounded-full bg-border" />
+                    <span className="text-muted-foreground/60">limit:</span>
+                    <span>{token.rateLimitRPM}/min</span>
+                  </span>
+                )}
               </div>
             </div>
 

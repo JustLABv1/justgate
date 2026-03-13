@@ -120,9 +120,9 @@ func (store *sqlStore) ListRoutes(ctx context.Context) ([]routeRecord, error) {
 	var rows *sql.Rows
 	var err error
 	if orgID := orgIDFromContext(ctx); orgID != "" {
-		rows, err = store.queryContext(ctx, `SELECT r.id, r.slug, r.target_path, r.tenant_id, r.required_scope, r.methods_json, r.upstream_url FROM routes r INNER JOIN tenants tn ON r.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY r.created_at DESC`, orgID)
+		rows, err = store.queryContext(ctx, `SELECT r.id, r.slug, r.target_path, r.tenant_id, r.required_scope, r.methods_json, r.upstream_url, r.rate_limit_rpm, r.rate_limit_burst, r.allow_cidrs, r.deny_cidrs FROM routes r INNER JOIN tenants tn ON r.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY r.created_at DESC`, orgID)
 	} else {
-		rows, err = store.queryContext(ctx, `SELECT id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url FROM routes ORDER BY created_at DESC`)
+		rows, err = store.queryContext(ctx, `SELECT id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, rate_limit_rpm, rate_limit_burst, allow_cidrs, deny_cidrs FROM routes ORDER BY created_at DESC`)
 	}
 	if err != nil {
 		return nil, err
@@ -144,9 +144,9 @@ func (store *sqlStore) ListTokens(ctx context.Context) ([]tokenRecord, error) {
 	var rows *sql.Rows
 	var err error
 	if orgID := orgIDFromContext(ctx); orgID != "" {
-		rows, err = store.queryContext(ctx, `SELECT tok.id, tok.name, tok.tenant_id, tok.scopes_json, tok.expires_at, tok.last_used_at, tok.preview, tok.active, tok.token_hash FROM tokens tok INNER JOIN tenants tn ON tok.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY tok.created_at DESC`, orgID)
+		rows, err = store.queryContext(ctx, `SELECT tok.id, tok.name, tok.tenant_id, tok.scopes_json, tok.expires_at, tok.last_used_at, tok.preview, tok.active, tok.token_hash, tok.rate_limit_rpm, tok.rate_limit_burst FROM tokens tok INNER JOIN tenants tn ON tok.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY tok.created_at DESC`, orgID)
 	} else {
-		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash FROM tokens ORDER BY created_at DESC`)
+		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens ORDER BY created_at DESC`)
 	}
 	if err != nil {
 		return nil, err
@@ -168,9 +168,9 @@ func (store *sqlStore) ListAudits(ctx context.Context) ([]auditRecord, error) {
 	var rows *sql.Rows
 	var err error
 	if orgID := orgIDFromContext(ctx); orgID != "" {
-		rows, err = store.queryContext(ctx, `SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url FROM audits a INNER JOIN tenants tn ON a.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY a.timestamp DESC`, orgID)
+		rows, err = store.queryContext(ctx, `SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url, COALESCE(a.latency_ms, 0) FROM audits a INNER JOIN tenants tn ON a.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY a.timestamp DESC`, orgID)
 	} else {
-		rows, err = store.queryContext(ctx, `SELECT id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url FROM audits ORDER BY timestamp DESC`)
+		rows, err = store.queryContext(ctx, `SELECT id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url, COALESCE(latency_ms, 0) FROM audits ORDER BY timestamp DESC`)
 	}
 	if err != nil {
 		return nil, err
@@ -180,7 +180,7 @@ func (store *sqlStore) ListAudits(ctx context.Context) ([]auditRecord, error) {
 	items := make([]auditRecord, 0)
 	for rows.Next() {
 		var audit auditRecord
-		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream); err != nil {
+		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream, &audit.LatencyMs); err != nil {
 			return nil, err
 		}
 		items = append(items, audit)
@@ -300,16 +300,20 @@ func (store *sqlStore) CreateRoute(ctx context.Context, payload createRouteReque
 	}
 
 	route := routeRecord{
-		ID:            newResourceID("route"),
-		Slug:          payload.Slug,
-		TargetPath:    payload.TargetPath,
-		TenantID:      payload.TenantID,
-		RequiredScope: payload.RequiredScope,
-		Methods:       methods,
-		UpstreamURL:   upstreamURL,
+		ID:             newResourceID("route"),
+		Slug:           payload.Slug,
+		TargetPath:     payload.TargetPath,
+		TenantID:       payload.TenantID,
+		RequiredScope:  payload.RequiredScope,
+		Methods:        methods,
+		UpstreamURL:    upstreamURL,
+		RateLimitRPM:   payload.RateLimitRPM,
+		RateLimitBurst: payload.RateLimitBurst,
+		AllowCIDRs:     payload.AllowCIDRs,
+		DenyCIDRs:      payload.DenyCIDRs,
 	}
 
-	_, err = store.execContext(ctx, `INSERT INTO routes (id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, route.ID, route.Slug, route.TargetPath, route.TenantID, route.RequiredScope, string(methodsJSON), route.UpstreamURL, store.now())
+	_, err = store.execContext(ctx, `INSERT INTO routes (id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, rate_limit_rpm, rate_limit_burst, allow_cidrs, deny_cidrs, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, route.ID, route.Slug, route.TargetPath, route.TenantID, route.RequiredScope, string(methodsJSON), route.UpstreamURL, route.RateLimitRPM, route.RateLimitBurst, route.AllowCIDRs, route.DenyCIDRs, store.now())
 	if err != nil {
 		return routeRecord{}, translateDBError(err, "slug already exists")
 	}
@@ -328,7 +332,7 @@ func (store *sqlStore) UpdateRoute(ctx context.Context, routeID string, payload 
 		return routeRecord{}, err
 	}
 
-	result, err := store.execContext(ctx, `UPDATE routes SET slug = ?, target_path = ?, tenant_id = ?, required_scope = ?, methods_json = ?, upstream_url = ? WHERE id = ?`, payload.Slug, payload.TargetPath, payload.TenantID, payload.RequiredScope, string(methodsJSON), upstreamURL, routeID)
+	result, err := store.execContext(ctx, `UPDATE routes SET slug = ?, target_path = ?, tenant_id = ?, required_scope = ?, methods_json = ?, upstream_url = ?, rate_limit_rpm = ?, rate_limit_burst = ?, allow_cidrs = ?, deny_cidrs = ? WHERE id = ?`, payload.Slug, payload.TargetPath, payload.TenantID, payload.RequiredScope, string(methodsJSON), upstreamURL, payload.RateLimitRPM, payload.RateLimitBurst, payload.AllowCIDRs, payload.DenyCIDRs, routeID)
 	if err != nil {
 		return routeRecord{}, translateDBError(err, "slug already exists")
 	}
@@ -341,13 +345,17 @@ func (store *sqlStore) UpdateRoute(ctx context.Context, routeID string, payload 
 	}
 
 	return routeRecord{
-		ID:            routeID,
-		Slug:          payload.Slug,
-		TargetPath:    payload.TargetPath,
-		TenantID:      payload.TenantID,
-		RequiredScope: payload.RequiredScope,
-		Methods:       methods,
-		UpstreamURL:   upstreamURL,
+		ID:             routeID,
+		Slug:           payload.Slug,
+		TargetPath:     payload.TargetPath,
+		TenantID:       payload.TenantID,
+		RequiredScope:  payload.RequiredScope,
+		Methods:        methods,
+		UpstreamURL:    upstreamURL,
+		RateLimitRPM:   payload.RateLimitRPM,
+		RateLimitBurst: payload.RateLimitBurst,
+		AllowCIDRs:     payload.AllowCIDRs,
+		DenyCIDRs:      payload.DenyCIDRs,
 	}, nil
 }
 
@@ -378,18 +386,20 @@ func (store *sqlStore) CreateToken(ctx context.Context, payload createTokenReque
 	}
 
 	token := tokenRecord{
-		ID:         newResourceID("tok"),
-		Name:       payload.Name,
-		TenantID:   payload.TenantID,
-		Scopes:     scopes,
-		ExpiresAt:  expiresAt,
-		LastUsedAt: store.now(),
-		Preview:    previewSecret(secret),
-		Active:     true,
-		Hash:       hashToken(secret),
+		ID:             newResourceID("tok"),
+		Name:           payload.Name,
+		TenantID:       payload.TenantID,
+		Scopes:         scopes,
+		ExpiresAt:      expiresAt,
+		LastUsedAt:     store.now(),
+		Preview:        previewSecret(secret),
+		Active:         true,
+		Hash:           hashToken(secret),
+		RateLimitRPM:   payload.RateLimitRPM,
+		RateLimitBurst: payload.RateLimitBurst,
 	}
 
-	_, err = store.execContext(ctx, `INSERT INTO tokens (id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, token.ID, token.Name, token.TenantID, string(scopesJSON), token.ExpiresAt, token.LastUsedAt, token.Preview, token.Active, token.Hash, store.now())
+	_, err = store.execContext(ctx, `INSERT INTO tokens (id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, token.ID, token.Name, token.TenantID, string(scopesJSON), token.ExpiresAt, token.LastUsedAt, token.Preview, token.Active, token.Hash, token.RateLimitRPM, token.RateLimitBurst, store.now())
 	if err != nil {
 		return tokenRecord{}, translateDBError(err, "token creation failed")
 	}
@@ -410,7 +420,7 @@ func (store *sqlStore) SetTokenActive(ctx context.Context, tokenID string, activ
 		return tokenRecord{}, fmt.Errorf("token not found")
 	}
 
-	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash FROM tokens WHERE id = ?`, tokenID)
+	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens WHERE id = ?`, tokenID)
 	return scanToken(row)
 }
 
@@ -431,7 +441,7 @@ func (store *sqlStore) DeleteToken(ctx context.Context, tokenID string) error {
 }
 
 func (store *sqlStore) RouteBySlug(ctx context.Context, slug string) (routeRecord, bool, error) {
-	row := store.queryRowContext(ctx, `SELECT id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url FROM routes WHERE slug = ? LIMIT 1`, slug)
+	row := store.queryRowContext(ctx, `SELECT id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, rate_limit_rpm, rate_limit_burst, allow_cidrs, deny_cidrs FROM routes WHERE slug = ? LIMIT 1`, slug)
 	route, err := scanRoute(row)
 	if err == sql.ErrNoRows {
 		return routeRecord{}, false, nil
@@ -446,7 +456,7 @@ func (store *sqlStore) ValidateToken(ctx context.Context, secret string) (tokenR
 	hashedSecret := hashToken(secret)
 	now := store.now()
 
-	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash FROM tokens WHERE token_hash = ? AND active = ? AND expires_at > ? LIMIT 1`, hashedSecret, true, now)
+	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens WHERE token_hash = ? AND active = ? AND expires_at > ? LIMIT 1`, hashedSecret, true, now)
 	token, err := scanToken(row)
 	if err == sql.ErrNoRows {
 		return tokenRecord{}, false, nil
@@ -471,7 +481,7 @@ func (store *sqlStore) RecordAudit(ctx context.Context, audit auditRecord) error
 		audit.Timestamp = store.now()
 	}
 
-	if _, err := store.execContext(ctx, `INSERT INTO audits (id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, audit.ID, audit.Timestamp, audit.RouteSlug, audit.TenantID, audit.TokenID, audit.Method, audit.Status, audit.Upstream); err != nil {
+	if _, err := store.execContext(ctx, `INSERT INTO audits (id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url, latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, audit.ID, audit.Timestamp, audit.RouteSlug, audit.TenantID, audit.TokenID, audit.Method, audit.Status, audit.Upstream, audit.LatencyMs); err != nil {
 		return err
 	}
 
@@ -531,7 +541,7 @@ func (store *sqlStore) rebind(query string) string {
 func scanRoute(scanner interface{ Scan(dest ...any) error }) (routeRecord, error) {
 	var route routeRecord
 	var methodsJSON string
-	if err := scanner.Scan(&route.ID, &route.Slug, &route.TargetPath, &route.TenantID, &route.RequiredScope, &methodsJSON, &route.UpstreamURL); err != nil {
+	if err := scanner.Scan(&route.ID, &route.Slug, &route.TargetPath, &route.TenantID, &route.RequiredScope, &methodsJSON, &route.UpstreamURL, &route.RateLimitRPM, &route.RateLimitBurst, &route.AllowCIDRs, &route.DenyCIDRs); err != nil {
 		return routeRecord{}, err
 	}
 	if err := json.Unmarshal([]byte(methodsJSON), &route.Methods); err != nil {
@@ -543,7 +553,7 @@ func scanRoute(scanner interface{ Scan(dest ...any) error }) (routeRecord, error
 func scanToken(scanner interface{ Scan(dest ...any) error }) (tokenRecord, error) {
 	var token tokenRecord
 	var scopesJSON string
-	if err := scanner.Scan(&token.ID, &token.Name, &token.TenantID, &scopesJSON, &token.ExpiresAt, &token.LastUsedAt, &token.Preview, &token.Active, &token.Hash); err != nil {
+	if err := scanner.Scan(&token.ID, &token.Name, &token.TenantID, &scopesJSON, &token.ExpiresAt, &token.LastUsedAt, &token.Preview, &token.Active, &token.Hash, &token.RateLimitRPM, &token.RateLimitBurst); err != nil {
 		return tokenRecord{}, err
 	}
 	if err := json.Unmarshal([]byte(scopesJSON), &token.Scopes); err != nil {
@@ -1090,13 +1100,13 @@ func (store *sqlStore) ListAuditsPaginated(ctx context.Context, limit, offset in
 	var err error
 	if orgID != "" {
 		rows, err = store.queryContext(ctx,
-			`SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url
+			`SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url, COALESCE(a.latency_ms, 0)
 			 FROM audits a INNER JOIN tenants tn ON a.tenant_id = tn.tenant_id
 			 WHERE tn.org_id = ? ORDER BY a.timestamp DESC LIMIT ? OFFSET ?`,
 			orgID, limit, offset)
 	} else {
 		rows, err = store.queryContext(ctx,
-			`SELECT id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url
+			`SELECT id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url, COALESCE(latency_ms, 0)
 			 FROM audits ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
 			limit, offset)
 	}
@@ -1108,7 +1118,7 @@ func (store *sqlStore) ListAuditsPaginated(ctx context.Context, limit, offset in
 	items := make([]auditRecord, 0, limit)
 	for rows.Next() {
 		var audit auditRecord
-		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream); err != nil {
+		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream, &audit.LatencyMs); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, audit)
@@ -1143,4 +1153,445 @@ func (store *sqlStore) ListUpstreamHealth(ctx context.Context) ([]upstreamHealth
 		items = append(items, h)
 	}
 	return items, rows.Err()
+}
+
+// ── Tenant upstreams (load balancing) ──────────────────────────────────
+
+func (store *sqlStore) ListTenantUpstreams(ctx context.Context, tenantID string) ([]tenantUpstreamRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, tenant_id, upstream_url, weight, is_primary, created_at FROM tenant_upstreams WHERE tenant_id = ? ORDER BY is_primary DESC, weight DESC`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]tenantUpstreamRecord, 0)
+	for rows.Next() {
+		var u tenantUpstreamRecord
+		if err := rows.Scan(&u.ID, &u.TenantID, &u.UpstreamURL, &u.Weight, &u.IsPrimary, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, u)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) CreateTenantUpstream(ctx context.Context, upstream tenantUpstreamRecord) error {
+	if upstream.ID == "" {
+		upstream.ID = newResourceID("ups")
+	}
+	if upstream.CreatedAt.IsZero() {
+		upstream.CreatedAt = store.now()
+	}
+	_, err := store.execContext(ctx,
+		`INSERT INTO tenant_upstreams (id, tenant_id, upstream_url, weight, is_primary, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		upstream.ID, upstream.TenantID, upstream.UpstreamURL, upstream.Weight, upstream.IsPrimary, upstream.CreatedAt)
+	return err
+}
+
+func (store *sqlStore) DeleteTenantUpstream(ctx context.Context, id string) error {
+	result, err := store.execContext(ctx, `DELETE FROM tenant_upstreams WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("upstream not found")
+	}
+	return nil
+}
+
+// ── Circuit breaker ────────────────────────────────────────────────────
+
+func (store *sqlStore) GetCircuitBreaker(ctx context.Context, routeID string) (circuitBreakerRecord, bool, error) {
+	row := store.queryRowContext(ctx,
+		`SELECT route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at FROM circuit_breakers WHERE route_id = ? LIMIT 1`, routeID)
+	var cb circuitBreakerRecord
+	if err := row.Scan(&cb.RouteID, &cb.State, &cb.FailureCount, &cb.LastFailureAt, &cb.LastSuccessAt, &cb.OpenedAt, &cb.HalfOpenAt); err != nil {
+		if err == sql.ErrNoRows {
+			return circuitBreakerRecord{}, false, nil
+		}
+		return circuitBreakerRecord{}, false, err
+	}
+	return cb, true, nil
+}
+
+func (store *sqlStore) UpsertCircuitBreaker(ctx context.Context, cb circuitBreakerRecord) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO circuit_breakers (route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(route_id) DO UPDATE SET state=?, failure_count=?, last_failure_at=?, last_success_at=?, opened_at=?, half_open_at=?`,
+		cb.RouteID, cb.State, cb.FailureCount, cb.LastFailureAt, cb.LastSuccessAt, cb.OpenedAt, cb.HalfOpenAt,
+		cb.State, cb.FailureCount, cb.LastFailureAt, cb.LastSuccessAt, cb.OpenedAt, cb.HalfOpenAt)
+	return err
+}
+
+// ── Upstream health history ────────────────────────────────────────────
+
+func (store *sqlStore) RecordHealthHistory(ctx context.Context, record healthHistoryRecord) error {
+	if record.ID == "" {
+		record.ID = newResourceID("hh")
+	}
+	if record.CheckedAt.IsZero() {
+		record.CheckedAt = store.now()
+	}
+	_, err := store.execContext(ctx,
+		`INSERT INTO upstream_health_history (id, tenant_id, status, latency_ms, error, checked_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		record.ID, record.TenantID, record.Status, record.LatencyMs, record.Error, record.CheckedAt)
+	return err
+}
+
+func (store *sqlStore) ListHealthHistory(ctx context.Context, tenantID string, limit int) ([]healthHistoryRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, tenant_id, status, latency_ms, error, checked_at FROM upstream_health_history WHERE tenant_id = ? ORDER BY checked_at DESC LIMIT ?`,
+		tenantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]healthHistoryRecord, 0, limit)
+	for rows.Next() {
+		var h healthHistoryRecord
+		if err := rows.Scan(&h.ID, &h.TenantID, &h.Status, &h.LatencyMs, &h.Error, &h.CheckedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, h)
+	}
+	return items, rows.Err()
+}
+
+// ── Admin activity audit ───────────────────────────────────────────────
+
+func (store *sqlStore) RecordAdminAudit(ctx context.Context, audit adminAuditRecord) error {
+	if audit.ID == "" {
+		audit.ID = newResourceID("aa")
+	}
+	if audit.Timestamp.IsZero() {
+		audit.Timestamp = store.now()
+	}
+	_, err := store.execContext(ctx,
+		`INSERT INTO admin_audits (id, timestamp, user_id, user_email, action, resource_type, resource_id, details, org_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		audit.ID, audit.Timestamp, audit.UserID, audit.UserEmail, audit.Action, audit.ResourceType, audit.ResourceID, audit.Details, audit.OrgID)
+	return err
+}
+
+func (store *sqlStore) ListAdminAuditsPaginated(ctx context.Context, limit, offset int) ([]adminAuditRecord, int, error) {
+	var total int
+	if err := store.queryRowContext(ctx, `SELECT COUNT(*) FROM admin_audits`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := store.queryContext(ctx,
+		`SELECT id, timestamp, user_id, user_email, action, resource_type, resource_id, details, org_id FROM admin_audits ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+		limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]adminAuditRecord, 0, limit)
+	for rows.Next() {
+		var a adminAuditRecord
+		if err := rows.Scan(&a.ID, &a.Timestamp, &a.UserID, &a.UserEmail, &a.Action, &a.ResourceType, &a.ResourceID, &a.Details, &a.OrgID); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, a)
+	}
+	return items, total, rows.Err()
+}
+
+// ── Traffic stats ──────────────────────────────────────────────────────
+
+func (store *sqlStore) UpsertTrafficStat(ctx context.Context, stat trafficStatRecord) error {
+	if stat.ID == "" {
+		stat.ID = newResourceID("ts")
+	}
+	_, err := store.execContext(ctx,
+		`INSERT INTO traffic_stats (id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id, request_count, error_count, avg_latency_ms, status_2xx, status_4xx, status_5xx)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(bucket_start, route_slug, tenant_id, token_id) DO UPDATE SET
+		   request_count = traffic_stats.request_count + excluded.request_count,
+		   error_count = traffic_stats.error_count + excluded.error_count,
+		   avg_latency_ms = (traffic_stats.avg_latency_ms * traffic_stats.request_count + excluded.avg_latency_ms * excluded.request_count) / (traffic_stats.request_count + excluded.request_count),
+		   status_2xx = traffic_stats.status_2xx + excluded.status_2xx,
+		   status_4xx = traffic_stats.status_4xx + excluded.status_4xx,
+		   status_5xx = traffic_stats.status_5xx + excluded.status_5xx`,
+		stat.ID, stat.BucketStart, stat.BucketMinutes, stat.RouteSlug, stat.TenantID, stat.TokenID, stat.OrgID,
+		stat.RequestCount, stat.ErrorCount, stat.AvgLatencyMs, stat.Status2xx, stat.Status4xx, stat.Status5xx)
+	return err
+}
+
+func (store *sqlStore) ListTrafficStats(ctx context.Context, from, to time.Time, orgID string) ([]trafficStatRecord, error) {
+	var rows *sql.Rows
+	var err error
+	if orgID != "" {
+		rows, err = store.queryContext(ctx,
+			`SELECT id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id, request_count, error_count, avg_latency_ms, status_2xx, status_4xx, status_5xx
+			 FROM traffic_stats WHERE bucket_start >= ? AND bucket_start <= ? AND org_id = ? ORDER BY bucket_start ASC`,
+			from, to, orgID)
+	} else {
+		rows, err = store.queryContext(ctx,
+			`SELECT id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id, request_count, error_count, avg_latency_ms, status_2xx, status_4xx, status_5xx
+			 FROM traffic_stats WHERE bucket_start >= ? AND bucket_start <= ? ORDER BY bucket_start ASC`,
+			from, to)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]trafficStatRecord, 0)
+	for rows.Next() {
+		var s trafficStatRecord
+		if err := rows.Scan(&s.ID, &s.BucketStart, &s.BucketMinutes, &s.RouteSlug, &s.TenantID, &s.TokenID, &s.OrgID, &s.RequestCount, &s.ErrorCount, &s.AvgLatencyMs, &s.Status2xx, &s.Status4xx, &s.Status5xx); err != nil {
+			return nil, err
+		}
+		items = append(items, s)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) GetTrafficOverview(ctx context.Context, orgID string) (trafficOverviewResult, error) {
+	now := store.now()
+	currentStart := now.Add(-24 * time.Hour)
+	priorStart := now.Add(-48 * time.Hour)
+
+	var result trafficOverviewResult
+
+	scanPeriod := func(from, to time.Time) (int, int, int, error) {
+		var totalReqs, totalErrors, avgLat int
+		var q string
+		var args []any
+		if orgID != "" {
+			q = `SELECT COALESCE(SUM(request_count),0), COALESCE(SUM(error_count),0), COALESCE(AVG(avg_latency_ms),0) FROM traffic_stats WHERE bucket_start >= ? AND bucket_start <= ? AND org_id = ?`
+			args = []any{from, to, orgID}
+		} else {
+			q = `SELECT COALESCE(SUM(request_count),0), COALESCE(SUM(error_count),0), COALESCE(AVG(avg_latency_ms),0) FROM traffic_stats WHERE bucket_start >= ? AND bucket_start <= ?`
+			args = []any{from, to}
+		}
+		if err := store.queryRowContext(ctx, q, args...).Scan(&totalReqs, &totalErrors, &avgLat); err != nil {
+			return 0, 0, 0, err
+		}
+		return totalReqs, totalErrors, avgLat, nil
+	}
+
+	reqs, errs, lat, err := scanPeriod(currentStart, now)
+	if err != nil {
+		return trafficOverviewResult{}, err
+	}
+	result.TotalRequests = reqs
+	result.AvgLatencyMs = lat
+	if reqs > 0 {
+		result.ErrorRate = float64(errs) / float64(reqs) * 100
+	}
+
+	pReqs, pErrs, pLat, err := scanPeriod(priorStart, currentStart)
+	if err != nil {
+		return trafficOverviewResult{}, err
+	}
+	result.PriorRequests = pReqs
+	result.PriorAvgLatency = pLat
+	if pReqs > 0 {
+		result.PriorErrorRate = float64(pErrs) / float64(pReqs) * 100
+	}
+
+	return result, nil
+}
+
+// ── Session management ─────────────────────────────────────────────────
+
+func (store *sqlStore) CreateAdminSession(ctx context.Context, session adminSessionRecord) error {
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = store.now()
+	}
+	if session.LastSeenAt.IsZero() {
+		session.LastSeenAt = session.CreatedAt
+	}
+	_, err := store.execContext(ctx,
+		`INSERT INTO admin_sessions (id, user_id, ip_address, user_agent, created_at, last_seen_at, revoked) VALUES (?, ?, ?, ?, ?, ?, false)
+		 ON CONFLICT(id) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+		session.ID, session.UserID, session.IPAddress, session.UserAgent, session.CreatedAt, session.LastSeenAt)
+	return err
+}
+
+func (store *sqlStore) ListAdminSessions(ctx context.Context, userID string) ([]adminSessionRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, user_id, ip_address, user_agent, created_at, last_seen_at, revoked FROM admin_sessions WHERE user_id = ? ORDER BY last_seen_at DESC`,
+		userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]adminSessionRecord, 0)
+	for rows.Next() {
+		var s adminSessionRecord
+		if err := rows.Scan(&s.ID, &s.UserID, &s.IPAddress, &s.UserAgent, &s.CreatedAt, &s.LastSeenAt, &s.Revoked); err != nil {
+			return nil, err
+		}
+		items = append(items, s)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) UpdateAdminSessionLastSeen(ctx context.Context, sessionID string, lastSeen time.Time) error {
+	_, err := store.execContext(ctx, `UPDATE admin_sessions SET last_seen_at = ? WHERE id = ?`, lastSeen, sessionID)
+	return err
+}
+
+func (store *sqlStore) RevokeAdminSession(ctx context.Context, sessionID string) error {
+	result, err := store.execContext(ctx, `UPDATE admin_sessions SET revoked = ? WHERE id = ?`, true, sessionID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("session not found")
+	}
+	return nil
+}
+
+func (store *sqlStore) IsSessionRevoked(ctx context.Context, sessionID string) (bool, error) {
+	var revoked bool
+	err := store.queryRowContext(ctx, `SELECT revoked FROM admin_sessions WHERE id = ? LIMIT 1`, sessionID).Scan(&revoked)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return true, nil // session not found = treat as revoked
+		}
+		return false, err
+	}
+	return revoked, nil
+}
+
+// ── Multi-region heartbeats ────────────────────────────────────────────
+
+func (store *sqlStore) UpsertInstanceHeartbeat(ctx context.Context, hb instanceHeartbeatRecord) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO instance_heartbeats (instance_id, region, hostname, version, started_at, last_heartbeat_at, metadata)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(instance_id) DO UPDATE SET region=?, hostname=?, version=?, last_heartbeat_at=?, metadata=?`,
+		hb.InstanceID, hb.Region, hb.Hostname, hb.Version, hb.StartedAt, hb.LastHeartbeatAt, hb.Metadata,
+		hb.Region, hb.Hostname, hb.Version, hb.LastHeartbeatAt, hb.Metadata)
+	return err
+}
+
+func (store *sqlStore) ListInstanceHeartbeats(ctx context.Context) ([]instanceHeartbeatRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT instance_id, region, hostname, version, started_at, last_heartbeat_at, metadata FROM instance_heartbeats ORDER BY region, instance_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]instanceHeartbeatRecord, 0)
+	for rows.Next() {
+		var h instanceHeartbeatRecord
+		if err := rows.Scan(&h.InstanceID, &h.Region, &h.Hostname, &h.Version, &h.StartedAt, &h.LastHeartbeatAt, &h.Metadata); err != nil {
+			return nil, err
+		}
+		items = append(items, h)
+	}
+	return items, rows.Err()
+}
+
+// ── Token lifecycle ────────────────────────────────────────────────────
+
+func (store *sqlStore) ListExpiringTokens(ctx context.Context, before time.Time) ([]tokenRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens WHERE active = ? AND expires_at <= ? ORDER BY expires_at ASC`,
+		true, before)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]tokenRecord, 0)
+	for rows.Next() {
+		token, err := scanToken(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, token)
+	}
+	return items, rows.Err()
+}
+
+// ── Filtered audit queries ─────────────────────────────────────────────
+
+func (store *sqlStore) ListAuditsPaginatedFiltered(ctx context.Context, limit, offset int, filters auditFilters) ([]auditRecord, int, error) {
+	orgID := orgIDFromContext(ctx)
+
+	var conditions []string
+	var args []any
+
+	if orgID != "" {
+		conditions = append(conditions, "tn.org_id = ?")
+		args = append(args, orgID)
+	}
+	if filters.TenantID != "" {
+		conditions = append(conditions, "a.tenant_id = ?")
+		args = append(args, filters.TenantID)
+	}
+	if filters.RouteSlug != "" {
+		conditions = append(conditions, "a.route_slug = ?")
+		args = append(args, filters.RouteSlug)
+	}
+	if filters.TokenID != "" {
+		conditions = append(conditions, "a.token_id = ?")
+		args = append(args, filters.TokenID)
+	}
+	if filters.Status == "success" {
+		conditions = append(conditions, "a.status >= 200 AND a.status < 400")
+	} else if filters.Status == "error" {
+		conditions = append(conditions, "a.status >= 400")
+	}
+	if !filters.From.IsZero() {
+		conditions = append(conditions, "a.timestamp >= ?")
+		args = append(args, filters.From)
+	}
+	if !filters.To.IsZero() {
+		conditions = append(conditions, "a.timestamp <= ?")
+		args = append(args, filters.To)
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	joinClause := ""
+	if orgID != "" {
+		joinClause = " INNER JOIN tenants tn ON a.tenant_id = tn.tenant_id"
+	}
+
+	var total int
+	countQuery := "SELECT COUNT(*) FROM audits a" + joinClause + whereClause
+	if err := store.queryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	dataQuery := "SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url, COALESCE(a.latency_ms, 0) FROM audits a" + joinClause + whereClause + " ORDER BY a.timestamp DESC LIMIT ? OFFSET ?"
+	dataArgs := append(args, limit, offset)
+
+	rows, err := store.queryContext(ctx, dataQuery, dataArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]auditRecord, 0, limit)
+	for rows.Next() {
+		var audit auditRecord
+		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream, &audit.LatencyMs); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, audit)
+	}
+	return items, total, rows.Err()
 }

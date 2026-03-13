@@ -24,6 +24,10 @@ function toFormState(initialTenantID = "") {
     targetPath: "",
     requiredScope: "",
     methods: "",
+    rateLimitRPM: 0,
+    rateLimitBurst: 0,
+    allowCIDRs: "",
+    denyCIDRs: "",
   };
 }
 
@@ -64,6 +68,10 @@ export function CreateRouteForm({
         targetPath: formState.targetPath,
         requiredScope: formState.requiredScope,
         methods: formState.methods,
+        rateLimitRPM: formState.rateLimitRPM || undefined,
+        rateLimitBurst: formState.rateLimitBurst || undefined,
+        allowCIDRs: formState.allowCIDRs || undefined,
+        denyCIDRs: formState.denyCIDRs || undefined,
       };
 
       const response = await fetch("/api/admin/routes", {
@@ -196,6 +204,53 @@ export function CreateRouteForm({
                   </div>
                 </div>
 
+                <div className="enterprise-panel grid gap-4 p-4">
+                  <div className="enterprise-kicker">Rate limiting</div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <TextField className="grid gap-2">
+                      <Label>Requests / min</Label>
+                      <Input
+                        min={0}
+                        placeholder="0 = unlimited"
+                        type="number"
+                        value={formState.rateLimitRPM === 0 ? "" : String(formState.rateLimitRPM)}
+                        onChange={(event) => setFormState((current) => ({ ...current, rateLimitRPM: Number(event.target.value) || 0 }))}
+                      />
+                      <div className="enterprise-note">Sliding-window token bucket replenishment rate.</div>
+                    </TextField>
+                    <TextField className="grid gap-2">
+                      <Label>Burst size</Label>
+                      <Input
+                        min={0}
+                        placeholder="0 = unlimited"
+                        type="number"
+                        value={formState.rateLimitBurst === 0 ? "" : String(formState.rateLimitBurst)}
+                        onChange={(event) => setFormState((current) => ({ ...current, rateLimitBurst: Number(event.target.value) || 0 }))}
+                      />
+                      <div className="enterprise-note">Maximum concurrent requests in one window.</div>
+                    </TextField>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <TextField className="grid gap-2">
+                      <Label>Allow CIDRs</Label>
+                      <Input
+                        placeholder="10.0.0.0/8, 192.168.0.0/16"
+                        value={formState.allowCIDRs}
+                        onChange={(event) => setFormState((current) => ({ ...current, allowCIDRs: event.target.value }))}
+                      />
+                      <div className="enterprise-note">Comma-separated CIDRs. Only matching IPs are allowed. Empty = allow all.</div>
+                    </TextField>
+                    <TextField className="grid gap-2">
+                      <Label>Deny CIDRs</Label>
+                      <Input
+                        placeholder="203.0.113.0/24"
+                        value={formState.denyCIDRs}
+                        onChange={(event) => setFormState((current) => ({ ...current, denyCIDRs: event.target.value }))}
+                      />
+                      <div className="enterprise-note">Comma-separated CIDRs that are explicitly blocked.</div>
+                    </TextField>
+                  </div>
+                </div>
                 <Button className="mt-1 h-11 w-full rounded-[1rem] bg-foreground text-background" isDisabled={isPending} type="submit">
                   <ArrowUpRight size={16} />
                   {isPending ? "Registering route..." : "Register route"}

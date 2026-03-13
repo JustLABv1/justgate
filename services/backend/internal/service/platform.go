@@ -61,6 +61,8 @@ func (s *Service) registerPlatformRoutes(mux interface {
 	// Org management
 	m.HandleFunc("/api/v1/admin/platform/orgs", s.withSuperAdminAuth(s.handlePlatformOrgs))
 	m.HandleFunc("/api/v1/admin/platform/orgs/", s.withSuperAdminAuth(s.handlePlatformOrgByID))
+	// Replica / multi-region status
+	m.HandleFunc("/api/v1/admin/platform/replicas", s.withSuperAdminAuth(s.handleReplicas))
 }
 
 // ── Handlers ───────────────────────────────────────────────────────────

@@ -40,6 +40,10 @@ export interface RouteSummary {
   tenantID: string;
   requiredScope: string;
   methods: string[];
+  rateLimitRPM: number;
+  rateLimitBurst: number;
+  allowCIDRs: string;
+  denyCIDRs: string;
 }
 
 export interface TokenSummary {
@@ -51,6 +55,8 @@ export interface TokenSummary {
   lastUsedAt: string;
   preview: string;
   active: boolean;
+  rateLimitRPM: number;
+  rateLimitBurst: number;
 }
 
 export interface IssuedToken {
@@ -67,6 +73,7 @@ export interface AuditEvent {
   method: string;
   status: number;
   upstreamURL: string;
+  latencyMs: number;
 }
 
 export interface QueryResult<T> {
@@ -189,5 +196,125 @@ export interface OrgAdminSummary {
   name: string;
   createdAt: string;
   memberCount: number;
+}
+
+// ── Traffic & Analytics ─────────────────────────────────────────────
+
+export interface TrafficStat {
+  bucket: string;
+  tenantID: string;
+  routeSlug: string;
+  requestCount: number;
+  errorCount: number;
+  avgLatencyMs: number;
+}
+
+export interface TrafficOverview {
+  totalRequests: number;
+  errorRate: number;
+  avgLatencyMs: number;
+  priorRequests: number;
+  priorErrorRate: number;
+  priorAvgLatency: number;
+}
+
+// ── Admin Audit ─────────────────────────────────────────────────
+
+export interface AdminAuditEvent {
+  id: string;
+  timestamp: string;
+  userID: string;
+  userEmail: string;
+  action: string;
+  resourceType: string;
+  resourceID: string;
+  details: string;
+  orgID: string;
+}
+
+export interface PaginatedAdminAuditResponse {
+  items: AdminAuditEvent[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+// ── Health History ──────────────────────────────────────────────
+
+export interface HealthHistoryEntry {
+  id: string;
+  tenantID: string;
+  status: string;
+  latencyMs: number;
+  error: string;
+  checkedAt: string;
+}
+
+// ── Tenant Upstreams (Load Balancing) ──────────────────────────
+
+export interface TenantUpstream {
+  id: string;
+  upstreamURL: string;
+  weight: number;
+  isPrimary: boolean;
+}
+
+// ── Sessions ────────────────────────────────────────────────────
+
+export interface AdminSession {
+  id: string;
+  ipAddress: string;
+  userAgent: string;
+  createdAt: string;
+  lastSeenAt: string;
+  isRevoked: boolean;
+}
+
+// ── Circuit Breakers ────────────────────────────────────────────
+
+export interface CircuitBreakerStatus {
+  tenantID: string;
+  state: string;
+  failureCount: number;
+  lastFailure: string;
+  lastSuccess: string;
+}
+
+// ── Expiring Tokens ─────────────────────────────────────────────
+
+export interface ExpiringToken {
+  id: string;
+  name: string;
+  tenantID: string;
+  expiresAt: string;
+  daysUntilExpiry: number;
+}
+
+// ── Route Test ──────────────────────────────────────────────────
+
+export interface RouteTestResult {
+  statusCode: number;
+  headers: Record<string, string[]>;
+  body: string;
+  latencyMs: number;
+  error: string;
+}
+
+// ── Multi-region / Replicas ─────────────────────────────────────
+
+export interface ReplicaInfo {
+  instanceID: string;
+  region: string;
+  hostname: string;
+  lastHeartbeat: string;
+  isHealthy: boolean;
+}
+
+// ── Global Search ───────────────────────────────────────────────
+
+export interface SearchResults {
+  routes: RouteSummary[];
+  tenants: TenantSummary[];
+  tokens: TokenSummary[];
 }
 

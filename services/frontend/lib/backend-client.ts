@@ -5,19 +5,29 @@ import {
     fallbackTenants,
     fallbackTokens,
     type AdminOverview,
+    type AdminSession,
     type AuditEvent,
+    type CircuitBreakerStatus,
+    type ExpiringToken,
+    type HealthHistoryEntry,
     type MemberSummary,
     type OIDCConfig,
     type OIDCOrgMapping,
     type OrgAdminSummary,
     type OrgSummary,
+    type PaginatedAdminAuditResponse,
     type PaginatedAuditResponse,
     type PlatformAdminSummary,
     type QueryResult,
+    type ReplicaInfo,
     type RouteSummary,
+    type SearchResults,
     type TenantSummary,
+    type TenantUpstream,
     type TokenSummary,
     type TopologySnapshot,
+    type TrafficOverview,
+    type TrafficStat,
     type UserAdminSummary
 } from "@/lib/contracts";
 
@@ -159,4 +169,81 @@ export function getOIDCConfig() {
 
 export function getOIDCOrgMappings() {
   return fetchBackend<OIDCOrgMapping[]>("/api/v1/admin/settings/oidc/mappings", []);
+}
+
+// ── Traffic & Analytics ─────────────────────────────────────────
+
+export function getTrafficStats(hours = 24) {
+  return fetchBackend<TrafficStat[]>(`/api/v1/admin/traffic/stats?hours=${hours}`, []);
+}
+
+export function getTrafficOverview() {
+  return fetchBackend<TrafficOverview>("/api/v1/admin/traffic/overview", {
+    totalRequests: 0,
+    errorRate: 0,
+    avgLatencyMs: 0,
+    priorRequests: 0,
+    priorErrorRate: 0,
+    priorAvgLatency: 0,
+  });
+}
+
+// ── Admin Audit ─────────────────────────────────────────────────
+
+export function getAdminAuditEvents(page = 1, pageSize = 50) {
+  return fetchBackend<PaginatedAdminAuditResponse>(
+    `/api/v1/admin/admin-audit?page=${page}&pageSize=${pageSize}`,
+    { items: [], total: 0, page, pageSize },
+  );
+}
+
+// ── Health History ──────────────────────────────────────────────
+
+export function getHealthHistory(tenantID: string) {
+  return fetchBackend<HealthHistoryEntry[]>(
+    `/api/v1/admin/health-history?tenantID=${encodeURIComponent(tenantID)}`,
+    [],
+  );
+}
+
+// ── Tenant Upstreams ────────────────────────────────────────────
+
+export function getTenantUpstreams(tenantInternalID: string) {
+  return fetchBackend<TenantUpstream[]>(
+    `/api/v1/admin/tenant-upstreams/${encodeURIComponent(tenantInternalID)}`,
+    [],
+  );
+}
+
+// ── Sessions ────────────────────────────────────────────────────
+
+export function getAdminSessions() {
+  return fetchBackend<AdminSession[]>("/api/v1/admin/sessions", []);
+}
+
+// ── Circuit Breakers ────────────────────────────────────────────
+
+export function getCircuitBreakers() {
+  return fetchBackend<CircuitBreakerStatus[]>("/api/v1/admin/circuit-breakers", []);
+}
+
+// ── Expiring Tokens ─────────────────────────────────────────────
+
+export function getExpiringTokens(days = 7) {
+  return fetchBackend<ExpiringToken[]>(`/api/v1/admin/tokens/expiring?days=${days}`, []);
+}
+
+// ── Replicas (Platform Admin) ───────────────────────────────────
+
+export function getReplicas() {
+  return fetchBackend<ReplicaInfo[]>("/api/v1/admin/platform/replicas", []);
+}
+
+// ── Global Search ───────────────────────────────────────────────
+
+export function getSearchResults(query: string) {
+  return fetchBackend<SearchResults>(
+    `/api/v1/admin/search?q=${encodeURIComponent(query)}`,
+    { routes: [], tenants: [], tokens: [] },
+  );
 }

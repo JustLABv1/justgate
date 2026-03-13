@@ -1,7 +1,7 @@
 "use client";
 
 import type { TenantSummary } from "@/lib/contracts";
-import { Button, Form, Input, Label, Modal, TextField } from "@heroui/react";
+import { Button, Form, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
 import { PenSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -23,6 +23,7 @@ function toFormState(tenant: TenantSummary | undefined) {
     name: tenant?.name || "",
     tenantID: tenant?.tenantID || "",
     upstreamURL: tenant?.upstreamURL || "",
+    authMode: tenant?.authMode || "header",
   };
 }
 
@@ -43,7 +44,7 @@ export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isO
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          authMode: "header",
+          authMode: formState.authMode,
           headerName: formState.headerName,
           healthCheckPath: formState.healthCheckPath || undefined,
           name: formState.name,
@@ -105,6 +106,27 @@ export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isO
                     <Input onChange={(event) => setFormState((current) => ({ ...current, upstreamURL: event.target.value }))} value={formState.upstreamURL} />
                     <div className="enterprise-note">Tenant traffic destination origin.</div>
                   </TextField>
+                  <Select
+                    className="w-full"
+                    placeholder="Select auth mode"
+                    value={formState.authMode}
+                    variant="secondary"
+                    onChange={(value) => setFormState((current) => ({ ...current, authMode: String(value) }))}
+                  >
+                    <Label>Auth mode</Label>
+                    <Select.Trigger>
+                      <Select.Value />
+                      <Select.Indicator />
+                    </Select.Trigger>
+                    <Select.Popover>
+                      <ListBox>
+                        <ListBox.Item id="header" textValue="header">header<ListBox.ItemIndicator /></ListBox.Item>
+                        <ListBox.Item id="bearer" textValue="bearer">bearer<ListBox.ItemIndicator /></ListBox.Item>
+                        <ListBox.Item id="none" textValue="none">none<ListBox.ItemIndicator /></ListBox.Item>
+                      </ListBox>
+                    </Select.Popover>
+                  </Select>
+                  <div className="enterprise-note md:col-span-2">header — inject tenant header; bearer — forward token; none — no auth injection.</div>
                   <TextField className="grid gap-2">
                     <Label>Injected header</Label>
                     <Input onChange={(event) => setFormState((current) => ({ ...current, headerName: event.target.value }))} value={formState.headerName} />

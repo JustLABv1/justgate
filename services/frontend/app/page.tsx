@@ -1,10 +1,14 @@
 import { OnboardingModal } from "@/components/admin/onboarding-modal";
-import { getTopology } from "@/lib/backend-client";
-import { Activity, Server, Globe, Lock, TimerReset, ArrowRight, CheckCircle2 } from "lucide-react";
+import { getCircuitBreakers, getExpiringTokens, getTopology } from "@/lib/backend-client";
+import { Activity, AlertTriangle, ArrowRight, CheckCircle2, Clock, Globe, Lock, Server, TimerReset } from "lucide-react";
 import Link from "next/link";
 
 export default async function Home() {
-  const topology = await getTopology();
+  const [topology, circuitBreakersResult, expiringTokensResult] = await Promise.all([
+    getTopology(),
+    getCircuitBreakers(),
+    getExpiringTokens(7),
+  ]);
   const stats = {
     tenants: topology.data.stats.tenants,
     routes: topology.data.stats.routes,
@@ -211,6 +215,46 @@ export default async function Home() {
             </div>
             <ArrowRight size={14} className="text-muted-foreground/40 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
           </Link>
+
+          {/* Circuit breakers status */}
+          {circuitBreakersResult.data.length > 0 && (
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                <AlertTriangle size={11} />
+                Circuit Breakers
+              </div>
+              <div className="mt-3 space-y-2">
+                {circuitBreakersResult.data.map((cb) => (
+                  <div key={cb.tenantID} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground truncate max-w-[140px]">{cb.tenantID}</span>
+                    <span className={`text-xs font-medium ${cb.state === "closed" ? "text-success" : cb.state === "open" ? "text-danger" : "text-warning"}`}>
+                      {cb.state}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Expiring tokens */}
+          {expiringTokensResult.data.length > 0 && (
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                <Clock size={11} />
+                Expiring Soon
+              </div>
+              <div className="mt-3 space-y-2">
+                {expiringTokensResult.data.slice(0, 5).map((tk) => (
+                  <div key={tk.id} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground truncate max-w-[120px]">{tk.name}</span>
+                    <span className={`text-xs font-medium ${tk.daysUntilExpiry <= 1 ? "text-danger" : tk.daysUntilExpiry <= 3 ? "text-warning" : "text-muted-foreground"}`}>
+                      {tk.daysUntilExpiry <= 0 ? "Today" : `${tk.daysUntilExpiry}d`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

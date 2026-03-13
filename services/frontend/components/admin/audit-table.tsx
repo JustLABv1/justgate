@@ -1,7 +1,7 @@
 "use client";
 
 import type { AuditEvent } from "@/lib/contracts";
-import { ShieldAlert, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, ShieldAlert } from "lucide-react";
 
 interface AuditTableProps {
   events: AuditEvent[];
@@ -51,6 +51,12 @@ export function AuditTable({ events }: AuditTableProps) {
               <span className="font-mono truncate max-w-[180px]">{event.tokenID}</span>
               <span className="text-border">|</span>
               <span>{new Date(event.timestamp).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+              {event.latencyMs > 0 && (
+                <>
+                  <span className="text-border">|</span>
+                  <span>{event.latencyMs}ms</span>
+                </>
+              )}
             </div>
           </div>
 

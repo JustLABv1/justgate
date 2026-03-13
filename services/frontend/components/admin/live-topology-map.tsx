@@ -402,7 +402,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
         stats: `${metrics.throughput} req • ${metrics.errors} err`,
         x: LANE_X.route,
         y: routeY[index] ?? sceneHeight / 2,
-        tone: "var(--accent)",
+        tone: metrics.errors > 0 ? "var(--destructive)" : "var(--accent)",
       } satisfies GraphNode;
     });
 

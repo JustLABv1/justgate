@@ -1,4 +1,5 @@
 import { AuditView } from "@/components/admin/audit-view";
+import { LiveAuditStream } from "@/components/admin/live-audit-stream";
 import { SectionPage } from "@/components/admin/section-page";
 import { getAuditEventsPaginated } from "@/lib/backend-client";
 
@@ -24,6 +25,9 @@ export default async function AuditPage({
       source={result.source}
       error={result.error}
     >
+      <div className="mb-4 flex justify-end">
+        <LiveAuditStream />
+      </div>
       <AuditView
         events={items ?? []}
         page={page}

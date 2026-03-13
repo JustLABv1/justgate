@@ -1,10 +1,10 @@
 "use client";
 
 import type { RouteSummary } from "@/lib/contracts";
-import type { ReactNode } from "react";
 import { Button, Form, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
 import { ArrowUpRight, PenSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 import { type FormEvent, useState, useTransition } from "react";
 
 interface UpdateRouteFormProps {
@@ -25,6 +25,10 @@ function toFormState(route: RouteSummary | undefined) {
     targetPath: route?.targetPath || "",
     requiredScope: route?.requiredScope || "",
     methods: route?.methods.join(", ") || "",
+    rateLimitRPM: route?.rateLimitRPM ?? 0,
+    rateLimitBurst: route?.rateLimitBurst ?? 0,
+    allowCIDRs: route?.allowCIDRs ?? "",
+    denyCIDRs: route?.denyCIDRs ?? "",
   };
 }
 
@@ -50,6 +54,10 @@ export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = f
           targetPath: formState.targetPath,
           requiredScope: formState.requiredScope,
           methods: formState.methods,
+          rateLimitRPM: formState.rateLimitRPM || undefined,
+          rateLimitBurst: formState.rateLimitBurst || undefined,
+          allowCIDRs: formState.allowCIDRs || undefined,
+          denyCIDRs: formState.denyCIDRs || undefined,
         }),
       });
 
@@ -157,6 +165,53 @@ export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = f
                         value={formState.methods}
                       />
                       <div className="enterprise-note">Comma-separated HTTP verbs.</div>
+                    </TextField>
+                  </div>
+                </div>
+                <div className="enterprise-panel grid gap-4 p-4">
+                  <div className="enterprise-kicker">Rate limiting</div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <TextField className="grid gap-2">
+                      <Label>Requests / min</Label>
+                      <Input
+                        min={0}
+                        placeholder="0 = unlimited"
+                        type="number"
+                        value={formState.rateLimitRPM === 0 ? "" : String(formState.rateLimitRPM)}
+                        onChange={(event) => setFormState((current) => ({ ...current, rateLimitRPM: Number(event.target.value) || 0 }))}
+                      />
+                      <div className="enterprise-note">Sliding-window token bucket replenishment rate.</div>
+                    </TextField>
+                    <TextField className="grid gap-2">
+                      <Label>Burst size</Label>
+                      <Input
+                        min={0}
+                        placeholder="0 = unlimited"
+                        type="number"
+                        value={formState.rateLimitBurst === 0 ? "" : String(formState.rateLimitBurst)}
+                        onChange={(event) => setFormState((current) => ({ ...current, rateLimitBurst: Number(event.target.value) || 0 }))}
+                      />
+                      <div className="enterprise-note">Maximum concurrent requests in one window.</div>
+                    </TextField>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <TextField className="grid gap-2">
+                      <Label>Allow CIDRs</Label>
+                      <Input
+                        placeholder="10.0.0.0/8, 192.168.0.0/16"
+                        value={formState.allowCIDRs}
+                        onChange={(event) => setFormState((current) => ({ ...current, allowCIDRs: event.target.value }))}
+                      />
+                      <div className="enterprise-note">Comma-separated CIDRs. Empty = allow all.</div>
+                    </TextField>
+                    <TextField className="grid gap-2">
+                      <Label>Deny CIDRs</Label>
+                      <Input
+                        placeholder="203.0.113.0/24"
+                        value={formState.denyCIDRs}
+                        onChange={(event) => setFormState((current) => ({ ...current, denyCIDRs: event.target.value }))}
+                      />
+                      <div className="enterprise-note">Comma-separated CIDRs that are explicitly blocked.</div>
                     </TextField>
                   </div>
                 </div>

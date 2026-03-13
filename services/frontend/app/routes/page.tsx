@@ -1,12 +1,13 @@
 import { CreateRouteForm } from "@/components/admin/create-route-form";
+import { RouteTester } from "@/components/admin/route-tester";
 import { RoutesTable } from "@/components/admin/routes-table";
 import { SectionPage } from "@/components/admin/section-page";
-import { getRoutes, getTenants } from "@/lib/backend-client";
+import { getRoutes, getTenants, getTokens } from "@/lib/backend-client";
 import { getPublicBaseUrl } from "@/lib/backend-server";
 import Link from "next/link";
 
 export default async function RoutesPage() {
-  const [result, tenants] = await Promise.all([getRoutes(), getTenants()]);
+  const [result, tenants, tokens] = await Promise.all([getRoutes(), getTenants(), getTokens()]);
   const backendBaseUrl = getPublicBaseUrl();
 
   return (
@@ -19,7 +20,10 @@ export default async function RoutesPage() {
     >
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <div className="text-sm text-muted-foreground">{result.data.length} route{result.data.length !== 1 ? "s" : ""}</div>
+          <div className="flex items-center gap-3">
+            <div className="text-sm text-muted-foreground">{result.data.length} route{result.data.length !== 1 ? "s" : ""}</div>
+            <RouteTester routes={result.data} tokens={tokens.data} backendBaseUrl={backendBaseUrl} />
+          </div>
           <CreateRouteForm disabled={result.source !== "backend"} existingCount={result.data.length} tenantIDs={tenants.data.map((tenant) => tenant.tenantID)} />
         </div>
 

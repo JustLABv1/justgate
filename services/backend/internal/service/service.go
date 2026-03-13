@@ -41,6 +41,12 @@ type Config struct {
 	InitialPlatformAdminEmail string
 	// Path to a PEM file containing extra CA certificates for outbound TLS.
 	ExtraCAFile string
+	// RedisURL enables Redis-backed rate limiting when set (e.g. redis://localhost:6379).
+	RedisURL string
+	// InstanceID uniquely identifies this backend replica.
+	InstanceID string
+	// Region label for multi-region replica status.
+	Region string
 }
 
 type dataStore interface {
@@ -96,6 +102,36 @@ type dataStore interface {
 	// Upstream health
 	UpsertUpstreamHealth(ctx context.Context, health upstreamHealthRecord) error
 	ListUpstreamHealth(ctx context.Context) ([]upstreamHealthRecord, error)
+	// Tenant upstreams (load balancing)
+	ListTenantUpstreams(ctx context.Context, tenantID string) ([]tenantUpstreamRecord, error)
+	CreateTenantUpstream(ctx context.Context, upstream tenantUpstreamRecord) error
+	DeleteTenantUpstream(ctx context.Context, id string) error
+	// Circuit breaker
+	GetCircuitBreaker(ctx context.Context, routeID string) (circuitBreakerRecord, bool, error)
+	UpsertCircuitBreaker(ctx context.Context, cb circuitBreakerRecord) error
+	// Upstream health history
+	RecordHealthHistory(ctx context.Context, record healthHistoryRecord) error
+	ListHealthHistory(ctx context.Context, tenantID string, limit int) ([]healthHistoryRecord, error)
+	// Admin activity audit
+	RecordAdminAudit(ctx context.Context, audit adminAuditRecord) error
+	ListAdminAuditsPaginated(ctx context.Context, limit, offset int) ([]adminAuditRecord, int, error)
+	// Traffic analytics
+	UpsertTrafficStat(ctx context.Context, stat trafficStatRecord) error
+	ListTrafficStats(ctx context.Context, from, to time.Time, orgID string) ([]trafficStatRecord, error)
+	GetTrafficOverview(ctx context.Context, orgID string) (trafficOverviewResult, error)
+	// Session management
+	CreateAdminSession(ctx context.Context, session adminSessionRecord) error
+	ListAdminSessions(ctx context.Context, userID string) ([]adminSessionRecord, error)
+	UpdateAdminSessionLastSeen(ctx context.Context, sessionID string, lastSeen time.Time) error
+	RevokeAdminSession(ctx context.Context, sessionID string) error
+	IsSessionRevoked(ctx context.Context, sessionID string) (bool, error)
+	// Multi-region
+	UpsertInstanceHeartbeat(ctx context.Context, hb instanceHeartbeatRecord) error
+	ListInstanceHeartbeats(ctx context.Context) ([]instanceHeartbeatRecord, error)
+	// Token lifecycle
+	ListExpiringTokens(ctx context.Context, before time.Time) ([]tokenRecord, error)
+	// Filtered audit queries
+	ListAuditsPaginatedFiltered(ctx context.Context, limit, offset int, filters auditFilters) ([]auditRecord, int, error)
 }
 
 type createOrgRequest struct {
@@ -135,12 +171,15 @@ type acceptInviteRequest struct {
 }
 
 type Service struct {
-	config    Config
-	store     dataStore
-	start     time.Time
-	logger    *slog.Logger
-	stop      chan struct{}
-	transport *http.Transport
+	config           Config
+	store            dataStore
+	start            time.Time
+	logger           *slog.Logger
+	stop             chan struct{}
+	transport        *http.Transport
+	rateLimiter      rateLimiter
+	circuitBreakers  *circuitBreakerManager
+	auditSubscribers *auditBroadcaster
 }
 
 type overviewResponse struct {
@@ -177,23 +216,29 @@ type tenantSummary struct {
 }
 
 type routeSummary struct {
-	ID            string   `json:"id"`
-	Slug          string   `json:"slug"`
-	TargetPath    string   `json:"targetPath"`
-	TenantID      string   `json:"tenantID"`
-	RequiredScope string   `json:"requiredScope"`
-	Methods       []string `json:"methods"`
+	ID             string   `json:"id"`
+	Slug           string   `json:"slug"`
+	TargetPath     string   `json:"targetPath"`
+	TenantID       string   `json:"tenantID"`
+	RequiredScope  string   `json:"requiredScope"`
+	Methods        []string `json:"methods"`
+	RateLimitRPM   int      `json:"rateLimitRPM"`
+	RateLimitBurst int      `json:"rateLimitBurst"`
+	AllowCIDRs     string   `json:"allowCIDRs"`
+	DenyCIDRs      string   `json:"denyCIDRs"`
 }
 
 type tokenSummary struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	TenantID   string   `json:"tenantID"`
-	Scopes     []string `json:"scopes"`
-	ExpiresAt  string   `json:"expiresAt"`
-	LastUsedAt string   `json:"lastUsedAt"`
-	Preview    string   `json:"preview"`
-	Active     bool     `json:"active"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	TenantID       string   `json:"tenantID"`
+	Scopes         []string `json:"scopes"`
+	ExpiresAt      string   `json:"expiresAt"`
+	LastUsedAt     string   `json:"lastUsedAt"`
+	Preview        string   `json:"preview"`
+	Active         bool     `json:"active"`
+	RateLimitRPM   int      `json:"rateLimitRPM"`
+	RateLimitBurst int      `json:"rateLimitBurst"`
 }
 
 type auditEvent struct {
@@ -205,6 +250,7 @@ type auditEvent struct {
 	Method    string `json:"method"`
 	Status    int    `json:"status"`
 	Upstream  string `json:"upstreamURL"`
+	LatencyMs int    `json:"latencyMs"`
 }
 
 type topologyResponse struct {
@@ -227,18 +273,24 @@ type createTenantRequest struct {
 }
 
 type createRouteRequest struct {
-	Slug          string          `json:"slug"`
-	TargetPath    string          `json:"targetPath"`
-	TenantID      string          `json:"tenantID"`
-	RequiredScope string          `json:"requiredScope"`
-	Methods       json.RawMessage `json:"methods"`
+	Slug           string          `json:"slug"`
+	TargetPath     string          `json:"targetPath"`
+	TenantID       string          `json:"tenantID"`
+	RequiredScope  string          `json:"requiredScope"`
+	Methods        json.RawMessage `json:"methods"`
+	RateLimitRPM   int             `json:"rateLimitRPM"`
+	RateLimitBurst int             `json:"rateLimitBurst"`
+	AllowCIDRs     string          `json:"allowCIDRs"`
+	DenyCIDRs      string          `json:"denyCIDRs"`
 }
 
 type createTokenRequest struct {
-	Name      string          `json:"name"`
-	TenantID  string          `json:"tenantID"`
-	Scopes    json.RawMessage `json:"scopes"`
-	ExpiresAt string          `json:"expiresAt"`
+	Name           string          `json:"name"`
+	TenantID       string          `json:"tenantID"`
+	Scopes         json.RawMessage `json:"scopes"`
+	ExpiresAt      string          `json:"expiresAt"`
+	RateLimitRPM   int             `json:"rateLimitRPM"`
+	RateLimitBurst int             `json:"rateLimitBurst"`
 }
 
 type updateTokenRequest struct {
@@ -262,13 +314,17 @@ type issuedTokenResponse struct {
 }
 
 type routeRecord struct {
-	ID            string
-	Slug          string
-	TargetPath    string
-	TenantID      string
-	RequiredScope string
-	Methods       []string
-	UpstreamURL   string
+	ID             string
+	Slug           string
+	TargetPath     string
+	TenantID       string
+	RequiredScope  string
+	Methods        []string
+	UpstreamURL    string
+	RateLimitRPM   int
+	RateLimitBurst int
+	AllowCIDRs     string
+	DenyCIDRs      string
 }
 
 type tenantRecord struct {
@@ -283,15 +339,17 @@ type tenantRecord struct {
 }
 
 type tokenRecord struct {
-	ID         string
-	Name       string
-	TenantID   string
-	Scopes     []string
-	ExpiresAt  time.Time
-	LastUsedAt time.Time
-	Preview    string
-	Active     bool
-	Hash       string
+	ID             string
+	Name           string
+	TenantID       string
+	Scopes         []string
+	ExpiresAt      time.Time
+	LastUsedAt     time.Time
+	Preview        string
+	Active         bool
+	Hash           string
+	RateLimitRPM   int
+	RateLimitBurst int
 }
 
 type auditRecord struct {
@@ -303,6 +361,7 @@ type auditRecord struct {
 	Method    string
 	Status    int
 	Upstream  string
+	LatencyMs int
 }
 
 type localAdminRecord struct {
@@ -375,12 +434,130 @@ type upstreamHealthRecord struct {
 	Error         string
 }
 
+type tenantUpstreamRecord struct {
+	ID          string
+	TenantID    string
+	UpstreamURL string
+	Weight      int
+	IsPrimary   bool
+	CreatedAt   time.Time
+}
+
+type circuitBreakerRecord struct {
+	RouteID       string
+	State         string
+	FailureCount  int
+	LastFailureAt time.Time
+	LastSuccessAt time.Time
+	OpenedAt      time.Time
+	HalfOpenAt    time.Time
+}
+
+type healthHistoryRecord struct {
+	ID        string
+	TenantID  string
+	Status    string
+	LatencyMs int
+	Error     string
+	CheckedAt time.Time
+}
+
+type adminAuditRecord struct {
+	ID           string
+	Timestamp    time.Time
+	UserID       string
+	UserEmail    string
+	Action       string
+	ResourceType string
+	ResourceID   string
+	Details      string
+	OrgID        string
+}
+
+type trafficStatRecord struct {
+	ID            string    `json:"-"`
+	BucketStart   time.Time `json:"bucket"`
+	BucketMinutes int       `json:"bucketMinutes"`
+	RouteSlug     string    `json:"routeSlug"`
+	TenantID      string    `json:"tenantID"`
+	TokenID       string    `json:"tokenID"`
+	OrgID         string    `json:"-"`
+	RequestCount  int       `json:"requestCount"`
+	ErrorCount    int       `json:"errorCount"`
+	AvgLatencyMs  int       `json:"avgLatencyMs"`
+	Status2xx     int       `json:"status2xx"`
+	Status4xx     int       `json:"status4xx"`
+	Status5xx     int       `json:"status5xx"`
+}
+
+type trafficOverviewResult struct {
+	TotalRequests   int     `json:"totalRequests"`
+	ErrorRate       float64 `json:"errorRate"`
+	AvgLatencyMs    int     `json:"avgLatencyMs"`
+	PriorRequests   int     `json:"priorRequests"`
+	PriorErrorRate  float64 `json:"priorErrorRate"`
+	PriorAvgLatency int     `json:"priorAvgLatency"`
+}
+
+type adminSessionRecord struct {
+	ID         string
+	UserID     string
+	IPAddress  string
+	UserAgent  string
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+	Revoked    bool
+}
+
+type instanceHeartbeatRecord struct {
+	InstanceID      string
+	Region          string
+	Hostname        string
+	Version         string
+	StartedAt       time.Time
+	LastHeartbeatAt time.Time
+	Metadata        string
+}
+
+type auditFilters struct {
+	TenantID  string
+	RouteSlug string
+	TokenID   string
+	Status    string // "success" or "error"
+	From      time.Time
+	To        time.Time
+}
+
+// Route test request/response types
+type routeTestRequest struct {
+	Method      string            `json:"method"`
+	Path        string            `json:"path"`
+	Headers     map[string]string `json:"headers"`
+	Body        string            `json:"body"`
+	TokenSecret string            `json:"tokenSecret"`
+}
+
+type routeTestResponse struct {
+	Status    int               `json:"status"`
+	Headers   map[string]string `json:"headers"`
+	Body      string            `json:"body"`
+	LatencyMs int               `json:"latencyMs"`
+}
+
+type tenantSummaryUpstream struct {
+	ID          string `json:"id"`
+	UpstreamURL string `json:"upstreamURL"`
+	Weight      int    `json:"weight"`
+	IsPrimary   bool   `json:"isPrimary"`
+}
+
 type requestContextKey string
 
 const (
-	contextKeyOrgID   requestContextKey = "orgID"
-	contextKeyAdminID requestContextKey = "adminID"
-	contextKeyOrgRole requestContextKey = "orgRole"
+	contextKeyOrgID         requestContextKey = "orgID"
+	contextKeyAdminID       requestContextKey = "adminID"
+	contextKeyOrgRole       requestContextKey = "orgRole"
+	contextKeyAdminIdentity requestContextKey = "adminIdentity"
 )
 
 func orgIDFromContext(ctx context.Context) string {
@@ -395,6 +572,11 @@ func adminIDFromContext(ctx context.Context) string {
 
 func orgRoleFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(contextKeyOrgRole).(string)
+	return v
+}
+
+func adminIdentityFromContext(ctx context.Context) *adminIdentity {
+	v, _ := ctx.Value(contextKeyAdminIdentity).(*adminIdentity)
 	return v
 }
 
@@ -423,12 +605,15 @@ func New(config Config) (*Service, error) {
 	}
 
 	service := &Service{
-		config:    config,
-		store:     store,
-		start:     time.Now().UTC(),
-		logger:    slog.Default(),
-		stop:      make(chan struct{}),
-		transport: transport,
+		config:           config,
+		store:            store,
+		start:            time.Now().UTC(),
+		logger:           slog.Default(),
+		stop:             make(chan struct{}),
+		transport:        transport,
+		rateLimiter:      newMemoryRateLimiter(),
+		circuitBreakers:  newCircuitBreakerManager(store, slog.Default()),
+		auditSubscribers: newAuditBroadcaster(),
 	}
 
 	service.logStartup()
@@ -442,6 +627,7 @@ func New(config Config) (*Service, error) {
 	}
 
 	go service.runHealthChecker()
+	go service.runHeartbeat()
 
 	return service, nil
 }
@@ -467,6 +653,30 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/settings/oidc/mappings", s.withAdminAuth(s.handleOIDCMappings))
 	mux.HandleFunc("/api/v1/admin/settings/oidc/mappings/", s.withAdminAuth(s.handleOIDCMappings))
 	mux.HandleFunc("/api/v1/internal/oidc-provider-config", s.withAdminAuth(s.handleInternalOIDCProviderConfig))
+	// Traffic & analytics
+	mux.HandleFunc("/api/v1/admin/traffic/stats", s.withAdminAuth(s.withOptionalOrgContext(s.handleTrafficStats)))
+	mux.HandleFunc("/api/v1/admin/traffic/overview", s.withAdminAuth(s.withOptionalOrgContext(s.handleTrafficOverview)))
+	// Admin activity audit
+	mux.HandleFunc("/api/v1/admin/admin-audit", s.withAdminAuth(s.handleAdminAudit))
+	// Health history
+	mux.HandleFunc("/api/v1/admin/health-history", s.withAdminAuth(s.withOptionalOrgContext(s.handleHealthHistory)))
+	// Tenant upstreams (load balancing)
+	mux.HandleFunc("/api/v1/admin/tenant-upstreams/", s.withAdminAuth(s.withOrgContext(s.handleTenantUpstreams)))
+	mux.HandleFunc("/api/v1/admin/tenant-upstream/", s.withAdminAuth(s.withOrgContext(s.handleTenantUpstreamByID)))
+	// Session management
+	mux.HandleFunc("/api/v1/admin/sessions", s.withAdminAuth(s.handleSessions))
+	mux.HandleFunc("/api/v1/admin/sessions/", s.withAdminAuth(s.handleSessionRevoke))
+	// Circuit breakers
+	mux.HandleFunc("/api/v1/admin/circuit-breakers", s.withAdminAuth(s.withOptionalOrgContext(s.handleCircuitBreakers)))
+	// Token lifecycle
+	mux.HandleFunc("/api/v1/admin/tokens/expiring", s.withAdminAuth(s.withOrgContext(s.handleExpiringTokens)))
+	// Route tester
+	mux.HandleFunc("/api/v1/admin/route-test", s.withAdminAuth(s.withOrgContext(s.handleRouteTest)))
+	// Audit stream & filtered
+	mux.HandleFunc("/api/v1/admin/audit/stream", s.handleAuditStream)
+	mux.HandleFunc("/api/v1/admin/audit/filtered", s.withAdminAuth(s.withOrgContext(s.handleAuditFiltered)))
+	// Global search
+	mux.HandleFunc("/api/v1/admin/search", s.withAdminAuth(s.withOptionalOrgContext(s.handleSearch)))
 	s.registerPlatformRoutes(mux)
 	mux.HandleFunc("/proxy/", s.handleProxy)
 
@@ -511,7 +721,18 @@ func (s *Service) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 			Source:    "admin",
 			CreatedAt: time.Now().UTC(),
 		})
+		ip := clientAddress(request)
+		ua := request.Header.Get("User-Agent")
+		fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(identity.Subject+"|"+ip+"|"+ua)))
+		_ = s.store.CreateAdminSession(request.Context(), adminSessionRecord{
+			ID:         fingerprint,
+			UserID:     identity.Subject,
+			IPAddress:  ip,
+			UserAgent:  ua,
+			LastSeenAt: time.Now().UTC(),
+		})
 		ctx := context.WithValue(request.Context(), contextKeyAdminID, identity.Subject)
+		ctx = context.WithValue(ctx, contextKeyAdminIdentity, &identity)
 		next(writer, request.WithContext(ctx))
 	}
 }
@@ -698,12 +919,16 @@ func (s *Service) handleRoutes(writer http.ResponseWriter, request *http.Request
 	items := make([]routeSummary, 0, len(routes))
 	for _, route := range routes {
 		items = append(items, routeSummary{
-			ID:            route.ID,
-			Slug:          route.Slug,
-			TargetPath:    route.TargetPath,
-			TenantID:      route.TenantID,
-			RequiredScope: route.RequiredScope,
-			Methods:       route.Methods,
+			ID:             route.ID,
+			Slug:           route.Slug,
+			TargetPath:     route.TargetPath,
+			TenantID:       route.TenantID,
+			RequiredScope:  route.RequiredScope,
+			Methods:        route.Methods,
+			RateLimitRPM:   route.RateLimitRPM,
+			RateLimitBurst: route.RateLimitBurst,
+			AllowCIDRs:     route.AllowCIDRs,
+			DenyCIDRs:      route.DenyCIDRs,
 		})
 	}
 
@@ -809,6 +1034,7 @@ func (s *Service) handleAudit(writer http.ResponseWriter, request *http.Request)
 			Method:    audit.Method,
 			Status:    audit.Status,
 			Upstream:  audit.Upstream,
+			LatencyMs: audit.LatencyMs,
 		})
 	}
 
@@ -849,6 +1075,7 @@ func (s *Service) handleTopologyStream(writer http.ResponseWriter, request *http
 	})
 
 	ctx := context.WithValue(request.Context(), contextKeyAdminID, identity.Subject)
+	ctx = context.WithValue(ctx, contextKeyAdminIdentity, &identity)
 	orgID := strings.TrimSpace(request.URL.Query().Get("org_id"))
 	if orgID != "" {
 		membership, ok, err := s.store.GetOrgMembership(ctx, orgID, identity.Subject)
@@ -973,26 +1200,32 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 	routeItems := make([]routeSummary, 0, len(routes))
 	for _, route := range routes {
 		routeItems = append(routeItems, routeSummary{
-			ID:            route.ID,
-			Slug:          route.Slug,
-			TargetPath:    route.TargetPath,
-			TenantID:      route.TenantID,
-			RequiredScope: route.RequiredScope,
-			Methods:       route.Methods,
+			ID:             route.ID,
+			Slug:           route.Slug,
+			TargetPath:     route.TargetPath,
+			TenantID:       route.TenantID,
+			RequiredScope:  route.RequiredScope,
+			Methods:        route.Methods,
+			RateLimitRPM:   route.RateLimitRPM,
+			RateLimitBurst: route.RateLimitBurst,
+			AllowCIDRs:     route.AllowCIDRs,
+			DenyCIDRs:      route.DenyCIDRs,
 		})
 	}
 
 	tokenItems := make([]tokenSummary, 0, len(tokens))
 	for _, token := range tokens {
 		tokenItems = append(tokenItems, tokenSummary{
-			ID:         token.ID,
-			Name:       token.Name,
-			TenantID:   token.TenantID,
-			Scopes:     token.Scopes,
-			ExpiresAt:  token.ExpiresAt.Format(time.RFC3339),
-			LastUsedAt: token.LastUsedAt.Format(time.RFC3339),
-			Preview:    token.Preview,
-			Active:     token.Active,
+			ID:             token.ID,
+			Name:           token.Name,
+			TenantID:       token.TenantID,
+			Scopes:         token.Scopes,
+			ExpiresAt:      token.ExpiresAt.Format(time.RFC3339),
+			LastUsedAt:     token.LastUsedAt.Format(time.RFC3339),
+			Preview:        token.Preview,
+			Active:         token.Active,
+			RateLimitRPM:   token.RateLimitRPM,
+			RateLimitBurst: token.RateLimitBurst,
 		})
 	}
 
@@ -1007,6 +1240,7 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 			Method:    audit.Method,
 			Status:    audit.Status,
 			Upstream:  audit.Upstream,
+			LatencyMs: audit.LatencyMs,
 		})
 	}
 
@@ -1079,12 +1313,21 @@ func (s *Service) checkUpstreamHealth(client *http.Client) {
 		start := time.Now()
 		req, err := http.NewRequestWithContext(ctx, http.MethodHead, checkURL, nil)
 		if err != nil {
+			now := time.Now().UTC()
+			errStr := fmt.Sprintf("invalid URL: %s", err.Error())
 			_ = s.store.UpsertUpstreamHealth(ctx, upstreamHealthRecord{
 				TenantID:      tenant.TenantID,
 				Status:        "down",
-				LastCheckedAt: time.Now().UTC(),
+				LastCheckedAt: now,
 				LatencyMs:     0,
-				Error:         fmt.Sprintf("invalid URL: %s", err.Error()),
+				Error:         errStr,
+			})
+			_ = s.store.RecordHealthHistory(ctx, healthHistoryRecord{
+				TenantID:  tenant.TenantID,
+				Status:    "down",
+				LatencyMs: 0,
+				Error:     errStr,
+				CheckedAt: now,
 			})
 			continue
 		}
@@ -1093,12 +1336,20 @@ func (s *Service) checkUpstreamHealth(client *http.Client) {
 		latency := time.Since(start).Milliseconds()
 
 		if err != nil {
+			now := time.Now().UTC()
 			_ = s.store.UpsertUpstreamHealth(ctx, upstreamHealthRecord{
 				TenantID:      tenant.TenantID,
 				Status:        "down",
-				LastCheckedAt: time.Now().UTC(),
+				LastCheckedAt: now,
 				LatencyMs:     int(latency),
 				Error:         err.Error(),
+			})
+			_ = s.store.RecordHealthHistory(ctx, healthHistoryRecord{
+				TenantID:  tenant.TenantID,
+				Status:    "down",
+				LatencyMs: int(latency),
+				Error:     err.Error(),
+				CheckedAt: now,
 			})
 			continue
 		}
@@ -1111,12 +1362,20 @@ func (s *Service) checkUpstreamHealth(client *http.Client) {
 			errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
 		}
 
+		now := time.Now().UTC()
 		_ = s.store.UpsertUpstreamHealth(ctx, upstreamHealthRecord{
 			TenantID:      tenant.TenantID,
 			Status:        status,
-			LastCheckedAt: time.Now().UTC(),
+			LastCheckedAt: now,
 			LatencyMs:     int(latency),
 			Error:         errMsg,
+		})
+		_ = s.store.RecordHealthHistory(ctx, healthHistoryRecord{
+			TenantID:  tenant.TenantID,
+			Status:    status,
+			LatencyMs: int(latency),
+			Error:     errMsg,
+			CheckedAt: now,
 		})
 	}
 }
@@ -1273,12 +1532,16 @@ func (s *Service) handleCreateRoute(writer http.ResponseWriter, request *http.Re
 	}
 
 	writeJSON(writer, http.StatusCreated, routeSummary{
-		ID:            route.ID,
-		Slug:          route.Slug,
-		TargetPath:    route.TargetPath,
-		TenantID:      route.TenantID,
-		RequiredScope: route.RequiredScope,
-		Methods:       route.Methods,
+		ID:             route.ID,
+		Slug:           route.Slug,
+		TargetPath:     route.TargetPath,
+		TenantID:       route.TenantID,
+		RequiredScope:  route.RequiredScope,
+		Methods:        route.Methods,
+		RateLimitRPM:   route.RateLimitRPM,
+		RateLimitBurst: route.RateLimitBurst,
+		AllowCIDRs:     route.AllowCIDRs,
+		DenyCIDRs:      route.DenyCIDRs,
 	})
 }
 
@@ -1393,12 +1656,16 @@ func (s *Service) handleRouteByID(writer http.ResponseWriter, request *http.Requ
 		}
 
 		writeJSON(writer, http.StatusOK, routeSummary{
-			ID:            route.ID,
-			Slug:          route.Slug,
-			TargetPath:    route.TargetPath,
-			TenantID:      route.TenantID,
-			RequiredScope: route.RequiredScope,
-			Methods:       route.Methods,
+			ID:             route.ID,
+			Slug:           route.Slug,
+			TargetPath:     route.TargetPath,
+			TenantID:       route.TenantID,
+			RequiredScope:  route.RequiredScope,
+			Methods:        route.Methods,
+			RateLimitRPM:   route.RateLimitRPM,
+			RateLimitBurst: route.RateLimitBurst,
+			AllowCIDRs:     route.AllowCIDRs,
+			DenyCIDRs:      route.DenyCIDRs,
 		})
 	case http.MethodDelete:
 		if err := s.store.DeleteRoute(request.Context(), routeID); err != nil {
@@ -1488,15 +1755,35 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
+	// ── IP allow/deny check ────────────────────────────────────────
+	clientIP := clientAddress(request)
+	if route.DenyCIDRs != "" && matchesCIDRList(clientIP, route.DenyCIDRs) {
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusForbidden, route.UpstreamURL, 0)
+		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "IP address denied"})
+		return
+	}
+	if route.AllowCIDRs != "" && !matchesCIDRList(clientIP, route.AllowCIDRs) {
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusForbidden, route.UpstreamURL, 0)
+		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "IP address not allowed"})
+		return
+	}
+
+	// ── Circuit breaker check ──────────────────────────────────────
+	if !s.circuitBreakers.AllowRequest(route.ID) {
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusServiceUnavailable, route.UpstreamURL, 0)
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"error": "circuit breaker is open; upstream is unhealthy"})
+		return
+	}
+
 	if !slices.Contains(route.Methods, request.Method) {
-		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusMethodNotAllowed, route.UpstreamURL)
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusMethodNotAllowed, route.UpstreamURL, 0)
 		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed for route"})
 		return
 	}
 
 	tokenValue := extractBearerToken(request.Header.Get("Authorization"))
 	if tokenValue == "" {
-		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusUnauthorized, route.UpstreamURL)
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusUnauthorized, route.UpstreamURL, 0)
 		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "missing bearer token"})
 		return
 	}
@@ -1508,27 +1795,44 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	if !ok {
-		s.recordAudit(request.Context(), parts[0], "unknown", "unknown", request.Method, http.StatusUnauthorized, route.UpstreamURL)
+		s.recordAudit(request.Context(), parts[0], "unknown", "unknown", request.Method, http.StatusUnauthorized, route.UpstreamURL, 0)
 		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "invalid or expired token"})
 		return
 	}
 
 	if token.TenantID != route.TenantID {
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusForbidden, route.UpstreamURL)
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusForbidden, route.UpstreamURL, 0)
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "token is not valid for this tenant route"})
 		return
 	}
 
 	if route.RequiredScope != "" && !slices.Contains(token.Scopes, route.RequiredScope) {
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusForbidden, route.UpstreamURL)
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusForbidden, route.UpstreamURL, 0)
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "token is missing the required scope"})
+		return
+	}
+
+	// ── Rate limiting ──────────────────────────────────────────────
+	// Route-level rate limit takes precedence; fallback to token-level.
+	rateLimitRPM := route.RateLimitRPM
+	rateLimitBurst := route.RateLimitBurst
+	rateLimitKey := "route:" + route.ID + ":" + token.ID
+	if rateLimitRPM == 0 && token.RateLimitRPM > 0 {
+		rateLimitRPM = token.RateLimitRPM
+		rateLimitBurst = token.RateLimitBurst
+		rateLimitKey = "token:" + token.ID
+	}
+	if rateLimitRPM > 0 && !s.rateLimiter.Allow(rateLimitKey, rateLimitRPM, rateLimitBurst) {
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusTooManyRequests, route.UpstreamURL, 0)
+		writer.Header().Set("Retry-After", "60")
+		writeJSON(writer, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
 		return
 	}
 
 	targetURL, err := url.Parse(route.UpstreamURL)
 	if err != nil {
 		s.logger.Error("proxy upstream configuration is invalid", "route_slug", parts[0], "upstream", route.UpstreamURL, "error", err)
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, route.UpstreamURL)
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, route.UpstreamURL, 0)
 		writeJSON(writer, http.StatusBadGateway, map[string]string{"error": "invalid upstream configuration"})
 		return
 	}
@@ -1538,6 +1842,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		remainingPath = "/" + parts[1]
 	}
 
+	proxyStart := time.Now()
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 	proxy.Transport = s.transport
 	originalDirector := proxy.Director
@@ -1550,12 +1855,22 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		proxyRequest.Header.Set("X-Proxy-Token", token.ID)
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, response.StatusCode, response.Request.URL.String())
+		latency := int(time.Since(proxyStart).Milliseconds())
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, response.StatusCode, response.Request.URL.String(), latency)
+		s.recordTrafficStat(route, token, response.StatusCode, latency)
+		if response.StatusCode >= 500 {
+			s.circuitBreakers.RecordFailure(route.ID)
+		} else {
+			s.circuitBreakers.RecordSuccess(route.ID)
+		}
 		return nil
 	}
 	proxy.ErrorHandler = func(proxyWriter http.ResponseWriter, proxyRequest *http.Request, proxyErr error) {
+		latency := int(time.Since(proxyStart).Milliseconds())
 		s.logger.Error("proxy upstream request failed", "route_slug", parts[0], "tenant_id", token.TenantID, "token_id", token.ID, "upstream", route.UpstreamURL, "error", proxyErr)
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, route.UpstreamURL)
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, route.UpstreamURL, latency)
+		s.recordTrafficStat(route, token, http.StatusBadGateway, latency)
+		s.circuitBreakers.RecordFailure(route.ID)
 		writeJSON(proxyWriter, http.StatusBadGateway, map[string]string{
 			"error":   "upstream request failed",
 			"details": proxyErr.Error(),
@@ -1565,8 +1880,68 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 	proxy.ServeHTTP(writer, request)
 }
 
-func (s *Service) recordAudit(ctx context.Context, routeSlug, tenantID, tokenID, method string, status int, upstreamURL string) {
-	if err := s.store.RecordAudit(ctx, auditRecord{
+// matchesCIDRList checks whether clientIP matches any CIDR in a comma-separated list.
+func matchesCIDRList(clientIP, cidrList string) bool {
+	ip := net.ParseIP(clientIP)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range strings.Split(cidrList, ",") {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		if !strings.Contains(cidr, "/") {
+			// Treat bare IPs as /32 or /128
+			if strings.Contains(cidr, ":") {
+				cidr += "/128"
+			} else {
+				cidr += "/32"
+			}
+		}
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// recordTrafficStat writes an aggregated traffic stat for the current 5-minute bucket.
+func (s *Service) recordTrafficStat(route routeRecord, token tokenRecord, status int, latencyMs int) {
+	now := time.Now().UTC()
+	bucketStart := now.Truncate(5 * time.Minute)
+	stat := trafficStatRecord{
+		BucketStart:   bucketStart,
+		BucketMinutes: 5,
+		RouteSlug:     route.Slug,
+		TenantID:      route.TenantID,
+		TokenID:       token.ID,
+		OrgID:         "",
+		RequestCount:  1,
+		AvgLatencyMs:  latencyMs,
+	}
+	if status >= 200 && status < 300 {
+		stat.Status2xx = 1
+	} else if status >= 400 && status < 500 {
+		stat.Status4xx = 1
+		stat.ErrorCount = 1
+	} else if status >= 500 {
+		stat.Status5xx = 1
+		stat.ErrorCount = 1
+	}
+	go func() {
+		if err := s.store.UpsertTrafficStat(context.Background(), stat); err != nil {
+			s.logger.Error("failed to record traffic stat", "error", err)
+		}
+	}()
+}
+
+func (s *Service) recordAudit(ctx context.Context, routeSlug, tenantID, tokenID, method string, status int, upstreamURL string, latencyMs int) {
+	audit := auditRecord{
 		Timestamp: time.Now().UTC(),
 		RouteSlug: routeSlug,
 		TenantID:  tenantID,
@@ -1574,8 +1949,23 @@ func (s *Service) recordAudit(ctx context.Context, routeSlug, tenantID, tokenID,
 		Method:    method,
 		Status:    status,
 		Upstream:  upstreamURL,
-	}); err != nil {
+		LatencyMs: latencyMs,
+	}
+	if err := s.store.RecordAudit(ctx, audit); err != nil {
 		s.logger.Error("failed to record audit event", "route_slug", routeSlug, "tenant_id", tenantID, "token_id", tokenID, "method", method, "status", status, "upstream", upstreamURL, "error", err)
+	}
+	if s.auditSubscribers != nil {
+		s.auditSubscribers.Broadcast(auditEvent{
+			ID:        audit.ID,
+			Timestamp: audit.Timestamp.Format(time.RFC3339),
+			RouteSlug: audit.RouteSlug,
+			TenantID:  audit.TenantID,
+			TokenID:   audit.TokenID,
+			Method:    audit.Method,
+			Status:    audit.Status,
+			Upstream:  audit.Upstream,
+			LatencyMs: audit.LatencyMs,
+		})
 	}
 }
 
