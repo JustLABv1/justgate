@@ -71,5 +71,4 @@ USER 65532:65532
 
 EXPOSE 9090 3000
 
-ENTRYPOINT []
-CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisord.conf"]
+ENTRYPOINT ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisord.conf"]

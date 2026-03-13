@@ -45,26 +45,27 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "${FRONTEND_PORT:-3000}:${FRONTEND_PORT:-3000}"   # Admin UI  (Next.js)
-      - "${BACKEND_PORT:-9090}:${BACKEND_PORT:-9090}"   # Gateway / backend API
+      - "${FRONTEND_PORT:-3000}:3000"   # host:container – container always listens on 3000
+      - "${BACKEND_PORT:-9090}:9090"   # host:container – container always listens on 9090
     volumes:
       # Uncomment to mount a custom CA certificate:
       # - ./certs/my-ca.pem:/certs/my-ca.pem:ro
       []  # no volumes needed for postgres mode
     environment:
       # ── Ports ────────────────────────────────────────────────────
-      # These must match the port mappings above.  If you change
-      # BACKEND_PORT, JUST_GATE_BACKEND_URL is updated automatically.
-      PORT:                     ${FRONTEND_PORT:-3000}
-      BACKEND_PORT:             ${BACKEND_PORT:-9090}
-      JUST_GATE_BACKEND_URL:    http://localhost:${BACKEND_PORT:-9090}
+      # Container-internal ports are always fixed at 3000 (frontend) and
+      # 9090 (backend).  FRONTEND_PORT / BACKEND_PORT in .env only change
+      # the host-side mapping and are NOT passed into the container.
+      PORT:                  3000
+      BACKEND_PORT:          9090
+      JUST_GATE_BACKEND_URL: http://localhost:9090
 
       # ── Required secrets ─────────────────────────────────────────
       NEXTAUTH_SECRET:              ${NEXTAUTH_SECRET}
       JUST_GATE_BACKEND_JWT_SECRET: ${JUST_GATE_BACKEND_JWT_SECRET}
 
       # ── Public URL ───────────────────────────────────────────────
-      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:${FRONTEND_PORT:-3000}}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
 
       # ── Database ─────────────────────────────────────────────────
       # Connection URL for the postgres service above.
