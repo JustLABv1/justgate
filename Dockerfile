@@ -60,7 +60,10 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 ENV JUST_GATE_BACKEND_URL="http://localhost:9090"
 
-USER nonroot
+# Use the numeric UID (65532) instead of the symbolic name "nonroot" so that
+# runtimes which resolve usernames against /etc/passwd don't fail on minimal
+# or cross-architecture Chainguard image variants.
+USER 65532:65532
 
 EXPOSE 9090 3000
 
