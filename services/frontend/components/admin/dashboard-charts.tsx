@@ -4,14 +4,14 @@ import type { TrafficOverview, TrafficStat } from "@/lib/contracts";
 import { ZoomIn } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
-    Area,
-    AreaChart,
-    CartesianGrid,
-    ReferenceArea,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis,
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ReferenceArea,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from "recharts";
 
 interface DashboardChartsProps {
