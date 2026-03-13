@@ -45,6 +45,7 @@ type GraphEdge = {
   kind: "access" | "binding" | "draft" | "upstream";
   hot: boolean;
   error: boolean;
+  reachable?: boolean;
 };
 
 type CameraState = {
@@ -410,60 +411,148 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
     });
 
     const tenantNodes: GraphNode[] = tenants.map((tenant, index) => {
-      const statusTone = tenant.upstreamStatus === "up"
-        ? "var(--success)"
-        : tenant.upstreamStatus === "down"
-          ? "var(--danger)"
-          : "var(--muted)";
+      // Tenant dot colour reflects the primary upstream when one is designated,
+      // falling back to "any reachable" logic so a dead secondary doesn't turn the tenant red.
+      const extras = tenant.upstreams ?? [];
+      let statusTone: string;
+      if (extras.length > 0) {
+        const primary = extras.find((u) => u.isPrimary);
+        const effective = primary ?? extras[0];
+        statusTone =
+          effective.status === "up"
+            ? "var(--success)"
+            : effective.status === "down"
+              ? "var(--danger)"
+              : "var(--muted)";
+      } else {
+        statusTone =
+          tenant.upstreamStatus === "up"
+            ? "var(--success)"
+            : tenant.upstreamStatus === "down"
+              ? "var(--danger)"
+              : "var(--muted)";
+      }
       return {
         id: `tenant:${tenant.id}`,
         kind: "tenant",
         label: tenant.name,
         meta: `${tenant.tenantID} • ${tenant.upstreamURL}`,
-        stats: tenant.upstreamStatus === "up"
-          ? `${tenant.headerName} • ↑ ${tenant.upstreamLatencyMs ?? 0}ms`
-          : tenant.upstreamStatus === "down"
-            ? `${tenant.headerName} • ↓ unreachable`
-            : tenant.headerName,
+        stats:
+          tenant.upstreamStatus === "up"
+            ? `${tenant.headerName} • ↑ ${tenant.upstreamLatencyMs ?? 0}ms`
+            : tenant.upstreamStatus === "down"
+              ? `${tenant.headerName} • ↓ unreachable`
+              : tenant.headerName,
         x: LANE_X.tenant,
         y: tenantY[index] ?? sceneHeight / 2,
         tone: statusTone,
       };
     });
 
-    const upstreamNodes: GraphNode[] = tenants.map((tenant, index) => {
-      const statusTone = tenant.upstreamStatus === "up"
-        ? "var(--success)"
-        : tenant.upstreamStatus === "down"
-          ? "var(--danger)"
-          : "var(--muted)";
-      let urlLabel = tenant.upstreamURL;
-      try { urlLabel = new URL(tenant.upstreamURL).host; } catch { /* keep full URL */ }
-      return {
-        id: `upstream:${tenant.id}`,
-        kind: "upstream",
-        label: urlLabel,
-        meta: tenant.upstreamStatus === "up"
-          ? `↑ Reachable · ${tenant.upstreamLatencyMs ?? 0}ms`
-          : tenant.upstreamStatus === "down"
-            ? `↓ ${tenant.upstreamError || "Unreachable"}`
-            : "No health data",
-        stats: tenant.upstreamLastChecked
-          ? `Checked ${new Date(tenant.upstreamLastChecked).toLocaleTimeString()}`
-          : tenant.healthCheckPath
-            ? "Awaiting first check"
-            : undefined,
-        x: LANE_X.upstream,
-        y: tenantY[index] ?? sceneHeight / 2,
-        tone: statusTone,
-      };
-    });
+    // Build a flat list of upstream entries: one per tenant_upstreams record when configured,
+    // otherwise one per tenant (using the main upstreamURL + health fields).
+    type UpstreamEntry = {
+      nodeId: string;
+      label: string;
+      meta: string;
+      statsText: string | undefined;
+      tone: string;
+      fromTenantNodeId: string;
+      isDown: boolean;
+      isReachable: boolean;
+      upstreamURL: string;
+    };
+    const upstreamEntries: UpstreamEntry[] = [];
+    for (const tenant of tenants) {
+      const extras = tenant.upstreams ?? [];
+      const fromTenantNodeId = `tenant:${tenant.id}`;
+      if (extras.length > 0) {
+        for (const up of extras) {
+          const tone =
+            up.status === "up" ? "var(--success)" : up.status === "down" ? "var(--danger)" : "var(--muted)";
+          let urlLabel = up.upstreamURL;
+          try {
+            urlLabel = new URL(up.upstreamURL).host;
+          } catch {
+            /* keep full URL */
+          }
+          upstreamEntries.push({
+            nodeId: `upstream:${up.id}`,
+            label: up.isPrimary ? `★ ${urlLabel}` : urlLabel,
+            meta:
+              up.status === "up"
+                ? `↑ Reachable · ${up.latencyMs ?? 0}ms`
+                : up.status === "down"
+                  ? `↓ ${up.error || "Unreachable"}`
+                  : "No health data",
+            statsText: up.lastChecked
+              ? `Checked ${new Date(up.lastChecked).toLocaleTimeString()}`
+              : "Awaiting first check",
+            tone,
+            fromTenantNodeId,
+            isDown: up.status === "down",
+            isReachable: up.status === "up",
+            upstreamURL: up.upstreamURL,
+          });
+        }
+      } else {
+        const tone =
+          tenant.upstreamStatus === "up"
+            ? "var(--success)"
+            : tenant.upstreamStatus === "down"
+              ? "var(--danger)"
+              : "var(--muted)";
+        let urlLabel = tenant.upstreamURL;
+        try {
+          urlLabel = new URL(tenant.upstreamURL).host;
+        } catch {
+          /* keep full URL */
+        }
+        upstreamEntries.push({
+          nodeId: `upstream:${tenant.id}`,
+          label: urlLabel,
+          meta:
+            tenant.upstreamStatus === "up"
+              ? `↑ Reachable · ${tenant.upstreamLatencyMs ?? 0}ms`
+              : tenant.upstreamStatus === "down"
+                ? `↓ ${tenant.upstreamError || "Unreachable"}`
+                : "No health data",
+          statsText: tenant.upstreamLastChecked
+            ? `Checked ${new Date(tenant.upstreamLastChecked).toLocaleTimeString()}`
+            : tenant.healthCheckPath
+              ? "Awaiting first check"
+              : undefined,
+          tone,
+          fromTenantNodeId,
+          isDown: tenant.upstreamStatus === "down",
+          isReachable: tenant.upstreamStatus === "up",
+          upstreamURL: tenant.upstreamURL,
+        });
+      }
+    }
+
+    const upstreamYArr = distributePositions(upstreamEntries.length || 1, 220, sceneHeight - 180);
+    const upstreamNodes: GraphNode[] = upstreamEntries.map((entry, i) => ({
+      id: entry.nodeId,
+      kind: "upstream" as const,
+      label: entry.label,
+      meta: entry.meta,
+      stats: entry.statsText,
+      x: LANE_X.upstream,
+      y: upstreamYArr[i] ?? sceneHeight / 2,
+      tone: entry.tone,
+    }));
 
     const allNodes = [...tokenNodes, ...routeNodes, ...tenantNodes, ...upstreamNodes];
     const tenantNodeByTenantID = new Map(tenants.map((tenant, index) => [tenant.tenantID, tenantNodes[index]]));
     const routeNodeByRouteID = new Map(routes.map((route, index) => [route.id, routeNodes[index]]));
     const hotRouteKeys = new Set(activeAudits.map((event) => `route:${event.routeSlug}:${event.tenantID}`));
     const hotTokenKeys = new Set(activeAudits.map((event) => `token:${event.tokenID}:${event.routeSlug}`));
+    const hotUpstreamOrigins = new Set(
+      activeAudits.map((e) => {
+        try { return new URL(e.upstreamURL).origin; } catch { return e.upstreamURL; }
+      }),
+    );
 
     const tokenEdges: GraphEdge[] = [];
     for (const token of tokens) {
@@ -502,14 +591,19 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       })
       .filter(Boolean) as GraphEdge[];
 
-    const upstreamEdges: GraphEdge[] = tenants.map((tenant) => ({
-      id: `edge:upstream:${tenant.id}`,
-      from: `tenant:${tenant.id}`,
-      to: `upstream:${tenant.id}`,
-      kind: "upstream",
-      hot: false,
-      error: tenant.upstreamStatus === "down",
-    }));
+    const upstreamEdges: GraphEdge[] = upstreamEntries.map((entry) => {
+      let upstreamOrigin = entry.upstreamURL;
+      try { upstreamOrigin = new URL(entry.upstreamURL).origin; } catch { /* keep as-is */ }
+      return {
+        id: `edge:${entry.fromTenantNodeId}:${entry.nodeId}`,
+        from: entry.fromTenantNodeId,
+        to: entry.nodeId,
+        kind: "upstream" as const,
+        hot: hotUpstreamOrigins.has(upstreamOrigin),
+        error: entry.isDown,
+        reachable: entry.isReachable,
+      };
+    });
 
     return {
       nodes: allNodes,
@@ -992,11 +1086,15 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                       ? "topology-flow-line topology-flow-line--error"
                       : edge.hot
                         ? "topology-flow-line topology-flow-line--hot"
-                        : "topology-flow-line";
+                        : edge.reachable
+                          ? "topology-flow-line topology-flow-line--reachable"
+                          : "topology-flow-line";
                   const glowClass = edge.error
                     ? "topology-flow-line topology-flow-line--glow-error"
-                    : "topology-flow-line topology-flow-line--glow";
-                  const packetColor = edge.error ? "var(--danger)" : edge.kind === "binding" ? "var(--success)" : "var(--accent)";
+                    : edge.reachable
+                      ? "topology-flow-line topology-flow-line--glow-reachable"
+                      : "topology-flow-line topology-flow-line--glow";
+                  const packetColor = edge.error ? "var(--danger)" : (edge.kind === "binding" || edge.kind === "upstream") ? "var(--success)" : "var(--accent)";
 
                   return (
                     <g key={edge.id} opacity={active ? 1 : 0.12}>
@@ -1015,6 +1113,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                           </circle>
                         </>
                       )}
+
                     </g>
                   );
                 })}

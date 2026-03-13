@@ -274,6 +274,24 @@ var schemaMigrations = []migration{
 			`CREATE UNIQUE INDEX IF NOT EXISTS idx_traffic_stats_upsert ON traffic_stats (bucket_start, route_slug, tenant_id, token_id)`,
 		},
 	},
+	{
+		version: 9,
+		name:    "upstream_health_per_url",
+		statements: []string{
+			// Drop the old single-row-per-tenant health table so we can replace it with one
+			// that tracks health per individual upstream URL (composite PK).
+			`DROP TABLE IF EXISTS upstream_health`,
+			`CREATE TABLE upstream_health (
+				tenant_id   TEXT NOT NULL,
+				upstream_url TEXT NOT NULL DEFAULT '',
+				status       TEXT NOT NULL DEFAULT 'unknown',
+				last_checked_at TIMESTAMP NOT NULL,
+				latency_ms   INTEGER NOT NULL DEFAULT 0,
+				error        TEXT NOT NULL DEFAULT '',
+				PRIMARY KEY (tenant_id, upstream_url)
+			)`,
+		},
+	},
 }
 
 func (store *sqlStore) runMigrations(ctx context.Context) error {

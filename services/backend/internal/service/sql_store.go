@@ -1128,17 +1128,17 @@ func (store *sqlStore) ListAuditsPaginated(ctx context.Context, limit, offset in
 
 func (store *sqlStore) UpsertUpstreamHealth(ctx context.Context, health upstreamHealthRecord) error {
 	_, err := store.execContext(ctx,
-		`INSERT INTO upstream_health (tenant_id, status, last_checked_at, latency_ms, error)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(tenant_id) DO UPDATE SET status=?, last_checked_at=?, latency_ms=?, error=?`,
-		health.TenantID, health.Status, health.LastCheckedAt, health.LatencyMs, health.Error,
+		`INSERT INTO upstream_health (tenant_id, upstream_url, status, last_checked_at, latency_ms, error)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(tenant_id, upstream_url) DO UPDATE SET status=?, last_checked_at=?, latency_ms=?, error=?`,
+		health.TenantID, health.UpstreamURL, health.Status, health.LastCheckedAt, health.LatencyMs, health.Error,
 		health.Status, health.LastCheckedAt, health.LatencyMs, health.Error,
 	)
 	return err
 }
 
 func (store *sqlStore) ListUpstreamHealth(ctx context.Context) ([]upstreamHealthRecord, error) {
-	rows, err := store.queryContext(ctx, `SELECT tenant_id, status, last_checked_at, latency_ms, error FROM upstream_health`)
+	rows, err := store.queryContext(ctx, `SELECT tenant_id, upstream_url, status, last_checked_at, latency_ms, error FROM upstream_health`)
 	if err != nil {
 		return nil, err
 	}
@@ -1147,7 +1147,7 @@ func (store *sqlStore) ListUpstreamHealth(ctx context.Context) ([]upstreamHealth
 	items := make([]upstreamHealthRecord, 0)
 	for rows.Next() {
 		var h upstreamHealthRecord
-		if err := rows.Scan(&h.TenantID, &h.Status, &h.LastCheckedAt, &h.LatencyMs, &h.Error); err != nil {
+		if err := rows.Scan(&h.TenantID, &h.UpstreamURL, &h.Status, &h.LastCheckedAt, &h.LatencyMs, &h.Error); err != nil {
 			return nil, err
 		}
 		items = append(items, h)
@@ -1191,6 +1191,23 @@ func (store *sqlStore) CreateTenantUpstream(ctx context.Context, upstream tenant
 
 func (store *sqlStore) DeleteTenantUpstream(ctx context.Context, id string) error {
 	result, err := store.execContext(ctx, `DELETE FROM tenant_upstreams WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("upstream not found")
+	}
+	return nil
+}
+
+func (store *sqlStore) UpdateTenantUpstream(ctx context.Context, id, upstreamURL string, weight int, isPrimary bool) error {
+	result, err := store.execContext(ctx,
+		`UPDATE tenant_upstreams SET upstream_url = ?, weight = ?, is_primary = ? WHERE id = ?`,
+		upstreamURL, weight, isPrimary, id)
 	if err != nil {
 		return err
 	}

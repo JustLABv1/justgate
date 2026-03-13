@@ -267,11 +267,6 @@ func (s *Service) handleTenantUpstreams(writer http.ResponseWriter, request *htt
 
 func (s *Service) handleTenantUpstreamByID(writer http.ResponseWriter, request *http.Request) {
 	// Path: /api/v1/admin/tenant-upstream/{upstreamID}
-	if request.Method != http.MethodDelete {
-		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
 	upstreamID := strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tenant-upstream/")
 	upstreamID = strings.Trim(upstreamID, "/")
 	if upstreamID == "" || strings.Contains(upstreamID, "/") {
@@ -279,17 +274,50 @@ func (s *Service) handleTenantUpstreamByID(writer http.ResponseWriter, request *
 		return
 	}
 
-	if err := s.store.DeleteTenantUpstream(request.Context(), upstreamID); err != nil {
-		status := http.StatusInternalServerError
-		if err.Error() == "upstream not found" {
-			status = http.StatusNotFound
+	switch request.Method {
+	case http.MethodPatch:
+		var payload struct {
+			UpstreamURL string `json:"upstreamURL"`
+			Weight      int    `json:"weight"`
+			IsPrimary   bool   `json:"isPrimary"`
 		}
-		writeJSON(writer, status, map[string]string{"error": err.Error()})
-		return
-	}
+		if err := decodeJSON(request, &payload); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if payload.UpstreamURL == "" {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "upstreamURL is required"})
+			return
+		}
+		if payload.Weight <= 0 {
+			payload.Weight = 1
+		}
+		if err := s.store.UpdateTenantUpstream(request.Context(), upstreamID, payload.UpstreamURL, payload.Weight, payload.IsPrimary); err != nil {
+			status := http.StatusInternalServerError
+			if err.Error() == "upstream not found" {
+				status = http.StatusNotFound
+			}
+			writeJSON(writer, status, map[string]string{"error": err.Error()})
+			return
+		}
+		s.recordAdminAction(request.Context(), "update_upstream", "tenant_upstream", upstreamID, payload.UpstreamURL)
+		writer.WriteHeader(http.StatusNoContent)
 
-	s.recordAdminAction(request.Context(), "delete_upstream", "tenant_upstream", upstreamID, "")
-	writer.WriteHeader(http.StatusNoContent)
+	case http.MethodDelete:
+		if err := s.store.DeleteTenantUpstream(request.Context(), upstreamID); err != nil {
+			status := http.StatusInternalServerError
+			if err.Error() == "upstream not found" {
+				status = http.StatusNotFound
+			}
+			writeJSON(writer, status, map[string]string{"error": err.Error()})
+			return
+		}
+		s.recordAdminAction(request.Context(), "delete_upstream", "tenant_upstream", upstreamID, "")
+		writer.WriteHeader(http.StatusNoContent)
+
+	default:
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
 }
 
 // ── Session management ─────────────────────────────────────────────────

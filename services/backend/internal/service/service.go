@@ -106,6 +106,7 @@ type dataStore interface {
 	ListTenantUpstreams(ctx context.Context, tenantID string) ([]tenantUpstreamRecord, error)
 	CreateTenantUpstream(ctx context.Context, upstream tenantUpstreamRecord) error
 	DeleteTenantUpstream(ctx context.Context, id string) error
+	UpdateTenantUpstream(ctx context.Context, id, upstreamURL string, weight int, isPrimary bool) error
 	// Circuit breaker
 	GetCircuitBreaker(ctx context.Context, routeID string) (circuitBreakerRecord, bool, error)
 	UpsertCircuitBreaker(ctx context.Context, cb circuitBreakerRecord) error
@@ -202,17 +203,18 @@ type stats struct {
 }
 
 type tenantSummary struct {
-	ID                  string `json:"id"`
-	Name                string `json:"name"`
-	TenantID            string `json:"tenantID"`
-	Upstream            string `json:"upstreamURL"`
-	AuthMode            string `json:"authMode"`
-	HeaderName          string `json:"headerName"`
-	HealthCheckPath     string `json:"healthCheckPath,omitempty"`
-	UpstreamStatus      string `json:"upstreamStatus,omitempty"`
-	UpstreamLatencyMs   int    `json:"upstreamLatencyMs,omitempty"`
-	UpstreamLastChecked string `json:"upstreamLastChecked,omitempty"`
-	UpstreamError       string `json:"upstreamError,omitempty"`
+	ID                  string                  `json:"id"`
+	Name                string                  `json:"name"`
+	TenantID            string                  `json:"tenantID"`
+	Upstream            string                  `json:"upstreamURL"`
+	AuthMode            string                  `json:"authMode"`
+	HeaderName          string                  `json:"headerName"`
+	HealthCheckPath     string                  `json:"healthCheckPath,omitempty"`
+	UpstreamStatus      string                  `json:"upstreamStatus,omitempty"`
+	UpstreamLatencyMs   int                     `json:"upstreamLatencyMs,omitempty"`
+	UpstreamLastChecked string                  `json:"upstreamLastChecked,omitempty"`
+	UpstreamError       string                  `json:"upstreamError,omitempty"`
+	Upstreams           []tenantSummaryUpstream `json:"upstreams,omitempty"`
 }
 
 type routeSummary struct {
@@ -428,6 +430,7 @@ type oidcOrgMappingRecord struct {
 
 type upstreamHealthRecord struct {
 	TenantID      string
+	UpstreamURL   string // empty = main tenant upstream; non-empty = individual URL from tenant_upstreams
 	Status        string
 	LastCheckedAt time.Time
 	LatencyMs     int
@@ -549,6 +552,10 @@ type tenantSummaryUpstream struct {
 	UpstreamURL string `json:"upstreamURL"`
 	Weight      int    `json:"weight"`
 	IsPrimary   bool   `json:"isPrimary"`
+	Status      string `json:"status,omitempty"`
+	LatencyMs   int    `json:"latencyMs,omitempty"`
+	Error       string `json:"error,omitempty"`
+	LastChecked string `json:"lastChecked,omitempty"`
 }
 
 type requestContextKey string
@@ -1171,11 +1178,12 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 
 	tenantItems := make([]tenantSummary, 0, len(tenants))
 
-	// Load upstream health data to enrich tenant summaries
+	// Load upstream health data to enrich tenant summaries.
+	// Key: tenantID + "|" + upstreamURL  (upstreamURL matches exactly what was stored)
 	healthRecords, _ := s.store.ListUpstreamHealth(ctx)
 	healthMap := make(map[string]upstreamHealthRecord, len(healthRecords))
 	for _, h := range healthRecords {
-		healthMap[h.TenantID] = h
+		healthMap[h.TenantID+"|"+h.UpstreamURL] = h
 	}
 
 	for _, tenant := range tenants {
@@ -1188,11 +1196,32 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 			HeaderName:      tenant.HeaderName,
 			HealthCheckPath: tenant.HealthCheckPath,
 		}
-		if h, ok := healthMap[tenant.TenantID]; ok {
+		// Main upstream health
+		if h, ok := healthMap[tenant.TenantID+"|"+tenant.Upstream]; ok {
 			ts.UpstreamStatus = h.Status
 			ts.UpstreamLatencyMs = h.LatencyMs
 			ts.UpstreamLastChecked = h.LastCheckedAt.Format(time.RFC3339)
 			ts.UpstreamError = h.Error
+		}
+		// Additional upstream entries with per-URL health
+		if ups, err := s.store.ListTenantUpstreams(ctx, tenant.TenantID); err == nil && len(ups) > 0 {
+			upstreamItems := make([]tenantSummaryUpstream, 0, len(ups))
+			for _, up := range ups {
+				item := tenantSummaryUpstream{
+					ID:          up.ID,
+					UpstreamURL: up.UpstreamURL,
+					Weight:      up.Weight,
+					IsPrimary:   up.IsPrimary,
+				}
+				if h, ok := healthMap[tenant.TenantID+"|"+up.UpstreamURL]; ok {
+					item.Status = h.Status
+					item.LatencyMs = h.LatencyMs
+					item.Error = h.Error
+					item.LastChecked = h.LastCheckedAt.Format(time.RFC3339)
+				}
+				upstreamItems = append(upstreamItems, item)
+			}
+			ts.Upstreams = upstreamItems
 		}
 		tenantItems = append(tenantItems, ts)
 	}
@@ -1305,79 +1334,96 @@ func (s *Service) checkUpstreamHealth(client *http.Client) {
 	}
 
 	for _, tenant := range tenants {
-		checkURL := tenant.Upstream
-		if tenant.HealthCheckPath != "" {
-			checkURL = strings.TrimRight(tenant.Upstream, "/") + "/" + strings.TrimLeft(tenant.HealthCheckPath, "/")
+		// Always check the main tenant upstream URL.
+		s.probeSingleUpstream(ctx, client, tenant.TenantID, tenant.Upstream, tenant.HealthCheckPath)
+
+		// Also check every additional upstream registered in tenant_upstreams.
+		if ups, err := s.store.ListTenantUpstreams(ctx, tenant.TenantID); err == nil {
+			for _, up := range ups {
+				s.probeSingleUpstream(ctx, client, tenant.TenantID, up.UpstreamURL, tenant.HealthCheckPath)
+			}
 		}
+	}
+}
 
-		start := time.Now()
-		req, err := http.NewRequestWithContext(ctx, http.MethodHead, checkURL, nil)
-		if err != nil {
-			now := time.Now().UTC()
-			errStr := fmt.Sprintf("invalid URL: %s", err.Error())
-			_ = s.store.UpsertUpstreamHealth(ctx, upstreamHealthRecord{
-				TenantID:      tenant.TenantID,
-				Status:        "down",
-				LastCheckedAt: now,
-				LatencyMs:     0,
-				Error:         errStr,
-			})
-			_ = s.store.RecordHealthHistory(ctx, healthHistoryRecord{
-				TenantID:  tenant.TenantID,
-				Status:    "down",
-				LatencyMs: 0,
-				Error:     errStr,
-				CheckedAt: now,
-			})
-			continue
-		}
+// probeSingleUpstream performs one health-check probe of baseURL and persists the result.
+// The healthCheckPath is appended when provided (same semantics as the main tenant check).
+func (s *Service) probeSingleUpstream(ctx context.Context, client *http.Client, tenantID, baseURL, healthCheckPath string) {
+	checkURL := baseURL
+	if healthCheckPath != "" {
+		checkURL = strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(healthCheckPath, "/")
+	}
 
-		resp, err := client.Do(req)
-		latency := time.Since(start).Milliseconds()
-
-		if err != nil {
-			now := time.Now().UTC()
-			_ = s.store.UpsertUpstreamHealth(ctx, upstreamHealthRecord{
-				TenantID:      tenant.TenantID,
-				Status:        "down",
-				LastCheckedAt: now,
-				LatencyMs:     int(latency),
-				Error:         err.Error(),
-			})
-			_ = s.store.RecordHealthHistory(ctx, healthHistoryRecord{
-				TenantID:  tenant.TenantID,
-				Status:    "down",
-				LatencyMs: int(latency),
-				Error:     err.Error(),
-				CheckedAt: now,
-			})
-			continue
-		}
-		resp.Body.Close()
-
-		status := "up"
-		errMsg := ""
-		if resp.StatusCode >= 500 {
-			status = "down"
-			errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
-		}
-
+	start := time.Now()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, checkURL, nil)
+	if err != nil {
 		now := time.Now().UTC()
+		errStr := fmt.Sprintf("invalid URL: %s", err.Error())
 		_ = s.store.UpsertUpstreamHealth(ctx, upstreamHealthRecord{
-			TenantID:      tenant.TenantID,
-			Status:        status,
+			TenantID:      tenantID,
+			UpstreamURL:   baseURL,
+			Status:        "down",
 			LastCheckedAt: now,
-			LatencyMs:     int(latency),
-			Error:         errMsg,
+			LatencyMs:     0,
+			Error:         errStr,
 		})
 		_ = s.store.RecordHealthHistory(ctx, healthHistoryRecord{
-			TenantID:  tenant.TenantID,
-			Status:    status,
-			LatencyMs: int(latency),
-			Error:     errMsg,
+			TenantID:  tenantID,
+			Status:    "down",
+			LatencyMs: 0,
+			Error:     errStr,
 			CheckedAt: now,
 		})
+		return
 	}
+
+	resp, err := client.Do(req)
+	latency := time.Since(start).Milliseconds()
+
+	if err != nil {
+		now := time.Now().UTC()
+		_ = s.store.UpsertUpstreamHealth(ctx, upstreamHealthRecord{
+			TenantID:      tenantID,
+			UpstreamURL:   baseURL,
+			Status:        "down",
+			LastCheckedAt: now,
+			LatencyMs:     int(latency),
+			Error:         err.Error(),
+		})
+		_ = s.store.RecordHealthHistory(ctx, healthHistoryRecord{
+			TenantID:  tenantID,
+			Status:    "down",
+			LatencyMs: int(latency),
+			Error:     err.Error(),
+			CheckedAt: now,
+		})
+		return
+	}
+	resp.Body.Close()
+
+	status := "up"
+	errMsg := ""
+	if resp.StatusCode >= 500 {
+		status = "down"
+		errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+
+	now := time.Now().UTC()
+	_ = s.store.UpsertUpstreamHealth(ctx, upstreamHealthRecord{
+		TenantID:      tenantID,
+		UpstreamURL:   baseURL,
+		Status:        status,
+		LastCheckedAt: now,
+		LatencyMs:     int(latency),
+		Error:         errMsg,
+	})
+	_ = s.store.RecordHealthHistory(ctx, healthHistoryRecord{
+		TenantID:  tenantID,
+		Status:    status,
+		LatencyMs: int(latency),
+		Error:     errMsg,
+		CheckedAt: now,
+	})
 }
 
 func normalizeTenantPayload(payload *createTenantRequest, defaultHeaderName string) error {
@@ -1832,10 +1878,35 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
-	targetURL, err := url.Parse(route.UpstreamURL)
+	// Select upstream URL: prefer primary from tenant_upstreams (ordered primary DESC, weight DESC),
+	// skipping any upstream whose last health check recorded it as "down" so that a reachable
+	// non-primary is used instead of a known-dead primary.
+	selectedUpstreamURL := route.UpstreamURL
+	if tenantUps, lookupErr := s.store.ListTenantUpstreams(request.Context(), route.TenantID); lookupErr == nil && len(tenantUps) > 0 {
+		// Build a map of known health statuses for this tenant's upstreams.
+		healthStatus := map[string]string{}
+		if healthRecords, herr := s.store.ListUpstreamHealth(request.Context()); herr == nil {
+			for _, h := range healthRecords {
+				if h.TenantID == route.TenantID {
+					healthStatus[h.UpstreamURL] = h.Status
+				}
+			}
+		}
+		// Pick the first upstream that is not known-down; fall back to index 0 if all are down or unprobed.
+		selected := tenantUps[0]
+		for _, up := range tenantUps {
+			if healthStatus[up.UpstreamURL] != "down" {
+				selected = up
+				break
+			}
+		}
+		selectedUpstreamURL = selected.UpstreamURL
+	}
+
+	targetURL, err := url.Parse(selectedUpstreamURL)
 	if err != nil {
-		s.logger.Error("proxy upstream configuration is invalid", "route_slug", parts[0], "upstream", route.UpstreamURL, "error", err)
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, route.UpstreamURL, 0)
+		s.logger.Error("proxy upstream configuration is invalid", "route_slug", parts[0], "upstream", selectedUpstreamURL, "error", err)
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, selectedUpstreamURL, 0)
 		s.recordTrafficStat(route, token, http.StatusBadGateway, 0)
 		writeJSON(writer, http.StatusBadGateway, map[string]string{"error": "invalid upstream configuration"})
 		return

@@ -102,9 +102,9 @@ export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isO
                 </div>
                 <div className="enterprise-panel grid gap-4 p-4">
                   <TextField className="grid gap-2">
-                    <Label>Upstream URL</Label>
+                    <Label>Default Upstream URL</Label>
                     <Input onChange={(event) => setFormState((current) => ({ ...current, upstreamURL: event.target.value }))} value={formState.upstreamURL} />
-                    <div className="enterprise-note">Tenant traffic destination origin.</div>
+                    <div className="enterprise-note">Fallback origin used when no load-balancing upstreams are configured. Load-balancing upstreams (configured below) take precedence over this URL.</div>
                   </TextField>
                   <Select
                     className="w-full"

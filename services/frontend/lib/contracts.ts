@@ -31,6 +31,8 @@ export interface TenantSummary {
   upstreamLatencyMs?: number;
   upstreamLastChecked?: string;
   upstreamError?: string;
+  /** Additional configured upstream targets with per-URL health status */
+  upstreams?: TenantUpstream[];
 }
 
 export interface RouteSummary {
@@ -257,6 +259,11 @@ export interface TenantUpstream {
   upstreamURL: string;
   weight: number;
   isPrimary: boolean;
+  /** Health check result for this specific upstream URL */
+  status?: string;
+  latencyMs?: number;
+  error?: string;
+  lastChecked?: string;
 }
 
 // ── Sessions ────────────────────────────────────────────────────

@@ -266,3 +266,17 @@ a {
   stroke-dasharray: unset;
   opacity: 0.5;
 }
+
+.topology-flow-line--reachable {
+  stroke: color-mix(in oklab, var(--success) 62%, var(--border));
+  stroke-width: 3;
+  stroke-dasharray: 10 7;
+  animation: topology-flow-dash 3.2s linear infinite;
+}
+
+.topology-flow-line--glow-reachable {
+  stroke: color-mix(in oklab, var(--success) 35%, transparent);
+  stroke-width: 12;
+  stroke-dasharray: unset;
+  opacity: 0.4;
+}

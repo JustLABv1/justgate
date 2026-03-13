@@ -123,9 +123,9 @@ export function CreateTenantForm({ existingCount, disabled = false, isOpen, onOp
                 </div>
                 <div className="enterprise-panel grid gap-4 p-4">
                   <TextField className="grid gap-2">
-                    <Label>Upstream URL</Label>
+                    <Label>Default Upstream URL</Label>
                     <Input placeholder="https://mimir.internal.example" required type="url" value={formState.upstreamURL} onChange={(event) => setFormState((current) => ({ ...current, upstreamURL: event.target.value }))} />
-                    <div className="enterprise-note">Base upstream origin for tenant traffic.</div>
+                    <div className="enterprise-note">Fallback origin used when no load-balancing upstreams are configured. You can add load-balancing upstreams after creation — they take precedence over this URL.</div>
                   </TextField>
                   <Select
                     className="w-full"
