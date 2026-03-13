@@ -21,6 +21,25 @@ export function getPublicBaseUrl() {
   return process.env.NEXTAUTH_URL?.replace(/\/$/, "") || "";
 }
 
+/**
+ * Public-facing URL for reaching the backend from the browser.
+ *
+ * By default this equals NEXTAUTH_URL (works when the reverse proxy routes
+ * all traffic – including /api/v1/* – to the backend).
+ *
+ * Set JUST_GATE_PUBLIC_BACKEND_URL when the backend is exposed on a different
+ * domain or port than the frontend, e.g. when a reverse proxy only forwards
+ * port 3000 and the backend is reachable via a separate subdomain/port:
+ *   JUST_GATE_PUBLIC_BACKEND_URL=https://api.justgate.example.com
+ */
+export function getPublicBackendUrl() {
+  return (
+    process.env.JUST_GATE_PUBLIC_BACKEND_URL?.replace(/\/$/, "") ||
+    getPublicBaseUrl() ||
+    getBackendBaseUrl()
+  );
+}
+
 export async function getAdminRequestHeaders(): Promise<HeadersInit> {
   const session = await auth();
   if (!session?.user?.id) {

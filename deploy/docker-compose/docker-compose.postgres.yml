@@ -47,10 +47,9 @@ services:
     ports:
       - "${FRONTEND_PORT:-3000}:3000"   # host:container – container always listens on 3000
       - "${BACKEND_PORT:-9090}:9090"   # host:container – container always listens on 9090
-    volumes:
-      # Uncomment to mount a custom CA certificate:
-      # - ./certs/my-ca.pem:/certs/my-ca.pem:ro
-      []  # no volumes needed for postgres mode
+    # no extra volumes needed for postgres mode
+    # volumes:
+    #   - ./certs/my-ca.pem:/certs/my-ca.pem:ro  # uncomment to mount a custom CA cert
     environment:
       # ── Ports ────────────────────────────────────────────────────
       # Container-internal ports are always fixed at 3000 (frontend) and
@@ -81,8 +80,10 @@ services:
       JUST_GATE_OIDC_CLIENT_SECRET: ${JUST_GATE_OIDC_CLIENT_SECRET:-}
       JUST_GATE_OIDC_NAME:          ${JUST_GATE_OIDC_NAME:-}
       JUST_GATE_REDIS_URL:          ${JUST_GATE_REDIS_URL:-}
-      JUST_GATE_EXTRA_CA_FILE:      ${JUST_GATE_EXTRA_CA_FILE:-}
-
+      JUST_GATE_EXTRA_CA_FILE:      ${JUST_GATE_EXTRA_CA_FILE:-}      # WebSocket / reverse-proxy: set this when the backend is reachable at a
+      # different public URL than the frontend (e.g. a separate subdomain).
+      # Leave unset when the reverse proxy routes /api/v1/* to the backend.
+      JUST_GATE_PUBLIC_BACKEND_URL: ${JUST_GATE_PUBLIC_BACKEND_URL:-}
 volumes:
   postgres-data:
     driver: local

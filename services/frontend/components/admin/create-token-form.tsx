@@ -119,7 +119,6 @@ export function CreateTokenForm({
       setFormState(toFormState(initialTenantID, initialScopes));
       setPendingReload(true);
       onCreated?.(result as IssuedToken);
-      handleOpenChange(false);
     });
   }
 
