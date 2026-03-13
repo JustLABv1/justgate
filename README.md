@@ -6,7 +6,7 @@
 
 **Multi-tenant proxy gateway with an admin UI**
 
-Route authenticated bearer tokens to upstream services, inject tenant identity headers, and audit every request — all managed through a self-hosted web interface.
+Route authenticated bearer tokens to upstream services, inject tenant identity headers, enforce rate limits and IP policies, and audit every request — all managed through a self-hosted web interface.
 
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](services/backend/go.mod)
@@ -52,16 +52,23 @@ Route authenticated bearer tokens to upstream services, inject tenant identity h
 
 ## Overview
 
-JustGate sits in front of any HTTP upstream (Grafana Mimir, Loki, Tempo, custom APIs, …) and enforces multi-tenant access control via scoped bearer tokens. An organization admin manages tenants, routes, and tokens through a web UI; remote clients authenticate with those tokens and JustGate proxies their requests to the correct upstream, injecting the configured tenant identity header automatically.
+JustGate sits in front of any HTTP upstream (Grafana Mimir, Loki, Tempo, custom APIs, …) and enforces multi-tenant access control via scoped bearer tokens. An organisation admin manages tenants, routes, and tokens through a web UI; remote clients authenticate with those tokens and JustGate proxies their requests to the correct upstream — injecting the configured tenant identity header, enforcing rate limits, filtering by IP, and tripping circuit breakers when the upstream is unhealthy.
 
 ```
 Client (bearer token)
     │
     ▼
-┌─────────────────────────┐
-│   JustGate  (/proxy/…)  │   ← validates token, resolves route & tenant
-└────────────┬────────────┘
-             │  X-Scope-OrgID: <tenant-id>   (or any custom header)
+┌────────────────────────────────────────────────┐
+│  JustGate  (/proxy/{slug}/…)                   │
+│                                                │
+│  1. IP allow/deny check                        │
+│  2. Token validation (scope, expiry, active)   │
+│  3. Rate limiting (per-route or per-token)     │
+│  4. Circuit breaker                            │
+│  5. Proxy  →  inject tenant identity header    │
+│  6. Record audit + traffic stat                │
+└────────────────────────────────────────────────┘
+             │  X-Scope-OrgID: <tenant-id>
              ▼
      Upstream service
 ```
@@ -70,16 +77,35 @@ Client (bearer token)
 
 ## Features
 
+### Core proxy
 - **Multi-tenancy** — unlimited tenants, each with their own upstream URL and identity header value
-- **Scoped tokens** — fine-grained token scopes per route; token expiry and revocation
-- **Route management** — slug-based routes mapped to tenant + upstream path
-- **Audit log** — every proxied request is recorded with method, status code, and upstream URL; paginated with configurable page size
-- **Topology view** — live WebSocket-streamed map of active tenants, routes, and tokens; auto-reconnects on organisation switch
+- **Scoped bearer tokens** — fine-grained scopes per route; expiry, revocation, and per-token rate limits
+- **Slug-based routes** — stable `GET /proxy/{slug}/…` entry points mapped to tenant + upstream path
+- **Method allowlisting** — restrict which HTTP methods a route accepts
+- **IP allow / deny lists** — per-route CIDR allowlists and denylists (IPv4 and IPv6)
+- **Rate limiting** — configurable requests-per-minute (RPM) and burst; defined at route level or token level; Redis-backed or in-memory
+- **Circuit breaker** — automatically stops forwarding to unhealthy upstreams and recovers when they come back
+- **Load balancing** — multiple weighted upstream URLs per tenant with primary/replica designation
+
+### Observability
+- **Audit log** — every proxied request recorded with method, status, upstream URL, and latency; paginated
+- **Traffic analytics dashboard** — 5-minute bucketed request volume, error rate, and average latency charts with 24 h / prior 24 h comparison; all gateway-rejected requests (429, 403, 502) are included in the stats
+- **Upstream health checks** — periodic reachability checks per tenant with history; latency tracking
+- **Live topology map** — WebSocket-streamed interactive graph of tokens → routes → tenants → upstreams; edges turn red within 30 seconds of an error and clear automatically; animated packet flow on active traffic
+- **Route tester** — built-in HTTP client in the admin UI with route/token selectors, auto-filled URL, `Authorization` header injection, and a live cURL command preview with one-click copy
+
+### Administration
 - **Organisation management** — multi-org support with invite links and member roles
 - **Platform Admin** — superadmin role with cross-organisation visibility: manage all users, orgs, and platform admin grants
+- **OIDC org mappings** — auto-assign users to organisations based on OIDC group claims
 - **Auth flexibility** — local accounts (email + password) and/or OIDC single sign-on
-- **Persistence** — SQLite (zero-config) or PostgreSQL
-- **Self-contained** — single Go binary for the backend; Next.js standalone bundle for the frontend
+- **Session management** — view and revoke active admin sessions
+
+### Operations
+- **Persistence** — SQLite (zero-config, default) or PostgreSQL
+- **Zero-downtime schema migrations** — versioned migrations run automatically on startup
+- **Single binary backend** — one Go binary, no external runtime dependencies beyond the database
+- **Helm chart** — monolithic (single pod, SQLite) or microservice (split pods, PostgreSQL) deployment modes
 
 ---
 
@@ -116,9 +142,9 @@ services/
 
 **Request flow (proxy runtime):**
 1. Client sends `GET /proxy/{slug}/…` with a `Bearer <token>` header
-2. Go validates token scope, expiry, and active state
-3. Upstream request is forwarded with the tenant identity header injected
-4. Response is streamed back; audit record is written
+2. Go checks IP allowlist/denylist, validates the token (scope, expiry, active state), enforces rate limits, and checks the circuit breaker
+3. The upstream request is forwarded with the tenant identity header injected
+4. Response is streamed back; an audit record and a 5-minute traffic stat bucket are written asynchronously
 
 ---
 
@@ -231,6 +257,7 @@ docker compose up -d
 | `JUST_GATE_BACKEND_JWT_SECRET` | — | *(insecure dev default)* | Secret used to sign & verify admin JWTs |
 | `JUST_GATE_DATABASE_URL` | — | `sqlite://justgate.db` | Database connection — `sqlite://<path>` or `postgresql://…` |
 | `JUST_GATE_TENANT_HEADER` | — | `X-Scope-OrgID` | Header name injected into upstream requests to carry the tenant ID |
+| `JUST_GATE_REDIS_URL` | — | — | Redis connection URL (e.g. `redis://localhost:6379`). When set, rate limiting uses Redis instead of in-memory state. Required for multi-replica deployments. |
 | `JUSTGATE_INITIAL_ADMIN_EMAIL` | — | — | Email of the first platform admin. After this user signs in, they are automatically granted platform admin status (idempotent, retries for 10 min) |
 | `PORT` | — | `9090` | Backend HTTP listen port |
 
@@ -239,7 +266,7 @@ docker compose up -d
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `NEXTAUTH_SECRET` | **Yes** | — | NextAuth.js session signing secret |
-| `NEXTAUTH_URL` | **Yes** | — | Public base URL of the frontend (e.g. `https://justgate.example.com`) |
+| `NEXTAUTH_URL` | **Yes** | — | Public base URL of the frontend (e.g. `https://justgate.example.com`). Also used as the base URL displayed in the Route Tester. |
 | `JUST_GATE_BACKEND_URL` | — | `http://localhost:9090` | URL the frontend uses to reach the backend |
 | `JUST_GATE_BACKEND_JWT_SECRET` | **Yes** | — | Must match the backend's JWT secret |
 | `JUST_GATE_LOCAL_ACCOUNTS_ENABLED` | — | `true` | Enable email/password login |
@@ -304,6 +331,7 @@ helm install justgate deploy/helm/justgate \
 | `postgresql.auth.password` | — | **Required** when PostgreSQL is enabled |
 | `backend.tenantHeaderName` | `X-Scope-OrgID` | Upstream tenant identity header |
 | `backend.initialAdminEmail` | — | Email of the first platform admin (see [Platform Admin](#platform-admin)) |
+| `backend.redisUrl` | — | Redis URL for distributed rate limiting (multi-replica only) |
 | `ingress.enabled` | `false` | Enable Kubernetes Ingress |
 | `persistence.size` | `1Gi` | SQLite PVC size (PostgreSQL disabled only) |
 
@@ -349,6 +377,94 @@ After the first admin is set up, additional admins can be granted (or revoked) t
 | **Platform Admin → All Orgs** | View all organisations with member counts; delete organisations (cascades all resources) |
 | **Platform Admin → Platform Admins** | Grant or revoke the platform admin role by email |
 | **Platform Admin → Settings** | Configure OIDC / SSO provider and org mappings |
+
+---
+
+## Route & Token Configuration
+
+### Rate Limiting
+
+Rate limits can be set at the **route level** (applies to all tokens using that route) or the **token level** (applies regardless of route). Route-level limits take precedence when both are configured.
+
+| Field | Description |
+|---|---|
+| **Rate Limit RPM** | Maximum requests per minute. `0` disables rate limiting. |
+| **Rate Limit Burst** | Maximum burst size above the steady-state rate. Defaults to RPM/10 when left at `0`. |
+
+When a request is rejected by the rate limiter, JustGate returns `429 Too Many Requests` with a `Retry-After: 60` header. The event is recorded in both the audit log and the traffic analytics dashboard.
+
+By default rate limit counters are stored in-memory per process. For multi-replica deployments, configure `JUST_GATE_REDIS_URL` to share counters via Redis.
+
+### IP Allow / Deny Lists
+
+Per-route CIDR lists control which client IPs can use a route:
+
+| Field | Description |
+|---|---|
+| **Allow CIDRs** | Comma-separated CIDR list. If non-empty, only matching IPs are allowed. |
+| **Deny CIDRs** | Comma-separated CIDR list. Matching IPs are rejected with `403 Forbidden`. |
+
+Deny is checked before allow. Both IPv4 and IPv6 CIDRs are supported.
+
+### Auth Modes
+
+Each tenant can be configured with one of the following authentication modes:
+
+| Mode | Description |
+|---|---|
+| `header` | Tenant identity is injected as a request header (default). |
+| `jwt` | Tenant identity is injected as a signed JWT claim. |
+| `none` | No identity header is injected; the request is forwarded as-is. |
+
+---
+
+## Observability
+
+### Traffic Analytics Dashboard
+
+The dashboard aggregates proxy traffic into 5-minute buckets and displays:
+
+- **Request volume** over time (area chart with error overlay)
+- **24 h vs prior 24 h** comparison table for requests, error rate, and average latency
+- **KPI strip** — total requests, error rate, average latency, and prior-period request count
+
+Traffic stats are recorded for every proxied request, including gateway-rejected ones (429 too many requests, 403 forbidden, 502 bad gateway). Stats are scoped to the active organisation and filtered via a tenant JOIN so multi-org deployments always see their own data.
+
+### Live Topology Map
+
+The topology page shows a real-time graph of your configuration:
+
+```
+[ Token ] ──── [ Route ] ──── [ Tenant ] ──── [ Upstream ]
+```
+
+- **Green nodes / edges** — healthy, reachable
+- **Red nodes / edges** — errors or unreachable upstream (clears automatically after 30 s with no new errors)
+- **Animated packets** — visible on edges with traffic in the last 30 seconds
+- **Node inspector** — click any node to see details and available actions (edit, create connected resource)
+- **Draft mode** — create routes, tokens, or tenants directly on the graph without leaving the topology view
+
+### Route Tester
+
+Available from the **Routes** page, the Route Tester lets you fire ad-hoc HTTP requests through the proxy:
+
+- **Route selector** — pick a route to auto-fill the proxy URL and constrain the method dropdown to the route's allowed methods
+- **Token hints** — shows compatible active tokens for the selected route's tenant
+- **Auto-injected Authorization header** — paste a token secret and it is sent as `Bearer <secret>` automatically
+- **Extra headers** — add arbitrary headers alongside the auto-injected auth
+- **cURL preview** — live-generated `curl` command that reflects all current settings; one-click copy to clipboard
+
+### Upstream Health
+
+Each tenant includes optional health check configuration. JustGate periodically probes the upstream and stores:
+
+- Current status (`up` / `down` / `unknown`)
+- Latency in milliseconds
+- Last-checked timestamp
+- Last error message (if any)
+- History of the last 10 checks
+
+Health status is reflected in the topology map and tenant detail panel in real time.
 
 ---
 
@@ -532,14 +648,23 @@ All admin endpoints require a valid backend admin JWT (`Authorization: Bearer <j
 | `GET` | `/api/v1/admin/overview` | Summary counts and status |
 | `GET/POST` | `/api/v1/admin/tenants` | List / create tenants |
 | `GET/PUT/DELETE` | `/api/v1/admin/tenants/{id}` | Read / update / delete a tenant |
+| `GET/POST` | `/api/v1/admin/tenants/{id}/upstreams` | List / add load-balancing upstream URLs for a tenant |
+| `DELETE` | `/api/v1/admin/tenant-upstream/{upstreamID}` | Remove a tenant upstream |
+| `GET` | `/api/v1/admin/health-history` | Upstream health check history |
 | `GET/POST` | `/api/v1/admin/routes` | List / create routes |
 | `GET/PUT/DELETE` | `/api/v1/admin/routes/{id}` | Read / update / delete a route |
 | `GET/POST` | `/api/v1/admin/tokens` | List / issue tokens |
 | `GET/PATCH/DELETE` | `/api/v1/admin/tokens/{id}` | Read / revoke / delete a token |
 | `GET` | `/api/v1/admin/audit?page=1&pageSize=50` | Audit log (paginated) |
+| `GET` | `/api/v1/admin/traffic/stats?hours=24` | Traffic stat buckets |
+| `GET` | `/api/v1/admin/traffic/overview` | 24 h vs prior 24 h KPIs |
 | `GET` | `/api/v1/admin/topology` | Current topology snapshot |
 | `GET` | `/api/v1/admin/topology/stream` | Live topology (WebSocket) |
+| `GET` | `/api/v1/admin/search?q=…` | Global search across routes, tenants, and tokens |
+| `POST` | `/api/v1/admin/route-test` | Execute a test request through the proxy |
 | `GET/POST` | `/api/v1/admin/orgs` | List / create organisations |
+| `GET/POST` | `/api/v1/admin/sessions` | List / create admin sessions |
+| `DELETE` | `/api/v1/admin/sessions/{id}` | Revoke an admin session |
 | `GET` | `/api/v1/admin/platform/check` | Check caller's platform admin status |
 | `GET/POST` | `/api/v1/admin/platform/admins` | List platform admins / grant by email |
 | `DELETE` | `/api/v1/admin/platform/admins/{userID}` | Revoke platform admin |
