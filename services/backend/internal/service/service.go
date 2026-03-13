@@ -1802,12 +1802,14 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 
 	if token.TenantID != route.TenantID {
 		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusForbidden, route.UpstreamURL, 0)
+		s.recordTrafficStat(route, token, http.StatusForbidden, 0)
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "token is not valid for this tenant route"})
 		return
 	}
 
 	if route.RequiredScope != "" && !slices.Contains(token.Scopes, route.RequiredScope) {
 		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusForbidden, route.UpstreamURL, 0)
+		s.recordTrafficStat(route, token, http.StatusForbidden, 0)
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "token is missing the required scope"})
 		return
 	}
@@ -1824,6 +1826,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 	}
 	if rateLimitRPM > 0 && !s.rateLimiter.Allow(rateLimitKey, rateLimitRPM, rateLimitBurst) {
 		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusTooManyRequests, route.UpstreamURL, 0)
+		s.recordTrafficStat(route, token, http.StatusTooManyRequests, 0)
 		writer.Header().Set("Retry-After", "60")
 		writeJSON(writer, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
 		return
@@ -1833,6 +1836,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 	if err != nil {
 		s.logger.Error("proxy upstream configuration is invalid", "route_slug", parts[0], "upstream", route.UpstreamURL, "error", err)
 		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, route.UpstreamURL, 0)
+		s.recordTrafficStat(route, token, http.StatusBadGateway, 0)
 		writeJSON(writer, http.StatusBadGateway, map[string]string{"error": "invalid upstream configuration"})
 		return
 	}
