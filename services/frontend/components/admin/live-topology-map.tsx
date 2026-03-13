@@ -44,6 +44,7 @@ type GraphEdge = {
   to: string;
   kind: "access" | "binding" | "draft" | "upstream";
   hot: boolean;
+  error: boolean;
 };
 
 type CameraState = {
@@ -375,9 +376,11 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
 
     for (const route of routes) {
       const matchingAudits = recentAudits.filter((audit) => audit.routeSlug === route.slug && audit.tenantID === route.tenantID);
+      // Only count errors within the active window so lines stop being red once errors age out
+      const activeMatchingAudits = activeAudits.filter((audit) => audit.routeSlug === route.slug && audit.tenantID === route.tenantID);
       routeMetrics.set(route.id, {
         throughput: matchingAudits.length,
-        errors: matchingAudits.filter((audit) => audit.status >= 400).length,
+        errors: activeMatchingAudits.filter((audit) => audit.status >= 400).length,
       });
     }
 
@@ -402,7 +405,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
         stats: `${metrics.throughput} req • ${metrics.errors} err`,
         x: LANE_X.route,
         y: routeY[index] ?? sceneHeight / 2,
-        tone: metrics.errors > 0 ? "var(--destructive)" : "var(--accent)",
+        tone: metrics.errors > 0 ? "var(--danger)" : "var(--accent)",
       } satisfies GraphNode;
     });
 
@@ -410,7 +413,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       const statusTone = tenant.upstreamStatus === "up"
         ? "var(--success)"
         : tenant.upstreamStatus === "down"
-          ? "var(--destructive)"
+          ? "var(--danger)"
           : "var(--muted)";
       return {
         id: `tenant:${tenant.id}`,
@@ -432,7 +435,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       const statusTone = tenant.upstreamStatus === "up"
         ? "var(--success)"
         : tenant.upstreamStatus === "down"
-          ? "var(--destructive)"
+          ? "var(--danger)"
           : "var(--muted)";
       let urlLabel = tenant.upstreamURL;
       try { urlLabel = new URL(tenant.upstreamURL).host; } catch { /* keep full URL */ }
@@ -469,12 +472,14 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
         if (!canAccessRoute) {
           continue;
         }
+        const routeHasErrors = (routeMetrics.get(route.id)?.errors ?? 0) > 0;
         tokenEdges.push({
           id: `edge:${token.id}:${route.id}`,
           from: `token:${token.id}`,
           to: `route:${route.id}`,
           kind: "access",
           hot: hotTokenKeys.has(`token:${token.id}:${route.slug}`),
+          error: routeHasErrors,
         });
       }
     }
@@ -485,12 +490,14 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
         if (!tenant) {
           return null;
         }
+        const routeHasErrors = (routeMetrics.get(route.id)?.errors ?? 0) > 0;
         return {
           id: `edge:${route.id}:${tenant.id}`,
           from: `route:${route.id}`,
           to: `tenant:${tenant.id}`,
           kind: "binding",
           hot: hotRouteKeys.has(`route:${route.slug}:${route.tenantID}`),
+          error: routeHasErrors,
         } satisfies GraphEdge;
       })
       .filter(Boolean) as GraphEdge[];
@@ -501,6 +508,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       to: `upstream:${tenant.id}`,
       kind: "upstream",
       hot: false,
+      error: tenant.upstreamStatus === "down",
     }));
 
     return {
@@ -598,6 +606,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           to: tenantNode.id,
           kind: "draft",
           hot: true,
+          error: false,
         });
       }
     }
@@ -624,6 +633,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           to: routeNode.id,
           kind: "draft",
           hot: true,
+          error: false,
         });
       } else if (tenantNode) {
         draftEdges.push({
@@ -632,6 +642,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           to: tenantNode.id,
           kind: "draft",
           hot: true,
+          error: false,
         });
       }
     }
@@ -977,14 +988,19 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                   const d = pathBetween(from, to);
                   const className = edge.kind === "draft"
                     ? "topology-flow-line topology-flow-line--draft"
-                    : edge.hot
-                      ? "topology-flow-line topology-flow-line--hot"
-                      : "topology-flow-line";
-                  const packetColor = edge.kind === "binding" ? "var(--success)" : "var(--accent)";
+                    : edge.error
+                      ? "topology-flow-line topology-flow-line--error"
+                      : edge.hot
+                        ? "topology-flow-line topology-flow-line--hot"
+                        : "topology-flow-line";
+                  const glowClass = edge.error
+                    ? "topology-flow-line topology-flow-line--glow-error"
+                    : "topology-flow-line topology-flow-line--glow";
+                  const packetColor = edge.error ? "var(--danger)" : edge.kind === "binding" ? "var(--success)" : "var(--accent)";
 
                   return (
                     <g key={edge.id} opacity={active ? 1 : 0.12}>
-                      <path className="topology-flow-line topology-flow-line--glow" d={d} vectorEffect="non-scaling-stroke" />
+                      <path className={glowClass} d={d} vectorEffect="non-scaling-stroke" />
                       <path className={className} d={d} vectorEffect="non-scaling-stroke" />
                       {edge.hot && edge.kind !== "draft" && (
                         <>

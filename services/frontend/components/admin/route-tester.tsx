@@ -30,16 +30,20 @@ export function RouteTester({ routes, tokens, backendBaseUrl }: RouteTesterProps
     ? tokens.filter((t) => t.tenantID === selectedRoute.tenantID && t.active)
     : tokens.filter((t) => t.active);
 
+  // Resolve the effective base URL — fall back to the current browser origin when
+  // NEXTAUTH_URL is not configured and backendBaseUrl arrives as an empty string.
+  const effectiveBaseUrl = backendBaseUrl || (typeof window !== "undefined" ? window.location.origin : "");
+
   // When route changes, update URL and default method
   useEffect(() => {
     if (selectedRoute) {
-      setUrl(`${backendBaseUrl}/proxy/${selectedRoute.slug}`);
+      setUrl(`${effectiveBaseUrl}/proxy/${selectedRoute.slug}`);
       const defaultMethod = selectedRoute.methods.includes("GET")
         ? "GET"
         : selectedRoute.methods[0] ?? "GET";
       setMethod(defaultMethod);
     }
-  }, [selectedRoute, backendBaseUrl]);
+  }, [selectedRoute, effectiveBaseUrl]);
 
   // Reset token when route changes
   useEffect(() => {

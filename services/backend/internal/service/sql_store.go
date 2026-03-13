@@ -1328,9 +1328,13 @@ func (store *sqlStore) ListTrafficStats(ctx context.Context, from, to time.Time,
 	var rows *sql.Rows
 	var err error
 	if orgID != "" {
+		// Stats are stored with org_id='' because the proxy has no org context.
+		// Join with tenants to filter by the tenant's org instead.
 		rows, err = store.queryContext(ctx,
-			`SELECT id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id, request_count, error_count, avg_latency_ms, status_2xx, status_4xx, status_5xx
-			 FROM traffic_stats WHERE bucket_start >= ? AND bucket_start <= ? AND org_id = ? ORDER BY bucket_start ASC`,
+			`SELECT ts.id, ts.bucket_start, ts.bucket_minutes, ts.route_slug, ts.tenant_id, ts.token_id, ts.org_id, ts.request_count, ts.error_count, ts.avg_latency_ms, ts.status_2xx, ts.status_4xx, ts.status_5xx
+			 FROM traffic_stats ts
+			 JOIN tenants t ON t.tenant_id = ts.tenant_id
+			 WHERE ts.bucket_start >= ? AND ts.bucket_start <= ? AND t.org_id = ? ORDER BY ts.bucket_start ASC`,
 			from, to, orgID)
 	} else {
 		rows, err = store.queryContext(ctx,
@@ -1366,10 +1370,10 @@ func (store *sqlStore) GetTrafficOverview(ctx context.Context, orgID string) (tr
 		var q string
 		var args []any
 		if orgID != "" {
-			q = `SELECT COALESCE(SUM(request_count),0), COALESCE(SUM(error_count),0), COALESCE(AVG(avg_latency_ms),0) FROM traffic_stats WHERE bucket_start >= ? AND bucket_start <= ? AND org_id = ?`
+			q = `SELECT COALESCE(SUM(ts.request_count),0), COALESCE(SUM(ts.error_count),0), CAST(COALESCE(ROUND(AVG(ts.avg_latency_ms)),0) AS INTEGER) FROM traffic_stats ts JOIN tenants t ON t.tenant_id = ts.tenant_id WHERE ts.bucket_start >= ? AND ts.bucket_start <= ? AND t.org_id = ?`
 			args = []any{from, to, orgID}
 		} else {
-			q = `SELECT COALESCE(SUM(request_count),0), COALESCE(SUM(error_count),0), COALESCE(AVG(avg_latency_ms),0) FROM traffic_stats WHERE bucket_start >= ? AND bucket_start <= ?`
+			q = `SELECT COALESCE(SUM(request_count),0), COALESCE(SUM(error_count),0), CAST(COALESCE(ROUND(AVG(avg_latency_ms)),0) AS INTEGER) FROM traffic_stats WHERE bucket_start >= ? AND bucket_start <= ?`
 			args = []any{from, to}
 		}
 		if err := store.queryRowContext(ctx, q, args...).Scan(&totalReqs, &totalErrors, &avgLat); err != nil {

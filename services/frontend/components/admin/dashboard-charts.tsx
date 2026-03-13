@@ -155,11 +155,11 @@ export function DashboardCharts({ stats, overview }: DashboardChartsProps) {
               prior: `${Math.round(overview.priorAvgLatency)}ms`,
             },
           ].map((row) => (
-            <>
-              <div key={`${row.label}-label`} className="font-medium text-foreground">{row.label}</div>
-              <div key={`${row.label}-current`} className="text-center tabular-nums text-foreground">{row.current}</div>
-              <div key={`${row.label}-prior`} className="text-center tabular-nums text-muted-foreground">{row.prior}</div>
-            </>
+            <div key={row.label} className="contents">
+              <div className="font-medium text-foreground">{row.label}</div>
+              <div className="text-center tabular-nums text-foreground">{row.current}</div>
+              <div className="text-center tabular-nums text-muted-foreground">{row.prior}</div>
+            </div>
           ))}
         </div>
       </div>
