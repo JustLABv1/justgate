@@ -1,6 +1,5 @@
 import { getAdminRequestHeaders, getBackendBaseUrl } from "@/lib/backend-server";
 import {
-    fallbackAuditEvents,
     fallbackOverview,
     fallbackRoutes,
     fallbackTenants,
@@ -10,12 +9,16 @@ import {
     type MemberSummary,
     type OIDCConfig,
     type OIDCOrgMapping,
+    type OrgAdminSummary,
     type OrgSummary,
+    type PaginatedAuditResponse,
+    type PlatformAdminSummary,
     type QueryResult,
     type RouteSummary,
     type TenantSummary,
     type TokenSummary,
     type TopologySnapshot,
+    type UserAdminSummary
 } from "@/lib/contracts";
 
 const backendUrl = getBackendBaseUrl();
@@ -30,7 +33,12 @@ async function fetchBackend<T>(path: string, fallback: T): Promise<QueryResult<T
     });
 
     if (!response.ok) {
-      throw new Error(`backend returned ${response.status}`);
+      let detail = "";
+      try {
+        const body = (await response.json()) as { error?: string };
+        if (body?.error) detail = `: ${body.error}`;
+      } catch { /* ignore */ }
+      throw new Error(`backend returned ${response.status}${detail}`);
     }
 
     const data = (await response.json()) as T;
@@ -65,8 +73,35 @@ export function getTokens() {
   return fetchBackend<TokenSummary[]>("/api/v1/admin/tokens", fallbackTokens);
 }
 
-export function getAuditEvents() {
-  return fetchBackend<AuditEvent[]>("/api/v1/admin/audit", fallbackAuditEvents);
+export async function getAuditEvents(): Promise<QueryResult<AuditEvent[]>> {
+  const result = await fetchBackend<PaginatedAuditResponse>(
+    "/api/v1/admin/audit?page=1&pageSize=50",
+    { items: [], total: 0, page: 1, pageSize: 50 },
+  );
+  return { ...result, data: result.data.items ?? [] };
+}
+
+export function getAuditEventsPaginated(page = 1, pageSize = 50) {
+  return fetchBackend<PaginatedAuditResponse>(
+    `/api/v1/admin/audit?page=${page}&pageSize=${pageSize}`,
+    { items: [], total: 0, page, pageSize },
+  );
+}
+
+export function getPlatformAdmins() {
+  return fetchBackend<PlatformAdminSummary[]>("/api/v1/admin/platform/admins", []);
+}
+
+export function getPlatformAdminCheck() {
+  return fetchBackend<{ isPlatformAdmin: boolean }>("/api/v1/admin/platform/check", { isPlatformAdmin: false });
+}
+
+export function getAdminUsers() {
+  return fetchBackend<UserAdminSummary[]>("/api/v1/admin/platform/users", []);
+}
+
+export function getAdminOrgs() {
+  return fetchBackend<OrgAdminSummary[]>("/api/v1/admin/platform/orgs", []);
 }
 
 export function getOrgs() {

@@ -159,6 +159,10 @@ Shared backend environment variables (used in both monolithic and microservice d
     secretKeyRef:
       name: {{ include "justgate.fullname" . }}-secrets
       key: databaseUrl
+{{- if .Values.backend.initialAdminEmail }}
+- name: JUSTGATE_INITIAL_ADMIN_EMAIL
+  value: {{ .Values.backend.initialAdminEmail | quote }}
+{{- end }}
 {{- end }}
 
 {{/*

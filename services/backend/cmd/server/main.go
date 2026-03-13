@@ -25,15 +25,16 @@ func main() {
 	databaseURL := os.Getenv("JUST_GATE_DATABASE_URL")
 
 	svc, err := service.New(service.Config{
-		Version:          "1.0.9",
-		AdminJWTSecret:   adminJWTSecret,
-		DatabaseURL:      databaseURL,
-		TenantHeaderName: tenantHeaderName,
-		OIDCIssuer:       os.Getenv("JUST_GATE_OIDC_ISSUER"),
-		OIDCClientID:     os.Getenv("JUST_GATE_OIDC_CLIENT_ID"),
-		OIDCClientSecret: os.Getenv("JUST_GATE_OIDC_CLIENT_SECRET"),
-		OIDCDisplayName:  os.Getenv("JUST_GATE_OIDC_NAME"),
-		ExtraCAFile:      os.Getenv("JUST_GATE_EXTRA_CA_FILE"),
+		Version:                   "1.0.9",
+		AdminJWTSecret:            adminJWTSecret,
+		DatabaseURL:               databaseURL,
+		TenantHeaderName:          tenantHeaderName,
+		OIDCIssuer:                os.Getenv("JUST_GATE_OIDC_ISSUER"),
+		OIDCClientID:              os.Getenv("JUST_GATE_OIDC_CLIENT_ID"),
+		OIDCClientSecret:          os.Getenv("JUST_GATE_OIDC_CLIENT_SECRET"),
+		OIDCDisplayName:           os.Getenv("JUST_GATE_OIDC_NAME"),
+		ExtraCAFile:               os.Getenv("JUST_GATE_EXTRA_CA_FILE"),
+		InitialPlatformAdminEmail: os.Getenv("JUSTGATE_INITIAL_ADMIN_EMAIL"),
 	})
 	if err != nil {
 		slog.Error("failed to initialize backend service", "error", err)

@@ -24,6 +24,23 @@ interface ResolvedOIDCConfig {
   enabled: boolean;
 }
 
+/** Create a short-lived JWT scoped to a specific user — used for sign-in-time checks. */
+async function createUserAdminToken(userId: string, email: string, name: string): Promise<string> {
+  return new SignJWT({
+    email,
+    name,
+    roles: ["admin"],
+    scope: "admin:control",
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(userId)
+    .setIssuer("justgate-admin")
+    .setAudience("justgate-backend")
+    .setIssuedAt()
+    .setExpirationTime("1m")
+    .sign(backendJwtSecret);
+}
+
 /** Create a system-level JWT (no user context) for internal backend calls. */
 async function createSystemToken(): Promise<string> {
   return new SignJWT({ roles: ["admin"], scope: "admin:control" })
@@ -214,12 +231,35 @@ async function buildAuthOptions(): Promise<NextAuthOptions> {
           token.sub = user.id;
           token.email = user.email;
           token.name = user.name;
+          // Check platform admin status immediately on sign-in
+          try {
+            const checkToken = await createUserAdminToken(
+              user.id,
+              user.email ?? "",
+              user.name ?? "",
+            );
+            const res = await fetch(`${backendUrl}/api/v1/admin/platform/check`, {
+              headers: { authorization: `Bearer ${checkToken}` },
+              cache: "no-store",
+            });
+            if (res.ok) {
+              const data = (await res.json()) as { isPlatformAdmin: boolean };
+              token.isPlatformAdmin = data.isPlatformAdmin;
+            } else {
+              token.isPlatformAdmin = false;
+            }
+          } catch {
+            token.isPlatformAdmin = false;
+          }
         }
         if (account?.provider) {
           token.provider = account.provider;
         }
         if (trigger === "update" && session?.activeOrgId !== undefined) {
           token.activeOrgId = session.activeOrgId as string;
+        }
+        if (trigger === "update" && session?.isPlatformAdmin !== undefined) {
+          token.isPlatformAdmin = session.isPlatformAdmin as boolean;
         }
         return token;
       },
@@ -230,6 +270,7 @@ async function buildAuthOptions(): Promise<NextAuthOptions> {
           session.user.name = token.name || session.user.name;
         }
         session.activeOrgId = (token.activeOrgId as string | undefined) ?? undefined;
+        session.isPlatformAdmin = (token.isPlatformAdmin as boolean | undefined) ?? false;
         return session;
       },
     },

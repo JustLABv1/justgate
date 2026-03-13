@@ -37,6 +37,8 @@ type Config struct {
 	OIDCClientID     string
 	OIDCClientSecret string
 	OIDCDisplayName  string
+	// InitialPlatformAdminEmail seeds the first platform admin on startup.
+	InitialPlatformAdminEmail string
 	// Path to a PEM file containing extra CA certificates for outbound TLS.
 	ExtraCAFile string
 }
@@ -46,6 +48,18 @@ type dataStore interface {
 	ListRoutes(ctx context.Context) ([]routeRecord, error)
 	ListTokens(ctx context.Context) ([]tokenRecord, error)
 	ListAudits(ctx context.Context) ([]auditRecord, error)
+	ListAuditsPaginated(ctx context.Context, limit, offset int) ([]auditRecord, int, error)
+	// Platform admin management
+	IsPlatformAdmin(ctx context.Context, userID string) (bool, error)
+	ListPlatformAdmins(ctx context.Context) ([]platformAdminRecord, error)
+	CountPlatformAdmins(ctx context.Context) (int, error)
+	GrantPlatformAdmin(ctx context.Context, userID, grantedBy string) error
+	RevokePlatformAdmin(ctx context.Context, userID string) error
+	ListAllUsers(ctx context.Context) ([]userRecord, error)
+	DeleteUser(ctx context.Context, userID string) error
+	ListAllOrgs(ctx context.Context) ([]orgRecord, error)
+	DeleteOrg(ctx context.Context, orgID string) error
+	GetOrgWithMemberCount(ctx context.Context, orgID string) (orgRecord, int, error)
 	CreateLocalAdmin(ctx context.Context, account localAdminRecord) (localAdminRecord, error)
 	GetLocalAdminByEmail(ctx context.Context, email string) (localAdminRecord, bool, error)
 	CreateTenant(ctx context.Context, payload createTenantRequest) (tenantRecord, error)
@@ -422,6 +436,11 @@ func New(config Config) (*Service, error) {
 		service.logger.Warn("using default admin JWT secret; set JUST_GATE_BACKEND_JWT_SECRET outside local development")
 	}
 
+	// Seed the initial platform admin from env var (idempotent)
+	if email := strings.ToLower(strings.TrimSpace(config.InitialPlatformAdminEmail)); email != "" {
+		go service.seedInitialPlatformAdmin(email)
+	}
+
 	go service.runHealthChecker()
 
 	return service, nil
@@ -448,6 +467,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/settings/oidc/mappings", s.withAdminAuth(s.handleOIDCMappings))
 	mux.HandleFunc("/api/v1/admin/settings/oidc/mappings/", s.withAdminAuth(s.handleOIDCMappings))
 	mux.HandleFunc("/api/v1/internal/oidc-provider-config", s.withAdminAuth(s.handleInternalOIDCProviderConfig))
+	s.registerPlatformRoutes(mux)
 	mux.HandleFunc("/proxy/", s.handleProxy)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -761,7 +781,18 @@ func (s *Service) handleAudit(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
-	audits, err := s.store.ListAudits(request.Context())
+	const defaultPageSize = 50
+	page := parseQueryInt(request, "page", 1)
+	pageSize := parseQueryInt(request, "pageSize", defaultPageSize)
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 500 {
+		pageSize = defaultPageSize
+	}
+	offset := (page - 1) * pageSize
+
+	audits, total, err := s.store.ListAuditsPaginated(request.Context(), pageSize, offset)
 	if err != nil {
 		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load audit events"})
 		return
@@ -781,18 +812,12 @@ func (s *Service) handleAudit(writer http.ResponseWriter, request *http.Request)
 		})
 	}
 
-	slices.SortFunc(items, func(left, right auditEvent) int {
-		switch {
-		case left.Timestamp > right.Timestamp:
-			return -1
-		case left.Timestamp < right.Timestamp:
-			return 1
-		default:
-			return 0
-		}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"items":    items,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
 	})
-
-	writeJSON(writer, http.StatusOK, items)
 }
 
 func (s *Service) handleTopology(writer http.ResponseWriter, request *http.Request) {
@@ -1848,6 +1873,21 @@ func parseTimestamp(value string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("invalid timestamp")
+}
+
+func parseQueryInt(r *http.Request, key string, def int) int {
+	v := strings.TrimSpace(r.URL.Query().Get(key))
+	if v == "" {
+		return def
+	}
+	n := 0
+	for _, c := range v {
+		if c < '0' || c > '9' {
+			return def
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
 }
 
 func generateTokenSecret(name string) (string, error) {

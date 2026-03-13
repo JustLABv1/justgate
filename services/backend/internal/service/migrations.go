@@ -153,6 +153,17 @@ var schemaMigrations = []migration{
 			`ALTER TABLE tenants ADD COLUMN health_check_path TEXT NOT NULL DEFAULT ''`,
 		},
 	},
+	{
+		version: 6,
+		name:    "create_platform_admins",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS platform_admins (
+				user_id TEXT PRIMARY KEY,
+				granted_by TEXT NOT NULL,
+				granted_at TIMESTAMP NOT NULL
+			)`,
+		},
+	},
 }
 
 func (store *sqlStore) runMigrations(ctx context.Context) error {

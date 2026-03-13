@@ -39,6 +39,10 @@ backend:
   # Explicit database URL (overrides auto-computed PostgreSQL DSN).
   # Format: postgresql://user:pass@host:5432/db  OR  sqlite:///data/justgate.db
   databaseUrl: ""
+  # Email of the first platform admin.
+  # After this user signs in for the first time, they are automatically granted
+  # platform admin privileges (idempotent — safe to leave set permanently).
+  initialAdminEmail: ""
 
 # ── Frontend configuration ─────────────────────────────────────────────────────
 frontend:

@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"net/http"
 	"slices"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -60,4 +61,22 @@ func validateAdminToken(rawToken, secret string) (adminIdentity, error) {
 		Roles:   claims.Roles,
 		Scope:   claims.Scope,
 	}, nil
+}
+
+// withSuperAdminAuth wraps a handler so only platform admins can access it.
+// It reuses withAdminAuth for JWT validation and then checks the platform_admins table.
+func (s *Service) withSuperAdminAuth(next http.HandlerFunc) http.HandlerFunc {
+	return s.withAdminAuth(func(writer http.ResponseWriter, request *http.Request) {
+		adminID := adminIDFromContext(request.Context())
+		ok, err := s.store.IsPlatformAdmin(request.Context(), adminID)
+		if err != nil {
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to verify platform admin status"})
+			return
+		}
+		if !ok {
+			writeJSON(writer, http.StatusForbidden, map[string]string{"error": "platform admin access required"})
+			return
+		}
+		next(writer, request)
+	})
 }

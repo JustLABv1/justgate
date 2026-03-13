@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 interface LiveTopologyMapProps {
   initialTopology: QueryResult<TopologySnapshot>;
+  orgId?: string | null;
 }
 
 type SelectedNode =
@@ -136,7 +137,7 @@ function fitCamera(viewportWidth: number, viewportHeight: number, sceneHeight: n
   );
 }
 
-export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
+export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps) {
   const [snapshot, setSnapshot] = useState(initialTopology);
   const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>(null);
@@ -212,6 +213,12 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
     void pollTopology();
   }
 
+  // Keep a ref to the current orgId so the socket cleanup can compare
+  const orgIdRef = useRef(orgId);
+  useEffect(() => {
+    orgIdRef.current = orgId;
+  }, [orgId]);
+
   useEffect(() => {
     let disposed = false;
 
@@ -231,8 +238,10 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
       const attemptID = connectionAttemptRef.current + 1;
       connectionAttemptRef.current = attemptID;
 
+      // If a socket is already open but for a different org, close it first
       if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-        return;
+        socketRef.current.close();
+        socketRef.current = null;
       }
 
       setStreamStatus((current) => (current === "live" ? current : current === "retrying" ? "retrying" : "connecting"));
@@ -315,7 +324,9 @@ export function LiveTopologyMap({ initialTopology }: LiveTopologyMapProps) {
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, []);
+  // Re-run whenever the active org changes so the socket reconnects to the right stream
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId]);
 
   const graph = useMemo(() => {
     const now = Date.now();

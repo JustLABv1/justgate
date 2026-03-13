@@ -20,6 +20,7 @@ Route authenticated bearer tokens to upstream services, inject tenant identity h
 
 - [Overview](#overview)
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
   - [Prerequisites](#prerequisites)
@@ -31,6 +32,9 @@ Route authenticated bearer tokens to upstream services, inject tenant identity h
   - [Frontend Environment](#frontend-environment)
 - [Deployment](#deployment)
   - [Kubernetes / Helm](#kubernetes--helm)
+- [Platform Admin](#platform-admin)
+  - [Bootstrap the first admin](#bootstrap-the-first-admin)
+  - [Capabilities](#capabilities)
 - [OIDC / Single Sign-On](#oidc--single-sign-on)
   - [How auto-discovery works](#how-auto-discovery-works)
   - [Issuer URL format](#issuer-url-format)
@@ -69,12 +73,25 @@ Client (bearer token)
 - **Multi-tenancy** — unlimited tenants, each with their own upstream URL and identity header value
 - **Scoped tokens** — fine-grained token scopes per route; token expiry and revocation
 - **Route management** — slug-based routes mapped to tenant + upstream path
-- **Audit log** — every proxied request is recorded with method, status code, and upstream URL
-- **Topology view** — live WebSocket-streamed map of active tenants, routes, and tokens
+- **Audit log** — every proxied request is recorded with method, status code, and upstream URL; paginated with configurable page size
+- **Topology view** — live WebSocket-streamed map of active tenants, routes, and tokens; auto-reconnects on organisation switch
 - **Organisation management** — multi-org support with invite links and member roles
+- **Platform Admin** — superadmin role with cross-organisation visibility: manage all users, orgs, and platform admin grants
 - **Auth flexibility** — local accounts (email + password) and/or OIDC single sign-on
 - **Persistence** — SQLite (zero-config) or PostgreSQL
 - **Self-contained** — single Go binary for the backend; Next.js standalone bundle for the frontend
+
+---
+
+## Screenshots
+
+| Sign-in | Overview | Topology |
+|---------|----------|----------|
+| ![Sign-in](docs/screenshots/signin.png) | ![Overview](docs/screenshots/overview.png) | ![Topology](docs/screenshots/topology.png) |
+
+| Routes | Audit Log | Platform Admin |
+|--------|-----------|----------------|
+| ![Routes](docs/screenshots/routes.png) | ![Audit](docs/screenshots/audit.png) | ![Platform Admin](docs/screenshots/platform-admin.png) |
 
 ---
 
@@ -214,6 +231,7 @@ docker compose up -d
 | `JUST_GATE_BACKEND_JWT_SECRET` | — | *(insecure dev default)* | Secret used to sign & verify admin JWTs |
 | `JUST_GATE_DATABASE_URL` | — | `sqlite://justgate.db` | Database connection — `sqlite://<path>` or `postgresql://…` |
 | `JUST_GATE_TENANT_HEADER` | — | `X-Scope-OrgID` | Header name injected into upstream requests to carry the tenant ID |
+| `JUSTGATE_INITIAL_ADMIN_EMAIL` | — | — | Email of the first platform admin. After this user signs in, they are automatically granted platform admin status (idempotent, retries for 10 min) |
 | `PORT` | — | `9090` | Backend HTTP listen port |
 
 ### Frontend Environment
@@ -285,10 +303,52 @@ helm install justgate deploy/helm/justgate \
 | `postgresql.enabled` | `true` | Deploy a Bitnami PostgreSQL subchart |
 | `postgresql.auth.password` | — | **Required** when PostgreSQL is enabled |
 | `backend.tenantHeaderName` | `X-Scope-OrgID` | Upstream tenant identity header |
+| `backend.initialAdminEmail` | — | Email of the first platform admin (see [Platform Admin](#platform-admin)) |
 | `ingress.enabled` | `false` | Enable Kubernetes Ingress |
 | `persistence.size` | `1Gi` | SQLite PVC size (PostgreSQL disabled only) |
 
 See [`deploy/helm/justgate/values.yaml`](deploy/helm/justgate/values.yaml) for the full reference.
+
+---
+
+## Platform Admin
+
+Platform admins are a superadmin role that sits above organisation owners. Unlike regular users who only see their own organisation's resources, platform admins have cross-organisation visibility and control through a dedicated **Platform Admin** section in the navigation.
+
+### Bootstrap the first admin
+
+The platform admin role is seeded via the `JUSTGATE_INITIAL_ADMIN_EMAIL` environment variable (or `backend.initialAdminEmail` in Helm). **The user must first sign in** (creating their account) before the seed takes effect — the backend retries the lookup every 15 seconds for up to 10 minutes after startup.
+
+**Local development:**
+```bash
+JUSTGATE_INITIAL_ADMIN_EMAIL=you@example.com go run ./cmd/server
+```
+
+**Helm:**
+```bash
+helm upgrade justgate oci://ghcr.io/justlabv1/justgate \
+  --set backend.initialAdminEmail=you@example.com \
+  ...
+```
+
+Or in `values.yaml`:
+```yaml
+backend:
+  initialAdminEmail: "you@example.com"
+```
+
+After the first admin is set up, additional admins can be granted (or revoked) through **Platform Admin → Platform Admins** in the UI. The seed email can be left set permanently — the grant is idempotent.
+
+> **Sign out and sign back in** after the seed runs to get the Platform Admin section to appear in the sidebar.
+
+### Capabilities
+
+| Section | What you can do |
+|---|---|
+| **Platform Admin → All Users** | View all registered users across every organisation; delete accounts |
+| **Platform Admin → All Orgs** | View all organisations with member counts; delete organisations (cascades all resources) |
+| **Platform Admin → Platform Admins** | Grant or revoke the platform admin role by email |
+| **Platform Admin → Settings** | Configure OIDC / SSO provider and org mappings |
 
 ---
 
@@ -476,10 +536,17 @@ All admin endpoints require a valid backend admin JWT (`Authorization: Bearer <j
 | `GET/PUT/DELETE` | `/api/v1/admin/routes/{id}` | Read / update / delete a route |
 | `GET/POST` | `/api/v1/admin/tokens` | List / issue tokens |
 | `GET/PATCH/DELETE` | `/api/v1/admin/tokens/{id}` | Read / revoke / delete a token |
-| `GET` | `/api/v1/admin/audit` | Audit log (paginated) |
+| `GET` | `/api/v1/admin/audit?page=1&pageSize=50` | Audit log (paginated) |
 | `GET` | `/api/v1/admin/topology` | Current topology snapshot |
 | `GET` | `/api/v1/admin/topology/stream` | Live topology (WebSocket) |
 | `GET/POST` | `/api/v1/admin/orgs` | List / create organisations |
+| `GET` | `/api/v1/admin/platform/check` | Check caller's platform admin status |
+| `GET/POST` | `/api/v1/admin/platform/admins` | List platform admins / grant by email |
+| `DELETE` | `/api/v1/admin/platform/admins/{userID}` | Revoke platform admin |
+| `GET` | `/api/v1/admin/platform/users` | List all users (platform admin required) |
+| `DELETE` | `/api/v1/admin/platform/users/{userID}` | Delete a user account |
+| `GET` | `/api/v1/admin/platform/orgs` | List all organisations (platform admin required) |
+| `DELETE` | `/api/v1/admin/platform/orgs/{orgID}` | Delete an organisation (cascades) |
 | `ANY` | `/proxy/{slug}/…` | Authenticated proxy surface for clients |
 
 ---

@@ -1,9 +1,16 @@
 import { OIDCOrgMappings } from "@/components/admin/oidc-org-mappings";
 import { OIDCSettingsForm } from "@/components/admin/oidc-settings-form";
 import { SectionPage } from "@/components/admin/section-page";
+import { auth } from "@/lib/auth";
 import { getOIDCConfig, getOIDCOrgMappings } from "@/lib/backend-client";
+import { redirect } from "next/navigation";
 
 export default async function SettingsPage() {
+  const session = await auth();
+  if (!session?.isPlatformAdmin) {
+    redirect("/");
+  }
+
   const [oidcResult, mappingsResult] = await Promise.all([
     getOIDCConfig(),
     getOIDCOrgMappings(),

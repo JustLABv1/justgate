@@ -1,10 +1,20 @@
 import { AuditView } from "@/components/admin/audit-view";
 import { SectionPage } from "@/components/admin/section-page";
-import { getAuditEvents } from "@/lib/backend-client";
+import { getAuditEventsPaginated } from "@/lib/backend-client";
 
-export default async function AuditPage() {
-  const result = await getAuditEvents();
-  const count = result.data?.length || 0;
+const PAGE_SIZE = 50;
+
+export default async function AuditPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  const page = Math.max(1, parseInt(String(sp.page ?? "1"), 10) || 1);
+
+  const result = await getAuditEventsPaginated(page, PAGE_SIZE);
+  const { items, total, pageSize } = result.data;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <SectionPage
@@ -14,12 +24,14 @@ export default async function AuditPage() {
       source={result.source}
       error={result.error}
     >
-      <div className="space-y-2">
-        <div className="text-sm text-muted-foreground">
-          {count} event{count !== 1 ? "s" : ""}
-        </div>
-        <AuditView events={result.data || []} />
-      </div>
+      <AuditView
+        events={items ?? []}
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        totalPages={totalPages}
+      />
     </SectionPage>
   );
 }
+

@@ -161,3 +161,33 @@ export interface OIDCOrgMapping {
   createdAt: string;
 }
 
+export interface PaginatedAuditResponse {
+  items: AuditEvent[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface PlatformAdminSummary {
+  userID: string;
+  userName: string;
+  userEmail: string;
+  grantedBy: string;
+  grantedAt: string;
+}
+
+export interface UserAdminSummary {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: string;
+  isPlatformAdmin: boolean;
+}
+
+export interface OrgAdminSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+  memberCount: number;
+}
+

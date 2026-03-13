@@ -475,7 +475,8 @@ func (store *sqlStore) RecordAudit(ctx context.Context, audit auditRecord) error
 		return err
 	}
 
-	_, err := store.execContext(ctx, `DELETE FROM audits WHERE id NOT IN (SELECT id FROM audits ORDER BY timestamp DESC LIMIT 200)`)
+	retentionLimit := 2000
+	_, err := store.execContext(ctx, `DELETE FROM audits WHERE id NOT IN (SELECT id FROM audits ORDER BY timestamp DESC LIMIT ?)`, retentionLimit)
 	return err
 }
 
@@ -580,7 +581,7 @@ func (store *sqlStore) UpsertUser(ctx context.Context, user userRecord) error {
 }
 
 func (store *sqlStore) GetUserByEmail(ctx context.Context, email string) (userRecord, bool, error) {
-	row := store.queryRowContext(ctx, `SELECT id, email, name, source, created_at FROM users WHERE email = ? LIMIT 1`, email)
+	row := store.queryRowContext(ctx, `SELECT id, email, name, source, created_at FROM users WHERE lower(email) = lower(?) LIMIT 1`, email)
 	var u userRecord
 	if err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Source, &u.CreatedAt); err != nil {
 		if err == sql.ErrNoRows {
@@ -871,6 +872,249 @@ func (store *sqlStore) DeleteOIDCOrgMapping(ctx context.Context, id string) erro
 }
 
 // ── Upstream health store methods ──────────────────────────────────────
+
+// ── Platform admin store methods ───────────────────────────────────────
+
+type platformAdminRecord struct {
+	UserID    string
+	GrantedBy string
+	GrantedAt time.Time
+	UserName  string
+	UserEmail string
+}
+
+func (store *sqlStore) IsPlatformAdmin(ctx context.Context, userID string) (bool, error) {
+	var count int
+	err := store.queryRowContext(ctx, `SELECT COUNT(*) FROM platform_admins WHERE user_id = ?`, userID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (store *sqlStore) ListPlatformAdmins(ctx context.Context) ([]platformAdminRecord, error) {
+	rows, err := store.queryContext(ctx, `
+		SELECT pa.user_id, pa.granted_by, pa.granted_at, COALESCE(u.name, ''), COALESCE(u.email, '')
+		FROM platform_admins pa
+		LEFT JOIN users u ON pa.user_id = u.id
+		ORDER BY pa.granted_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]platformAdminRecord, 0)
+	for rows.Next() {
+		var r platformAdminRecord
+		if err := rows.Scan(&r.UserID, &r.GrantedBy, &r.GrantedAt, &r.UserName, &r.UserEmail); err != nil {
+			return nil, err
+		}
+		items = append(items, r)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) CountPlatformAdmins(ctx context.Context) (int, error) {
+	var count int
+	return count, store.queryRowContext(ctx, `SELECT COUNT(*) FROM platform_admins`).Scan(&count)
+}
+
+func (store *sqlStore) GrantPlatformAdmin(ctx context.Context, userID, grantedBy string) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO platform_admins (user_id, granted_by, granted_at) VALUES (?, ?, ?)
+		 ON CONFLICT(user_id) DO NOTHING`,
+		userID, grantedBy, store.now())
+	return err
+}
+
+func (store *sqlStore) RevokePlatformAdmin(ctx context.Context, userID string) error {
+	result, err := store.execContext(ctx, `DELETE FROM platform_admins WHERE user_id = ?`, userID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("platform admin not found")
+	}
+	return nil
+}
+
+func (store *sqlStore) ListAllUsers(ctx context.Context) ([]userRecord, error) {
+	rows, err := store.queryContext(ctx, `SELECT id, email, name, source, created_at FROM users ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]userRecord, 0)
+	for rows.Next() {
+		var u userRecord
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Source, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, u)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) DeleteUser(ctx context.Context, userID string) error {
+	// Remove from all org memberships first
+	if _, err := store.execContext(ctx, `DELETE FROM org_memberships WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+	result, err := store.execContext(ctx, `DELETE FROM users WHERE id = ?`, userID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	// Also clean up from platform_admins if present
+	_, _ = store.execContext(ctx, `DELETE FROM platform_admins WHERE user_id = ?`, userID)
+	return nil
+}
+
+func (store *sqlStore) ListAllOrgs(ctx context.Context) ([]orgRecord, error) {
+	rows, err := store.queryContext(ctx, `SELECT id, name, created_by, created_at FROM organizations ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]orgRecord, 0)
+	for rows.Next() {
+		var o orgRecord
+		if err := rows.Scan(&o.ID, &o.Name, &o.CreatedBy, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, o)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) DeleteOrg(ctx context.Context, orgID string) error {
+	// Delete cascade: memberships, invites, tenants (and their routes/tokens/audits)
+	tenantRows, err := store.queryContext(ctx, `SELECT tenant_id FROM tenants WHERE org_id = ?`, orgID)
+	if err != nil {
+		return err
+	}
+	var tenantIDs []string
+	for tenantRows.Next() {
+		var tid string
+		if scanErr := tenantRows.Scan(&tid); scanErr != nil {
+			_ = tenantRows.Close()
+			return scanErr
+		}
+		tenantIDs = append(tenantIDs, tid)
+	}
+	_ = tenantRows.Close()
+	if err := tenantRows.Err(); err != nil {
+		return err
+	}
+
+	for _, tid := range tenantIDs {
+		if _, err := store.execContext(ctx, `DELETE FROM audits WHERE tenant_id = ?`, tid); err != nil {
+			return err
+		}
+		if _, err := store.execContext(ctx, `DELETE FROM tokens WHERE tenant_id = ?`, tid); err != nil {
+			return err
+		}
+		if _, err := store.execContext(ctx, `DELETE FROM routes WHERE tenant_id = ?`, tid); err != nil {
+			return err
+		}
+	}
+	if _, err := store.execContext(ctx, `DELETE FROM tenants WHERE org_id = ?`, orgID); err != nil {
+		return err
+	}
+	if _, err := store.execContext(ctx, `DELETE FROM org_invites WHERE org_id = ?`, orgID); err != nil {
+		return err
+	}
+	if _, err := store.execContext(ctx, `DELETE FROM org_memberships WHERE org_id = ?`, orgID); err != nil {
+		return err
+	}
+	result, err := store.execContext(ctx, `DELETE FROM organizations WHERE id = ?`, orgID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("org not found")
+	}
+	return nil
+}
+
+func (store *sqlStore) GetOrgWithMemberCount(ctx context.Context, orgID string) (orgRecord, int, error) {
+	var o orgRecord
+	err := store.queryRowContext(ctx, `SELECT id, name, created_by, created_at FROM organizations WHERE id = ? LIMIT 1`, orgID).Scan(&o.ID, &o.Name, &o.CreatedBy, &o.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return orgRecord{}, 0, fmt.Errorf("org not found")
+		}
+		return orgRecord{}, 0, err
+	}
+	var count int
+	if err := store.queryRowContext(ctx, `SELECT COUNT(*) FROM org_memberships WHERE org_id = ?`, orgID).Scan(&count); err != nil {
+		return orgRecord{}, 0, err
+	}
+	return o, count, nil
+}
+
+// ── Paginated audit methods ────────────────────────────────────────────
+
+func (store *sqlStore) ListAuditsPaginated(ctx context.Context, limit, offset int) ([]auditRecord, int, error) {
+	orgID := orgIDFromContext(ctx)
+
+	var total int
+	var countErr error
+	if orgID != "" {
+		countErr = store.queryRowContext(ctx,
+			`SELECT COUNT(*) FROM audits a INNER JOIN tenants tn ON a.tenant_id = tn.tenant_id WHERE tn.org_id = ?`, orgID).Scan(&total)
+	} else {
+		countErr = store.queryRowContext(ctx, `SELECT COUNT(*) FROM audits`).Scan(&total)
+	}
+	if countErr != nil {
+		return nil, 0, countErr
+	}
+
+	var rows *sql.Rows
+	var err error
+	if orgID != "" {
+		rows, err = store.queryContext(ctx,
+			`SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url
+			 FROM audits a INNER JOIN tenants tn ON a.tenant_id = tn.tenant_id
+			 WHERE tn.org_id = ? ORDER BY a.timestamp DESC LIMIT ? OFFSET ?`,
+			orgID, limit, offset)
+	} else {
+		rows, err = store.queryContext(ctx,
+			`SELECT id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url
+			 FROM audits ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+			limit, offset)
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]auditRecord, 0, limit)
+	for rows.Next() {
+		var audit auditRecord
+		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, audit)
+	}
+	return items, total, rows.Err()
+}
 
 func (store *sqlStore) UpsertUpstreamHealth(ctx context.Context, health upstreamHealthRecord) error {
 	_, err := store.execContext(ctx,

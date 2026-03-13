@@ -2,7 +2,7 @@
 
 import { AuditTable } from "@/components/admin/audit-table";
 import type { AuditEvent } from "@/lib/contracts";
-import { RefreshCw, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -12,9 +12,13 @@ type StatusFilter = "all" | "success" | "error";
 
 interface AuditViewProps {
   events: AuditEvent[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
 }
 
-export function AuditView({ events }: AuditViewProps) {
+export function AuditView({ events, page, pageSize, total, totalPages }: AuditViewProps) {
   const router = useRouter();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [tenantFilter, setTenantFilter] = useState("");
@@ -28,6 +32,12 @@ export function AuditView({ events }: AuditViewProps) {
     router.refresh();
     setLastRefreshed(new Date());
     setTimeout(() => setIsRefreshing(false), 600);
+  }
+
+  function goToPage(p: number) {
+    const params = new URLSearchParams(window.location.search);
+    params.set("page", String(p));
+    router.push(`?${params.toString()}`);
   }
 
   useEffect(() => {
@@ -56,6 +66,9 @@ export function AuditView({ events }: AuditViewProps) {
 
   const secondsAgo = Math.round((Date.now() - lastRefreshed.getTime()) / 1000);
   const refreshLabel = secondsAgo < 5 ? "Just now" : `${secondsAgo}s ago`;
+
+  const pageStart = (page - 1) * pageSize + 1;
+  const pageEnd = Math.min(page * pageSize, total);
 
   return (
     <div className="space-y-4">
@@ -131,12 +144,39 @@ export function AuditView({ events }: AuditViewProps) {
         </div>
       </div>
 
-      {/* Result count */}
-      {hasFilters && (
+      {/* Result count + pagination info */}
+      <div className="flex items-center justify-between">
         <div className="text-[11px] text-muted-foreground">
-          Showing {filtered.length} of {events.length} event{events.length !== 1 ? "s" : ""}
+          {hasFilters
+            ? `Showing ${filtered.length} of ${events.length} event${events.length !== 1 ? "s" : ""} on this page`
+            : total > 0
+              ? `Showing ${pageStart}–${pageEnd} of ${total} event${total !== 1 ? "s" : ""}`
+              : "No events recorded yet"}
         </div>
-      )}
+        {totalPages > 1 && (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => goToPage(page - 1)}
+              className="flex items-center rounded-md border border-border bg-panel px-1.5 py-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <span className="px-3 text-[12px] text-muted-foreground">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              type="button"
+              disabled={page >= totalPages}
+              onClick={() => goToPage(page + 1)}
+              className="flex items-center rounded-md border border-border bg-panel px-1.5 py-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Table */}
       <div className="rounded-lg border border-border bg-surface">
@@ -145,3 +185,4 @@ export function AuditView({ events }: AuditViewProps) {
     </div>
   );
 }
+
