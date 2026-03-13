@@ -28,8 +28,12 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=65532:65532 /app/.next/standalone ./
 COPY --from=builder --chown=65532:65532 /app/.next/static ./.next/static
 
+# PORT controls which port Next.js listens on.
+# JUST_GATE_BACKEND_URL is the internal URL used by server-side API calls;
+# override it in docker-compose when running as a separate service.
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV JUST_GATE_BACKEND_URL="http://localhost:9090"
 
 CMD ["node", "server.js"]

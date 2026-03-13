@@ -54,11 +54,15 @@ COPY deploy/supervisord.conf /etc/supervisord.conf
 RUN mkdir -p /data && chown 65532:65532 /data
 VOLUME ["/data"]
 
-# In monolithic mode the frontend talks to the backend on localhost
+# In monolithic mode the frontend talks to the backend on localhost.
+# Both PORT and BACKEND_PORT can be overridden at runtime; if you change
+# BACKEND_PORT you must also override JUST_GATE_BACKEND_URL accordingly
+# (the compose files do this automatically via variable substitution).
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
-ENV JUST_GATE_BACKEND_URL="http://localhost:9090"
+ENV BACKEND_PORT=9090
+ENV JUST_GATE_BACKEND_URL="http://localhost:${BACKEND_PORT}"
 
 # Use the numeric UID (65532) instead of the symbolic name "nonroot" so that
 # runtimes which resolve usernames against /etc/passwd don't fail on minimal

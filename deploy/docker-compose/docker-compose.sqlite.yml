@@ -18,19 +18,26 @@ services:
     image: ghcr.io/justlabv1/justgate:${JUSTGATE_VERSION:-latest}
     restart: unless-stopped
     ports:
-      - "3000:3000"   # Admin UI  (Next.js)
-      - "9090:9090"   # Gateway / backend API
+      - "${FRONTEND_PORT:-3000}:${FRONTEND_PORT:-3000}"   # Admin UI  (Next.js)
+      - "${BACKEND_PORT:-9090}:${BACKEND_PORT:-9090}"   # Gateway / backend API
     volumes:
       - justgate-data:/data
       # Uncomment to mount a custom CA certificate:
       # - ./certs/my-ca.pem:/certs/my-ca.pem:ro
     environment:
+      # ── Ports ────────────────────────────────────────────────────
+      # These must match the port mappings above.  If you change
+      # BACKEND_PORT, JUST_GATE_BACKEND_URL is updated automatically.
+      PORT:                     ${FRONTEND_PORT:-3000}
+      BACKEND_PORT:             ${BACKEND_PORT:-9090}
+      JUST_GATE_BACKEND_URL:    http://localhost:${BACKEND_PORT:-9090}
+
       # ── Required secrets ─────────────────────────────────────────
       NEXTAUTH_SECRET:              ${NEXTAUTH_SECRET}
       JUST_GATE_BACKEND_JWT_SECRET: ${JUST_GATE_BACKEND_JWT_SECRET}
 
       # ── Public URL ───────────────────────────────────────────────
-      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:${FRONTEND_PORT:-3000}}
 
       # ── Database ─────────────────────────────────────────────────
       # SQLite file stored in the persistent /data volume.
