@@ -1,5 +1,6 @@
 "use client";
 
+import { ToastProvider } from "@/components/toast-provider";
 import { SessionProvider } from "next-auth/react";
 import { createContext, useContext, useEffect, useState } from "react";
 
@@ -80,7 +81,9 @@ export function ThemeProvider({
   return (
     <SessionProvider>
       <ThemeContext.Provider value={value}>
-        {children}
+        <ToastProvider>
+          {children}
+        </ToastProvider>
       </ThemeContext.Provider>
     </SessionProvider>
   );

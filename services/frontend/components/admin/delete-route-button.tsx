@@ -1,10 +1,11 @@
 "use client";
 
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import { useToast } from "@/components/toast-provider";
 import { Button } from "@heroui/react";
 import { Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
 
 interface DeleteRouteButtonProps {
   routeID: string;
@@ -14,27 +15,26 @@ interface DeleteRouteButtonProps {
 
 export function DeleteRouteButton({ routeID, label = "Delete", disabled = false }: DeleteRouteButtonProps) {
   const router = useRouter();
-  const [error, setError] = useState<string>();
+  const { addToast } = useToast();
   const [isPending, startTransition] = useTransition();
 
   function handleDelete() {
     startTransition(async () => {
-      setError(undefined);
-
       const response = await fetch(`/api/admin/routes/${routeID}`, { method: "DELETE" });
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        setError(payload?.error || "route delete failed");
+        addToast("Delete failed", payload?.error || "Route could not be deleted", "error");
         return;
       }
 
+      addToast("Route deleted", routeID, "success");
       router.refresh();
     });
   }
 
   return (
-    <div className="space-y-1">
+    <div>
       <ConfirmDialog
         trigger={(open) => (
           <Button
@@ -55,7 +55,7 @@ export function DeleteRouteButton({ routeID, label = "Delete", disabled = false 
         onConfirm={handleDelete}
         variant="danger"
       />
-      {error ? <div className="text-[11px] text-danger">{error}</div> : null}
+
     </div>
   );
 }

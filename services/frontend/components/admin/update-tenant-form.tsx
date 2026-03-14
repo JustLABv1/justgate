@@ -1,11 +1,13 @@
 "use client";
 
+import { AnimatedStep, type StepDef, StepList } from "@/components/admin/modal-stepper";
+import { useToast } from "@/components/toast-provider";
 import type { TenantSummary } from "@/lib/contracts";
-import { Button, Form, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
-import { PenSquare } from "lucide-react";
+import { Button, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
+import { ArrowLeft, ArrowRight, PenSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { type FormEvent, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 
 interface UpdateTenantFormProps {
   tenant: TenantSummary;
@@ -18,57 +20,88 @@ interface UpdateTenantFormProps {
 
 function toFormState(tenant: TenantSummary | undefined) {
   return {
-    headerName: tenant?.headerName || "X-Scope-OrgID",
-    healthCheckPath: tenant?.healthCheckPath || "",
     name: tenant?.name || "",
     tenantID: tenant?.tenantID || "",
     upstreamURL: tenant?.upstreamURL || "",
     authMode: tenant?.authMode || "header",
+    headerName: tenant?.headerName || "X-Scope-OrgID",
+    healthCheckPath: tenant?.healthCheckPath || "",
   };
 }
 
-export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isOpen: controlledIsOpen, onOpenChange: controlledOnOpenChange, trigger }: UpdateTenantFormProps) {
+const STEPS: StepDef[] = [
+  { id: "identity", label: "Identity" },
+  { id: "upstream", label: "Upstream" },
+];
+
+export function UpdateTenantForm({
+  tenant,
+  label = "Edit",
+  disabled = false,
+  isOpen: controlledIsOpen,
+  onOpenChange: controlledOnOpenChange,
+  trigger,
+}: UpdateTenantFormProps) {
   const router = useRouter();
+  const { addToast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
-  const [success, setSuccess] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState(tenant));
+  const [currentStep, setCurrentStep] = useState(0);
+  const [direction, setDirection] = useState(1);
   const [internalOpen, setInternalOpen] = useState(false);
 
   const isControlled = controlledIsOpen !== undefined;
   const isOpen = isControlled ? controlledIsOpen : internalOpen;
 
   function handleOpenChange(open: boolean) {
+    if (open) {
+      setFormState(toFormState(tenant));
+      setError(undefined);
+      setCurrentStep(0);
+      setDirection(1);
+    }
     if (!isControlled) setInternalOpen(open);
     controlledOnOpenChange?.(open);
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function goNext() {
+    setDirection(1);
+    setCurrentStep((s) => s + 1);
+    setError(undefined);
+  }
+
+  function goBack() {
+    setDirection(-1);
+    setCurrentStep((s) => s - 1);
+    setError(undefined);
+  }
+
+  function handleSubmit() {
     startTransition(async () => {
       setError(undefined);
-      setSuccess(undefined);
 
       const response = await fetch(`/api/admin/tenants/${tenant.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          authMode: formState.authMode,
-          headerName: formState.headerName,
-          healthCheckPath: formState.healthCheckPath || undefined,
           name: formState.name,
           tenantID: formState.tenantID,
           upstreamURL: formState.upstreamURL,
+          authMode: formState.authMode,
+          headerName: formState.headerName,
+          healthCheckPath: formState.healthCheckPath || undefined,
         }),
       });
 
       const result = (await response.json().catch(() => null)) as TenantSummary | { error?: string } | null;
+
       if (!response.ok) {
-        setError(result && "error" in result ? result.error || "tenant update failed" : "tenant update failed");
+        setError(result && "error" in result ? result.error || "Tenant update failed" : "Tenant update failed");
         return;
       }
 
-      setSuccess(`Updated tenant ${formState.tenantID}.`);
+      addToast("Tenant updated", formState.tenantID, "success");
       handleOpenChange(false);
       router.refresh();
     });
@@ -89,70 +122,114 @@ export function UpdateTenantForm({ tenant, label = "Edit", disabled = false, isO
             <Modal.Header>
               <div>
                 <div className="enterprise-kicker">Update tenant</div>
-                <Modal.Heading className="mt-2 text-[1.9rem] font-semibold tracking-[-0.04em] text-foreground">Edit tenant</Modal.Heading>
+                <Modal.Heading className="mt-2 text-[1.9rem] font-semibold tracking-[-0.04em] text-foreground">
+                  Edit tenant
+                </Modal.Heading>
                 <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
                   Change the upstream target or header for {tenant.tenantID}.
                 </p>
               </div>
+              <div className="mt-5">
+                <StepList steps={STEPS} currentStep={currentStep} />
+              </div>
             </Modal.Header>
-            <Modal.Body>
-              <Form className="grid gap-5" onSubmit={handleSubmit}>
-                <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
-                  <TextField className="grid gap-2">
-                    <Label>Tenant name</Label>
-                    <Input onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} value={formState.name} />
-                    <div className="enterprise-note">Readable operator label.</div>
-                  </TextField>
-                  <TextField className="grid gap-2">
-                    <Label>Tenant ID</Label>
-                    <Input onChange={(event) => setFormState((current) => ({ ...current, tenantID: event.target.value }))} value={formState.tenantID} />
-                    <div className="enterprise-note">Stable machine identifier.</div>
-                  </TextField>
-                </div>
-                <div className="enterprise-panel grid gap-4 p-4">
-                  <TextField className="grid gap-2">
-                    <Label>Default Upstream URL</Label>
-                    <Input onChange={(event) => setFormState((current) => ({ ...current, upstreamURL: event.target.value }))} value={formState.upstreamURL} />
-                    <div className="enterprise-note">Fallback origin used when no load-balancing upstreams are configured. Load-balancing upstreams (configured below) take precedence over this URL.</div>
-                  </TextField>
-                  <Select
-                    className="w-full"
-                    placeholder="Select auth mode"
-                    value={formState.authMode}
-                    variant="secondary"
-                    onChange={(value) => setFormState((current) => ({ ...current, authMode: String(value) }))}
-                  >
-                    <Label>Auth mode</Label>
-                    <Select.Trigger>
-                      <Select.Value />
-                      <Select.Indicator />
-                    </Select.Trigger>
-                    <Select.Popover>
-                      <ListBox>
-                        <ListBox.Item id="header" textValue="header">header<ListBox.ItemIndicator /></ListBox.Item>
-                        <ListBox.Item id="bearer" textValue="bearer">bearer<ListBox.ItemIndicator /></ListBox.Item>
-                        <ListBox.Item id="none" textValue="none">none<ListBox.ItemIndicator /></ListBox.Item>
-                      </ListBox>
-                    </Select.Popover>
-                  </Select>
-                  <div className="enterprise-note md:col-span-2">header — inject tenant header; bearer — forward token; none — no auth injection.</div>
-                  <TextField className="grid gap-2">
-                    <Label>Injected header</Label>
-                    <Input onChange={(event) => setFormState((current) => ({ ...current, headerName: event.target.value }))} value={formState.headerName} />
-                    <div className="enterprise-note">Identity header attached upstream.</div>
-                  </TextField>
-                  <TextField className="grid gap-2">
-                    <Label>Health check path</Label>
-                    <Input placeholder="/ready" onChange={(event) => setFormState((current) => ({ ...current, healthCheckPath: event.target.value }))} value={formState.healthCheckPath} />
-                    <div className="enterprise-note">Optional path to probe for upstream health.</div>
-                  </TextField>
-                </div>
-                {error ? <div className="enterprise-feedback enterprise-feedback--error">{error}</div> : null}
-                {success ? <div className="enterprise-feedback enterprise-feedback--success">{success}</div> : null}
-                <Button className="mt-1 h-11 w-full rounded-[1rem] bg-foreground text-background" isDisabled={isPending} type="submit">
-                  {isPending ? "Saving tenant..." : "Save tenant changes"}
-                </Button>
-              </Form>
+            <Modal.Body className="pb-8">
+              <AnimatedStep stepKey={currentStep} direction={direction}>
+                {currentStep === 0 ? (
+                  <div className="space-y-5">
+                    <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
+                      <TextField className="grid gap-2">
+                        <Label>Tenant name</Label>
+                        <Input
+                          value={formState.name}
+                          onChange={(e) => setFormState((s) => ({ ...s, name: e.target.value }))}
+                        />
+                        <div className="enterprise-note">Readable operator label.</div>
+                      </TextField>
+                      <TextField className="grid gap-2">
+                        <Label>Tenant ID</Label>
+                        <Input
+                          value={formState.tenantID}
+                          onChange={(e) => setFormState((s) => ({ ...s, tenantID: e.target.value }))}
+                        />
+                        <div className="enterprise-note">Stable machine identifier.</div>
+                      </TextField>
+                    </div>
+                    <div className="flex justify-end">
+                      <Button className="bg-foreground text-background" onPress={goNext}>
+                        Continue
+                        <ArrowRight size={15} />
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    <div className="enterprise-panel grid gap-4 p-4">
+                      <TextField className="grid gap-2">
+                        <Label>Default Upstream URL</Label>
+                        <Input
+                          value={formState.upstreamURL}
+                          onChange={(e) => setFormState((s) => ({ ...s, upstreamURL: e.target.value }))}
+                        />
+                        <div className="enterprise-note">Fallback origin. Load-balancing upstreams take precedence.</div>
+                      </TextField>
+                      <Select
+                        className="w-full"
+                        placeholder="Select auth mode"
+                        value={formState.authMode}
+                        variant="secondary"
+                        onChange={(value) => setFormState((s) => ({ ...s, authMode: String(value) }))}
+                      >
+                        <Select.Trigger>
+                          <Select.Value />
+                          <Select.Indicator />
+                        </Select.Trigger>
+                        <Select.Popover>
+                          <ListBox>
+                            <ListBox.Item id="header" textValue="header">header<ListBox.ItemIndicator /></ListBox.Item>
+                            <ListBox.Item id="bearer" textValue="bearer">bearer<ListBox.ItemIndicator /></ListBox.Item>
+                            <ListBox.Item id="none" textValue="none">none<ListBox.ItemIndicator /></ListBox.Item>
+                          </ListBox>
+                        </Select.Popover>
+                      </Select>
+                      <div className="enterprise-note">header — inject tenant header; bearer — forward token; none — no auth injection.</div>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <TextField className="grid gap-2">
+                          <Label>Injected header</Label>
+                          <Input
+                            value={formState.headerName}
+                            onChange={(e) => setFormState((s) => ({ ...s, headerName: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Tenant identity header added upstream.</div>
+                        </TextField>
+                        <TextField className="grid gap-2">
+                          <Label>Health check path</Label>
+                          <Input
+                            placeholder="/ready"
+                            value={formState.healthCheckPath}
+                            onChange={(e) => setFormState((s) => ({ ...s, healthCheckPath: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Optional upstream probe path.</div>
+                        </TextField>
+                      </div>
+                    </div>
+                    {error && <div className="enterprise-feedback enterprise-feedback--error">{error}</div>}
+                    <div className="flex items-center justify-between gap-3">
+                      <Button variant="ghost" onPress={goBack}>
+                        <ArrowLeft size={15} />
+                        Back
+                      </Button>
+                      <Button
+                        className="bg-foreground text-background"
+                        isDisabled={isPending}
+                        onPress={handleSubmit}
+                      >
+                        {isPending ? "Updating…" : "Update tenant"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </AnimatedStep>
             </Modal.Body>
           </Modal.Dialog>
         </Modal.Container>

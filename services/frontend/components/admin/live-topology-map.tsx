@@ -896,7 +896,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
   const chipClassName = streamStatus === "live"
     ? "border border-success/25 bg-success/12 text-success"
     : streamStatus === "retrying" || streamStatus === "connecting"
-      ? "border border-warning/25 bg-warning/12 text-warning-foreground"
+      ? "border border-warning/25 bg-warning/12 text-warning"
       : "border border-border bg-surface text-foreground";
 
   const inspectorTitle = selectedRouteForInspector
@@ -1005,7 +1005,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
             <Plus size={14} />
             New tenant
           </Button>
-          <Button className={connectionMode?.kind === "route-from-tenant" ? "h-10 rounded-full border border-warning/30 bg-warning/12 px-4 text-warning-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
+          <Button className={connectionMode?.kind === "route-from-tenant" ? "h-10 rounded-full border border-warning/30 bg-warning/12 px-4 text-warning" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
             if (connectionMode?.kind === "route-from-tenant") {
               clearConnectionMode();
               return;
@@ -1015,7 +1015,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
             <Route size={14} />
             Route to tenant
           </Button>
-          <Button className={connectionMode?.kind === "token-from-tenant" ? "h-10 rounded-full border border-warning/30 bg-warning/12 px-4 text-warning-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
+          <Button className={connectionMode?.kind === "token-from-tenant" ? "h-10 rounded-full border border-warning/30 bg-warning/12 px-4 text-warning" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
             if (connectionMode?.kind === "token-from-tenant") {
               clearConnectionMode();
               return;
@@ -1025,7 +1025,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
             <KeyRound size={14} />
             Token to tenant
           </Button>
-          <Button className={connectionMode?.kind === "token-from-route" ? "h-10 rounded-full border border-warning/30 bg-warning/12 px-4 text-warning-foreground" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
+          <Button className={connectionMode?.kind === "token-from-route" ? "h-10 rounded-full border border-warning/30 bg-warning/12 px-4 text-warning" : "h-10 rounded-full px-4"} isDisabled={snapshot.source !== "backend"} variant="ghost" onPress={() => {
             if (connectionMode?.kind === "token-from-route") {
               clearConnectionMode();
               return;
@@ -1266,7 +1266,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                         <div className="text-sm font-semibold text-foreground">/{event.routeSlug}</div>
                         <div className="mt-1 text-xs text-muted-foreground">{new Date(event.timestamp).toLocaleTimeString()}</div>
                       </div>
-                      <Chip className={event.status < 400 ? "border border-success/25 bg-success/12 text-success" : "border border-warning/25 bg-warning/12 text-warning-foreground"}>{event.status}</Chip>
+                      <Chip className={event.status < 400 ? "border border-success/25 bg-success/12 text-success" : event.status < 500 ? "border border-warning/25 bg-warning/12 text-warning" : "border border-danger/25 bg-danger/12 text-danger"}>{event.status}</Chip>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span className="rounded-full border border-border bg-surface px-2 py-1">{event.tokenID}</span>

@@ -254,7 +254,7 @@ export function SignInPanel({
         ) : null}
 
         {error ? (
-          <div className="rounded-2xl border border-warning/30 bg-warning/12 px-4 py-3 text-sm text-warning-foreground">
+          <div className="rounded-2xl border border-warning/30 bg-warning/12 px-4 py-3 text-sm text-warning">
             {error}
           </div>
         ) : null}

@@ -1,7 +1,10 @@
-import { DashboardCharts } from "@/components/admin/dashboard-charts";
+import { ActivityFeed } from "@/components/admin/activity-feed";
+import { CollapsibleAnalytics } from "@/components/admin/collapsible-analytics";
 import { OnboardingModal } from "@/components/admin/onboarding-modal";
+import { QuickActions } from "@/components/admin/quick-actions";
+import { PageTransition } from "@/components/page-transition";
 import { getCircuitBreakers, getExpiringTokens, getTopology, getTrafficOverview, getTrafficStats } from "@/lib/backend-client";
-import { Activity, AlertTriangle, ArrowRight, BarChart3, CheckCircle2, Clock, Globe, Lock, Server, TimerReset } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, Clock, Globe, Lock, Server, TimerReset } from "lucide-react";
 import Link from "next/link";
 
 export default async function Home() {
@@ -50,6 +53,7 @@ export default async function Home() {
   const completedCount = setupSteps.filter((s) => s.done).length;
 
   return (
+    <PageTransition>
     <div className="space-y-8">
 
       {/* ── Page header ─────────────────────────────────────────── */}
@@ -65,9 +69,9 @@ export default async function Home() {
           <p className="text-sm text-muted-foreground">System health and gateway configuration.</p>
         </div>
 
-        {/* Primary CTA — always visible */}
+        {/* Primary CTA — shown only when setup is complete */}
         <div className="flex items-center gap-2">
-          <OnboardingModal tenantIDs={tenantIDs} disabled={!isOnline} />
+          {allDone && <OnboardingModal tenantIDs={tenantIDs} disabled={!isOnline} />}
         </div>
       </div>
 
@@ -93,66 +97,64 @@ export default async function Home() {
         ))}
       </div>
 
-      {/* ── Body: checklist + sidebar ────────────────────────────── */}
+      {/* ── Body: quick actions + activity + sidebar ──────────────── */}
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
 
-        {/* Setup checklist — dominant left column */}
-        <div className="rounded-lg border border-border bg-surface">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">
-                {allDone ? "Gateway configured" : "Setup checklist"}
-              </h2>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                {allDone
-                  ? "All three steps are complete. The gateway is ready."
-                  : `${completedCount} of ${setupSteps.length} steps complete`}
-              </p>
-            </div>
-            {allDone && (
-              <div className="flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success">
-                <CheckCircle2 size={11} />
-                Ready
+        {/* Left column */}
+        <div className="space-y-4">
+
+          {/* Setup progress — compact strip until all steps done */}
+          {!allDone && (
+            <div className="rounded-lg border border-border bg-surface px-5 py-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Setup checklist</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    {completedCount} of {setupSteps.length} steps complete
+                  </p>
+                </div>
+                <OnboardingModal tenantIDs={tenantIDs} disabled={!isOnline} />
               </div>
-            )}
+              <div className="mt-3 flex gap-1.5">
+                {setupSteps.map((step) => (
+                  <Link
+                    key={step.step}
+                    href={step.href}
+                    className={`h-1.5 flex-1 rounded-full transition-colors ${
+                      step.done ? "bg-success" : "bg-border"
+                    }`}
+                    title={`${step.step}${step.done ? " — done" : ""}`}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Quick Actions */}
+          <div className="rounded-lg border border-border bg-surface px-5 py-3.5">
+            <QuickActions
+                tenantIDs={tenantIDs}
+                tenantCount={stats.tenants}
+                routeCount={stats.routes}
+                tokenCount={stats.activeTokens}
+              />
           </div>
 
-          <div className="divide-y divide-border/60">
-            {setupSteps.map((item, idx) => (
+          {/* Recent Traffic */}
+          <div className="rounded-lg border border-border bg-surface">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">Recent Traffic</h2>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">Last gateway requests</p>
+              </div>
               <Link
-                key={item.step}
-                href={item.href}
-                className="group flex items-start gap-4 px-5 py-4 transition-colors hover:bg-panel/60"
+                href="/audit"
+                className="flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
               >
-                {/* Step number / check */}
-                <div className="mt-0.5 shrink-0">
-                  {item.done ? (
-                    <CheckCircle2 size={18} className="text-success" />
-                  ) : (
-                    <div className="flex h-[18px] w-[18px] items-center justify-center rounded-full border-2 border-border text-[10px] font-semibold text-muted-foreground">
-                      {idx + 1}
-                    </div>
-                  )}
-                </div>
-
-                {/* Content */}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`text-sm font-medium ${item.done ? "text-muted-foreground line-through decoration-border" : "text-foreground"}`}>
-                      {item.step}
-                    </span>
-                    {item.stat && (
-                      <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success">
-                        {item.stat}
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">{item.description}</p>
-                </div>
-
-                <ArrowRight size={14} className="mt-1 shrink-0 text-muted-foreground/40 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
+                View all <ArrowRight size={11} />
               </Link>
-            ))}
+            </div>
+            <ActivityFeed events={topology.data.auditEvents} />
           </div>
         </div>
 
@@ -187,37 +189,31 @@ export default async function Home() {
             </div>
           </div>
 
-          {/* Audit shortcut */}
-          <Link
-            href="/audit"
-            className="group flex items-center justify-between rounded-lg border border-border bg-surface px-4 py-3.5 transition-colors hover:bg-panel"
-          >
-            <div>
+          {/* Audit + Topology shortcuts */}
+          <div className="rounded-lg border border-border bg-surface divide-y divide-border">
+            <Link
+              href="/audit"
+              className="group flex items-center justify-between px-4 py-3 transition-colors hover:bg-panel"
+            >
               <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <TimerReset size={14} className="text-muted-foreground" />
+                <TimerReset size={13} className="text-muted-foreground" />
                 Audit Log
               </div>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                {stats.auditEvents24h > 0 ? `${stats.auditEvents24h} events in the last 24h` : "No recent events"}
-              </p>
-            </div>
-            <ArrowRight size={14} className="text-muted-foreground/40 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
-          </Link>
-
-          {/* Topology shortcut */}
-          <Link
-            href="/topology"
-            className="group flex items-center justify-between rounded-lg border border-border bg-surface px-4 py-3.5 transition-colors hover:bg-panel"
-          >
-            <div>
+              <span className="text-[11px] text-muted-foreground">
+                {stats.auditEvents24h > 0 ? `${stats.auditEvents24h} events today` : "No events"}
+              </span>
+            </Link>
+            <Link
+              href="/topology"
+              className="group flex items-center justify-between px-4 py-3 transition-colors hover:bg-panel"
+            >
               <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <Globe size={14} className="text-muted-foreground" />
+                <Globe size={13} className="text-muted-foreground" />
                 Live Topology
               </div>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">Visualize active gateway connections</p>
-            </div>
-            <ArrowRight size={14} className="text-muted-foreground/40 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
-          </Link>
+              <ArrowRight size={12} className="text-muted-foreground/40" />
+            </Link>
+          </div>
 
           {/* Circuit breakers status */}
           {circuitBreakersResult.data.length > 0 && (
@@ -261,14 +257,9 @@ export default async function Home() {
         </div>
       </div>
 
-      {/* ── Traffic analytics ───────────────────────────────────── */}
-      <div className="space-y-1">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-          <BarChart3 size={11} />
-          Traffic Analytics — last 24 hours
-        </div>
-        <DashboardCharts stats={statsResult.data} overview={overviewResult.data} />
-      </div>
+      {/* ── Traffic analytics (collapsible) ───────────────────────── */}
+      <CollapsibleAnalytics stats={statsResult.data} overview={overviewResult.data} />
     </div>
+    </PageTransition>
   );
 }

@@ -1,11 +1,14 @@
 "use client";
 
+import { AnimatedStep, type StepDef, StepList } from "@/components/admin/modal-stepper";
+import { useToast } from "@/components/toast-provider";
 import type { RouteSummary } from "@/lib/contracts";
-import { Button, Form, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
-import { ArrowUpRight, PenSquare } from "lucide-react";
+import { Button, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
+import { motion } from "framer-motion";
+import { ArrowLeft, ArrowRight, ArrowUpRight, PenSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { type FormEvent, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 
 interface UpdateRouteFormProps {
   route: RouteSummary;
@@ -19,10 +22,9 @@ interface UpdateRouteFormProps {
 
 function toFormState(route: RouteSummary | undefined) {
   return {
-    routeID: route?.id || "",
     slug: route?.slug || "",
     tenantID: route?.tenantID || "",
-    targetPath: route?.targetPath || "",
+    targetPath: route?.targetPath || "/",
     requiredScope: route?.requiredScope || "",
     methods: route?.methods.join(", ") || "",
     rateLimitRPM: route?.rateLimitRPM ?? 0,
@@ -32,27 +34,59 @@ function toFormState(route: RouteSummary | undefined) {
   };
 }
 
-export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = false, isOpen: controlledIsOpen, onOpenChange: controlledOnOpenChange, trigger }: UpdateRouteFormProps) {
+const STEPS: StepDef[] = [
+  { id: "basics", label: "Basics" },
+  { id: "routing", label: "Routing" },
+  { id: "advanced", label: "Advanced" },
+];
+
+export function UpdateRouteForm({
+  route,
+  tenantIDs,
+  label = "Edit",
+  disabled = false,
+  isOpen: controlledIsOpen,
+  onOpenChange: controlledOnOpenChange,
+  trigger,
+}: UpdateRouteFormProps) {
   const router = useRouter();
+  const { addToast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
-  const [success, setSuccess] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState(route));
+  const [currentStep, setCurrentStep] = useState(0);
+  const [direction, setDirection] = useState(1);
   const [internalOpen, setInternalOpen] = useState(false);
 
   const isControlled = controlledIsOpen !== undefined;
   const isOpen = isControlled ? controlledIsOpen : internalOpen;
 
   function handleOpenChange(open: boolean) {
+    if (open) {
+      setFormState(toFormState(route));
+      setError(undefined);
+      setCurrentStep(0);
+      setDirection(1);
+    }
     if (!isControlled) setInternalOpen(open);
     controlledOnOpenChange?.(open);
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function goNext() {
+    setDirection(1);
+    setCurrentStep((s) => s + 1);
+    setError(undefined);
+  }
+
+  function goBack() {
+    setDirection(-1);
+    setCurrentStep((s) => s - 1);
+    setError(undefined);
+  }
+
+  function handleSubmit() {
     startTransition(async () => {
       setError(undefined);
-      setSuccess(undefined);
 
       const response = await fetch(`/api/admin/routes/${route.id}`, {
         method: "PATCH",
@@ -73,15 +107,17 @@ export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = f
       const result = (await response.json().catch(() => null)) as RouteSummary | { error?: string } | null;
 
       if (!response.ok) {
-        setError(result && "error" in result ? result.error || "route update failed" : "route update failed");
+        setError(result && "error" in result ? result.error || "Route update failed" : "Route update failed");
         return;
       }
 
-      setSuccess(`Updated /proxy/${(result as RouteSummary).slug}.`);
+      addToast("Route updated", `/proxy/${formState.slug}`, "success");
       handleOpenChange(false);
       router.refresh();
     });
   }
+
+  const showPreview = Boolean(formState.slug || formState.tenantID);
 
   return (
     <Modal isOpen={isOpen} onOpenChange={handleOpenChange}>
@@ -98,139 +134,191 @@ export function UpdateRouteForm({ route, tenantIDs, label = "Edit", disabled = f
             <Modal.Header>
               <div>
                 <div className="enterprise-kicker">Update route</div>
-                <Modal.Heading className="mt-2 text-[1.9rem] leading-none tracking-[-0.04em] text-foreground">Tune this route</Modal.Heading>
-                <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
-                  Adjust route policy in place without changing the agent-facing control surface pattern.
-                </p>
+                <Modal.Heading className="mt-2 text-[1.9rem] leading-none tracking-[-0.04em] text-foreground">
+                  Tune this route
+                </Modal.Heading>
+              </div>
+              {showPreview && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mt-4 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 font-mono text-[13px]"
+                >
+                  <span className="text-muted-foreground">{(formState.methods.split(",")[0] ?? "GET").trim()} </span>
+                  <span className="text-accent">/proxy/{formState.slug || "…"}</span>
+                  {formState.tenantID && (
+                    <span className="text-muted-foreground"> → {formState.tenantID}</span>
+                  )}
+                  {formState.targetPath && formState.targetPath !== "/" && (
+                    <span className="text-muted-foreground">{formState.targetPath}</span>
+                  )}
+                  {formState.requiredScope && (
+                    <div className="mt-1 text-[11px] text-muted-foreground">scope: {formState.requiredScope}</div>
+                  )}
+                </motion.div>
+              )}
+              <div className="mt-5">
+                <StepList steps={STEPS} currentStep={currentStep} />
               </div>
             </Modal.Header>
-            <Modal.Body>
-              <Form className="grid gap-5" onSubmit={handleSubmit}>
-                <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
-                  <TextField className="grid gap-2">
-                    <Label>Proxy slug</Label>
-                    <Input
-                      onChange={(event) =>
-                        setFormState((current) => ({ ...current, slug: event.target.value }))
-                      }
-                      value={formState.slug}
-                    />
-                    <div className="enterprise-note">Public operator path segment.</div>
-                  </TextField>
-                  <Select
-                    className="w-full"
-                    isRequired
-                    placeholder="Select tenant"
-                    value={formState.tenantID}
-                    variant="secondary"
-                    onChange={(value) => setFormState((current) => ({ ...current, tenantID: String(value) }))}
-                  >
-                    <Label>Tenant ID</Label>
-                    <Select.Trigger>
-                      <Select.Value />
-                      <Select.Indicator />
-                    </Select.Trigger>
-                    <Select.Popover>
-                      <ListBox>
-                        {tenantIDs.map((tenantID) => (
-                          <ListBox.Item key={tenantID} id={tenantID} textValue={tenantID}>
-                            {tenantID}
-                            <ListBox.ItemIndicator />
-                          </ListBox.Item>
-                        ))}
-                      </ListBox>
-                    </Select.Popover>
-                  </Select>
-                  <div className="enterprise-note md:col-span-2">Changing tenant reassociates the route with a different upstream boundary.</div>
-                </div>
-                <div className="enterprise-panel grid gap-4 p-4">
-                  <TextField className="grid gap-2">
-                    <Label>Target path</Label>
-                    <Input
-                      onChange={(event) =>
-                        setFormState((current) => ({ ...current, targetPath: event.target.value }))
-                      }
-                      value={formState.targetPath}
-                    />
-                    <div className="enterprise-note">Relative path appended to the tenant upstream URL.</div>
-                  </TextField>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <TextField className="grid gap-2">
-                      <Label>Required scope</Label>
-                      <Input
-                        onChange={(event) =>
-                          setFormState((current) => ({ ...current, requiredScope: event.target.value }))
-                        }
-                        value={formState.requiredScope}
-                      />
-                      <div className="enterprise-note">Credential permission gate.</div>
-                    </TextField>
-                    <TextField className="grid gap-2">
-                      <Label>Allowed methods</Label>
-                      <Input
-                        onChange={(event) =>
-                          setFormState((current) => ({ ...current, methods: event.target.value }))
-                        }
-                        value={formState.methods}
-                      />
-                      <div className="enterprise-note">Comma-separated HTTP verbs.</div>
-                    </TextField>
+            <Modal.Body className="pb-8">
+              <AnimatedStep stepKey={currentStep} direction={direction}>
+                {currentStep === 0 && (
+                  <div className="space-y-5">
+                    <div className="enterprise-panel grid items-start gap-4 p-4 md:grid-cols-2">
+                      <TextField className="grid gap-2">
+                        <Label>Proxy slug</Label>
+                        <Input
+                          value={formState.slug}
+                          onChange={(e) => setFormState((s) => ({ ...s, slug: e.target.value }))}
+                        />
+                        <div className="enterprise-note">Public operator path segment.</div>
+                      </TextField>
+                      <Select
+                        className="w-full"
+                        isRequired
+                        placeholder="Select tenant"
+                        value={formState.tenantID}
+                        variant="secondary"
+                        onChange={(value) => setFormState((s) => ({ ...s, tenantID: String(value) }))}
+                      >
+                        <Select.Trigger>
+                          <Select.Value />
+                          <Select.Indicator />
+                        </Select.Trigger>
+                        <Select.Popover>
+                          <ListBox>
+                            {tenantIDs.map((tid) => (
+                              <ListBox.Item key={tid} id={tid} textValue={tid}>
+                                {tid}
+                                <ListBox.ItemIndicator />
+                              </ListBox.Item>
+                            ))}
+                          </ListBox>
+                        </Select.Popover>
+                      </Select>
+                      <div className="enterprise-note md:col-span-2">Changing tenant reassociates the route with a different upstream boundary.</div>
+                    </div>
+                    <div className="flex justify-end">
+                      <Button className="bg-foreground text-background" onPress={goNext}>
+                        Continue
+                        <ArrowRight size={15} />
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                <div className="enterprise-panel grid gap-4 p-4">
-                  <div className="enterprise-kicker">Rate limiting</div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <TextField className="grid gap-2">
-                      <Label>Requests / min</Label>
-                      <Input
-                        min={0}
-                        placeholder="0 = unlimited"
-                        type="number"
-                        value={formState.rateLimitRPM === 0 ? "" : String(formState.rateLimitRPM)}
-                        onChange={(event) => setFormState((current) => ({ ...current, rateLimitRPM: Number(event.target.value) || 0 }))}
-                      />
-                      <div className="enterprise-note">Sliding-window token bucket replenishment rate.</div>
-                    </TextField>
-                    <TextField className="grid gap-2">
-                      <Label>Burst size</Label>
-                      <Input
-                        min={0}
-                        placeholder="0 = unlimited"
-                        type="number"
-                        value={formState.rateLimitBurst === 0 ? "" : String(formState.rateLimitBurst)}
-                        onChange={(event) => setFormState((current) => ({ ...current, rateLimitBurst: Number(event.target.value) || 0 }))}
-                      />
-                      <div className="enterprise-note">Maximum concurrent requests in one window.</div>
-                    </TextField>
+                )}
+                {currentStep === 1 && (
+                  <div className="space-y-5">
+                    <div className="enterprise-panel grid gap-4 p-4">
+                      <TextField className="grid gap-2">
+                        <Label>Target path</Label>
+                        <Input
+                          value={formState.targetPath}
+                          onChange={(e) => setFormState((s) => ({ ...s, targetPath: e.target.value }))}
+                        />
+                        <div className="enterprise-note">Relative path appended to the tenant upstream URL.</div>
+                      </TextField>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <TextField className="grid gap-2">
+                          <Label>Required scope</Label>
+                          <Input
+                            value={formState.requiredScope}
+                            onChange={(e) => setFormState((s) => ({ ...s, requiredScope: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Credential permission gate.</div>
+                        </TextField>
+                        <TextField className="grid gap-2">
+                          <Label>Allowed methods</Label>
+                          <Input
+                            value={formState.methods}
+                            onChange={(e) => setFormState((s) => ({ ...s, methods: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Comma-separated HTTP verbs.</div>
+                        </TextField>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <Button variant="ghost" onPress={goBack}>
+                        <ArrowLeft size={15} />
+                        Back
+                      </Button>
+                      <Button className="bg-foreground text-background" onPress={goNext}>
+                        Continue
+                        <ArrowRight size={15} />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <TextField className="grid gap-2">
-                      <Label>Allow CIDRs</Label>
-                      <Input
-                        placeholder="10.0.0.0/8, 192.168.0.0/16"
-                        value={formState.allowCIDRs}
-                        onChange={(event) => setFormState((current) => ({ ...current, allowCIDRs: event.target.value }))}
-                      />
-                      <div className="enterprise-note">Comma-separated CIDRs. Empty = allow all.</div>
-                    </TextField>
-                    <TextField className="grid gap-2">
-                      <Label>Deny CIDRs</Label>
-                      <Input
-                        placeholder="203.0.113.0/24"
-                        value={formState.denyCIDRs}
-                        onChange={(event) => setFormState((current) => ({ ...current, denyCIDRs: event.target.value }))}
-                      />
-                      <div className="enterprise-note">Comma-separated CIDRs that are explicitly blocked.</div>
-                    </TextField>
+                )}
+                {currentStep === 2 && (
+                  <div className="space-y-5">
+                    <div className="enterprise-panel grid gap-4 p-4">
+                      <div className="enterprise-kicker">Rate limiting</div>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <TextField className="grid gap-2">
+                          <Label>Requests / min</Label>
+                          <Input
+                            min={0}
+                            placeholder="0 = unlimited"
+                            type="number"
+                            value={formState.rateLimitRPM === 0 ? "" : String(formState.rateLimitRPM)}
+                            onChange={(e) => setFormState((s) => ({ ...s, rateLimitRPM: Number(e.target.value) || 0 }))}
+                          />
+                          <div className="enterprise-note">Sliding-window replenishment rate.</div>
+                        </TextField>
+                        <TextField className="grid gap-2">
+                          <Label>Burst size</Label>
+                          <Input
+                            min={0}
+                            placeholder="0 = unlimited"
+                            type="number"
+                            value={formState.rateLimitBurst === 0 ? "" : String(formState.rateLimitBurst)}
+                            onChange={(e) => setFormState((s) => ({ ...s, rateLimitBurst: Number(e.target.value) || 0 }))}
+                          />
+                          <div className="enterprise-note">Maximum concurrent requests.</div>
+                        </TextField>
+                      </div>
+                    </div>
+                    <div className="enterprise-panel grid gap-4 p-4">
+                      <div className="enterprise-kicker">CIDR filtering</div>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <TextField className="grid gap-2">
+                          <Label>Allow CIDRs</Label>
+                          <Input
+                            placeholder="10.0.0.0/8"
+                            value={formState.allowCIDRs}
+                            onChange={(e) => setFormState((s) => ({ ...s, allowCIDRs: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Comma-separated. Empty = allow all.</div>
+                        </TextField>
+                        <TextField className="grid gap-2">
+                          <Label>Deny CIDRs</Label>
+                          <Input
+                            placeholder="203.0.113.0/24"
+                            value={formState.denyCIDRs}
+                            onChange={(e) => setFormState((s) => ({ ...s, denyCIDRs: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Explicitly blocked CIDRs.</div>
+                        </TextField>
+                      </div>
+                    </div>
+                    {error && <div className="enterprise-feedback enterprise-feedback--error">{error}</div>}
+                    <div className="flex items-center justify-between gap-3">
+                      <Button variant="ghost" onPress={goBack}>
+                        <ArrowLeft size={15} />
+                        Back
+                      </Button>
+                      <Button
+                        className="bg-foreground text-background"
+                        isDisabled={isPending}
+                        onPress={handleSubmit}
+                      >
+                        <ArrowUpRight size={16} />
+                        {isPending ? "Updating…" : "Update route"}
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                <Button className="mt-1 h-11 w-full rounded-[1rem] bg-foreground text-background" isDisabled={isPending} type="submit">
-                  <ArrowUpRight size={16} />
-                  {isPending ? "Updating route..." : "Update route"}
-                </Button>
-                {error ? <div className="enterprise-feedback enterprise-feedback--error">{error}</div> : null}
-                {success ? <div className="enterprise-feedback enterprise-feedback--success">{success}</div> : null}
-              </Form>
+                )}
+              </AnimatedStep>
             </Modal.Body>
           </Modal.Dialog>
         </Modal.Container>

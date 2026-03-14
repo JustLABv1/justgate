@@ -1,5 +1,6 @@
 "use client";
 
+import { useToast } from "@/components/toast-provider";
 import type { OrgSummary } from "@/lib/contracts";
 import { Button, Form, Input, Label, Modal, TextField } from "@heroui/react";
 import { Building2, Plus } from "lucide-react";
@@ -14,6 +15,7 @@ interface CreateOrgModalProps {
 export function CreateOrgModal({ onCreated }: CreateOrgModalProps = {}) {
   const { update } = useSession();
   const router = useRouter();
+  const { addToast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
@@ -46,6 +48,7 @@ export function CreateOrgModal({ onCreated }: CreateOrgModalProps = {}) {
 
     const org = data as OrgSummary;
     await update({ activeOrgId: org.id });
+    addToast("Organisation created", org.name, "success");
     setIsOpen(false);
     onCreated?.(org);
     startTransition(() => router.refresh());

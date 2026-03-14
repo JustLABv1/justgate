@@ -1,5 +1,6 @@
 "use client";
 
+import { useToast } from "@/components/toast-provider";
 import type { InviteResult } from "@/lib/contracts";
 import { Button, Form, Modal } from "@heroui/react";
 import { Check, Copy, Link } from "lucide-react";
@@ -11,6 +12,7 @@ interface InviteModalProps {
 }
 
 export function InviteModal({ orgID, isOwner }: InviteModalProps) {
+  const { addToast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -47,6 +49,7 @@ export function InviteModal({ orgID, isOwner }: InviteModalProps) {
       }
 
       setInvite(data as InviteResult);
+      addToast("Invite link generated", "Valid for 7 days", "success");
     } finally {
       setIsPending(false);
     }

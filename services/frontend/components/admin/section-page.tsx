@@ -1,6 +1,7 @@
 "use client";
 
 import type { DataSource } from "@/lib/contracts";
+import { motion } from "framer-motion";
 import { AlertCircle, Building2, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -49,7 +50,12 @@ export function SectionPage({
   const parsed = error ? friendlyError(error) : null;
 
   return (
-    <div className="space-y-8">
+    <motion.div
+      className="space-y-8"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
+    >
       <header className="space-y-1">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-[-0.03em] text-foreground">{title}</h1>
@@ -98,6 +104,6 @@ export function SectionPage({
       ) : null}
 
       {!parsed?.isOrgRequired && children}
-    </div>
+    </motion.div>
   );
 }

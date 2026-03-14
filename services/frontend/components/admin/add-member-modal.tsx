@@ -1,5 +1,6 @@
 "use client";
 
+import { useToast } from "@/components/toast-provider";
 import { Button, Form, Input, Label, Modal, TextField } from "@heroui/react";
 import { UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -12,16 +13,15 @@ interface AddMemberModalProps {
 
 export function AddMemberModal({ orgID, isOwner }: AddMemberModalProps) {
   const router = useRouter();
+  const { addToast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string>();
-  const [success, setSuccess] = useState<string>();
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(undefined);
-    setSuccess(undefined);
-    setIsPending(true);
+
 
     try {
       const form = event.currentTarget;
@@ -51,9 +51,10 @@ export function AddMemberModal({ orgID, isOwner }: AddMemberModalProps) {
         return;
       }
 
-      setSuccess(`${data?.userEmail || email} has been added as ${role}.`);
+      addToast("Member added", `${data?.userEmail || email} joined as ${role}`, "success");
       form.reset();
       router.refresh();
+      setIsOpen(false);
     } finally {
       setIsPending(false);
     }
@@ -62,7 +63,6 @@ export function AddMemberModal({ orgID, isOwner }: AddMemberModalProps) {
   function handleClose() {
     setIsOpen(false);
     setError(undefined);
-    setSuccess(undefined);
   }
 
   if (!isOwner) return null;
@@ -112,9 +112,6 @@ export function AddMemberModal({ orgID, isOwner }: AddMemberModalProps) {
 
                 {error && (
                   <p className="text-sm text-danger">{error}</p>
-                )}
-                {success && (
-                  <p className="text-sm text-success">{success}</p>
                 )}
 
                 <div className="flex justify-end gap-2 pt-2">

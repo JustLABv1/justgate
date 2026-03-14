@@ -1,20 +1,14 @@
 "use client";
 
+import { AnimatedStep, type StepDef, StepList } from "@/components/admin/modal-stepper";
+import { useToast } from "@/components/toast-provider";
 import type { IssuedToken, OrgSummary, TenantSummary } from "@/lib/contracts";
-import {
-  Button,
-  Form,
-  Input,
-  Label,
-  ListBox,
-  Modal,
-  Select,
-  TextField
-} from "@heroui/react";
-import { ArrowRight, Building2, Check, CheckCircle2, Copy, Plus } from "lucide-react";
+import { Button, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
+import { motion } from "framer-motion";
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Copy, Plus } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useCallback, useState, useTransition, type FormEvent } from "react";
+import { useCallback, useMemo, useState, useTransition } from "react";
 
 interface OnboardingModalProps {
   tenantIDs: string[];
@@ -23,45 +17,73 @@ interface OnboardingModalProps {
 
 function toApiExpiryFromDays(value: string) {
   const days = Number.parseInt(value.trim(), 10);
-  if (!Number.isFinite(days) || days <= 0) {
-    return value.trim();
-  }
-
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + days);
-  return expiresAt.toISOString();
+  if (!Number.isFinite(days) || days <= 0) return value.trim();
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
 }
 
 export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModalProps) {
   const router = useRouter();
   const { data: session, update } = useSession();
-  const [isOpen, setIsOpen] = useState(false);
+  const { addToast } = useToast();
   const [isPending, startTransition] = useTransition();
+  const [isOpen, setIsOpen] = useState(false);
+  const [direction, setDirection] = useState<1 | -1>(1);
 
   const hasOrg = Boolean(session?.activeOrgId);
 
-  const [activeTab, setActiveTab] = useState<string>("org");
+  const stepDefs: StepDef[] = useMemo(
+    () =>
+      hasOrg
+        ? [
+            { id: "tenant", label: "Tenant" },
+            { id: "route", label: "Route" },
+            { id: "token", label: "Token" },
+          ]
+        : [
+            { id: "org", label: "Organisation" },
+            { id: "tenant", label: "Tenant" },
+            { id: "route", label: "Route" },
+            { id: "token", label: "Token" },
+          ],
+    [hasOrg],
+  );
 
-  // Org state
+  const [activeStepIndex, setActiveStepIndex] = useState(0);
+
+  // Org
+  const [orgName, setOrgName] = useState("");
   const [orgError, setOrgError] = useState<string>();
   const [createdOrg, setCreatedOrg] = useState<OrgSummary>();
 
-  // Tenant state
+  // Tenant
+  const [tenantName, setTenantName] = useState("");
+  const [tenantID, setTenantID] = useState("");
+  const [upstreamURL, setUpstreamURL] = useState("");
+  const [headerName, setHeaderName] = useState("X-Scope-OrgID");
   const [tenantError, setTenantError] = useState<string>();
   const [createdTenant, setCreatedTenant] = useState<TenantSummary>();
-  
-  // Route state
-  const [routeError, setRouteError] = useState<string>();
-  const [routeSuccess, setRouteSuccess] = useState<string>();
-  const [routeTenantID, setRouteTenantID] = useState<string>("");
 
-  // Token state
+  // Route
+  const [routeSlug, setRouteSlug] = useState("");
+  const [routeTenantID, setRouteTenantID] = useState("");
+  const [targetPath, setTargetPath] = useState("/");
+  const [requiredScope, setRequiredScope] = useState("");
+  const [routeMethods, setRouteMethods] = useState("POST");
+  const [routeError, setRouteError] = useState<string>();
+  const [routeCreated, setRouteCreated] = useState(false);
+
+  // Token
+  const [tokenName, setTokenName] = useState("");
+  const [tokenTenantID, setTokenTenantID] = useState("");
+  const [scopes, setScopes] = useState("metrics:write");
+  const [expiresInDays, setExpiresInDays] = useState("30");
   const [tokenError, setTokenError] = useState<string>();
   const [issuedToken, setIssuedToken] = useState<IssuedToken>();
-  const [tokenTenantID, setTokenTenantID] = useState<string>("");
+  const [secretCopied, setSecretCopied] = useState(false);
 
   const [localTenantIDs, setLocalTenantIDs] = useState<string[]>(tenantIDs);
-  const [secretCopied, setSecretCopied] = useState(false);
 
   const handleCopySecret = useCallback((secret: string) => {
     navigator.clipboard.writeText(secret).then(() => {
@@ -70,493 +92,388 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
     });
   }, []);
 
+  function goNext() {
+    setDirection(1);
+    setActiveStepIndex((i) => Math.min(i + 1, stepDefs.length - 1));
+  }
+
+  function goBack() {
+    setDirection(-1);
+    setActiveStepIndex((i) => Math.max(i - 1, 0));
+  }
+
   function resetWizard() {
-    setActiveTab(hasOrg ? "tenant" : "org");
-    setOrgError(undefined);
-    setCreatedOrg(undefined);
-    setTenantError(undefined);
-    setCreatedTenant(undefined);
-    setRouteError(undefined);
-    setRouteSuccess(undefined);
-    setRouteTenantID(tenantIDs[0] ?? "");
-    setTokenError(undefined);
-    setIssuedToken(undefined);
-    setTokenTenantID(tenantIDs[0] ?? "");
+    setActiveStepIndex(0);
+    setDirection(1);
+    setOrgName(""); setOrgError(undefined); setCreatedOrg(undefined);
+    setTenantName(""); setTenantID(""); setUpstreamURL(""); setHeaderName("X-Scope-OrgID");
+    setTenantError(undefined); setCreatedTenant(undefined);
+    setRouteSlug(""); setRouteTenantID(tenantIDs[0] ?? "");
+    setTargetPath("/"); setRequiredScope(""); setRouteMethods("POST");
+    setRouteError(undefined); setRouteCreated(false);
+    setTokenName(""); setTokenTenantID(tenantIDs[0] ?? "");
+    setScopes("metrics:write"); setExpiresInDays("30");
+    setTokenError(undefined); setIssuedToken(undefined);
     setLocalTenantIDs(tenantIDs);
   }
 
-  async function handleOrgSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitOrg() {
     setOrgError(undefined);
-
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    const payload = { name: String(formData.get("name") || "") };
-
     const response = await fetch("/api/admin/orgs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ name: orgName }),
     });
-
     const result = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      setOrgError(result?.error || "Organisation creation failed");
-      return;
-    }
-
+    if (!response.ok) { setOrgError(result?.error || "Organisation creation failed"); return; }
     const org = result as OrgSummary;
     setCreatedOrg(org);
-    // Persist activeOrgId in session so subsequent requests include X-Org-ID
     await update({ activeOrgId: org.id });
-    startTransition(() => {
-      router.refresh();
-    });
+    startTransition(() => router.refresh());
+    goNext();
   }
 
-  async function handleTenantSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitTenant() {
     setTenantError(undefined);
-
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    const payload = {
-      name: String(formData.get("name") || ""),
-      tenantID: String(formData.get("tenantID") || ""),
-      upstreamURL: String(formData.get("upstreamURL") || ""),
-      headerName: String(formData.get("headerName") || ""),
-      authMode: "header",
-    };
-
     const response = await fetch("/api/admin/tenants", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ name: tenantName, tenantID, upstreamURL, headerName, authMode: "header" }),
     });
-
     const result = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      setTenantError(result?.error || "Tenant creation failed");
-      return;
-    }
-
+    if (!response.ok) { setTenantError(result?.error || "Tenant creation failed"); return; }
     setCreatedTenant(result as TenantSummary);
-    if (!localTenantIDs.includes(payload.tenantID)) {
-        setLocalTenantIDs(prev => [...prev, payload.tenantID]);
-    }
-    // Pre-select the newly created tenant for route and token steps
-    setRouteTenantID(payload.tenantID);
-    setTokenTenantID(payload.tenantID);
-    
-    startTransition(() => {
-      router.refresh();
-    });
+    if (!localTenantIDs.includes(tenantID)) setLocalTenantIDs((p) => [...p, tenantID]);
+    setRouteTenantID(tenantID);
+    setTokenTenantID(tenantID);
+    startTransition(() => router.refresh());
+    goNext();
   }
 
-  async function handleRouteSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitRoute() {
     setRouteError(undefined);
-    setRouteSuccess(undefined);
-
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    const payload = {
-      slug: String(formData.get("slug") || ""),
-      tenantID: routeTenantID,
-      targetPath: String(formData.get("targetPath") || ""),
-      requiredScope: String(formData.get("requiredScope") || ""),
-      methods: String(formData.get("methods") || ""),
-    };
-
     const response = await fetch("/api/admin/routes", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ slug: routeSlug, tenantID: routeTenantID, targetPath, requiredScope, methods: routeMethods }),
     });
-
     const result = await response.json().catch(() => null);
-    if (!response.ok) {
-      setRouteError(result?.error || "Failed to create route.");
-      return;
-    }
-
-    setRouteSuccess(`Created /proxy/${result?.slug || payload.slug}.`);
-    startTransition(() => {
-      router.refresh();
-    });
+    if (!response.ok) { setRouteError(result?.error || "Failed to create route."); return; }
+    setRouteCreated(true);
+    startTransition(() => router.refresh());
+    goNext();
   }
 
-  async function handleTokenSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitToken() {
     setTokenError(undefined);
-
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    const payload = {
-      name: String(formData.get("name") || ""),
-      tenantID: tokenTenantID,
-      scopes: String(formData.get("scopes") || ""),
-      expiresAt: toApiExpiryFromDays(String(formData.get("expiresAt") || "")),
-    };
-
     const response = await fetch("/api/admin/tokens", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ name: tokenName, tenantID: tokenTenantID, scopes, expiresAt: toApiExpiryFromDays(expiresInDays) }),
     });
-
     const result = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      setTokenError(result?.error || "Token issue failed");
-      return;
-    }
-
+    if (!response.ok) { setTokenError(result?.error || "Token issue failed"); return; }
     setIssuedToken(result as IssuedToken);
-    startTransition(() => {
-      router.refresh();
-    });
+    addToast("Setup complete", "Your first token is ready", "success");
+    startTransition(() => router.refresh());
   }
+
+  const activeStepId = stepDefs[activeStepIndex]?.id;
 
   return (
     <Modal
       isOpen={isOpen}
       onOpenChange={(open) => {
         setIsOpen(open);
-        if (!open) {
-          resetWizard();
-        }
+        if (!open) resetWizard();
       }}
     >
-      <Button className="rounded-full bg-foreground px-6 text-background" isDisabled={disabled} onPress={() => { setActiveTab(hasOrg ? "tenant" : "org"); setIsOpen(true); }}>
+      <Button
+        className="rounded-full bg-foreground px-6 text-background"
+        isDisabled={disabled}
+        onPress={() => { setActiveStepIndex(0); setIsOpen(true); }}
+      >
         <Plus size={16} />
         Onboard Tenant
       </Button>
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
-          <Modal.Dialog className="rounded-[30px] border border-border bg-overlay/96 shadow-[var(--overlay-shadow)]">
+          <Modal.Dialog className="rounded-[28px] border border-border bg-overlay/96 shadow-[var(--overlay-shadow)]">
             <Modal.CloseTrigger />
             <Modal.Header>
-              <div className="space-y-2">
-                <div className="enterprise-kicker">Guided setup</div>
-                <Modal.Heading className="text-[1.9rem] font-semibold tracking-[-0.04em]">Onboarding Wizard</Modal.Heading>
-                <p className="max-w-2xl text-sm leading-6 text-muted-foreground">Set up your organisation, then create the tenant, route and token for your first integration.</p>
+              <div className="enterprise-kicker">Guided setup</div>
+              <Modal.Heading className="mt-2 text-[1.9rem] leading-none tracking-[-0.04em] text-foreground">
+                Onboarding Wizard
+              </Modal.Heading>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Set up your first tenant, route and token in a few steps.
+              </p>
+              <div className="mt-5">
+                <StepList steps={stepDefs} currentStep={activeStepIndex} />
               </div>
             </Modal.Header>
             <Modal.Body className="pb-8">
-              {/* Stepper nav */}
-              {(() => {
-                const steps = [
-                  { id: "org", label: "Organisation", done: Boolean(createdOrg) || hasOrg },
-                  { id: "tenant", label: "Tenant", done: Boolean(createdTenant) },
-                  { id: "route", label: "Route", done: Boolean(routeSuccess) },
-                  { id: "token", label: "Token", done: Boolean(issuedToken) },
-                ];
-                return (
-                  <nav className="mb-6 flex items-center">
-                    {steps.map((step, i) => (
-                      <div key={step.id} className="flex items-center">
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab(step.id)}
-                          className="flex items-center gap-2"
-                        >
-                          <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold transition-colors ${
-                            step.done
-                              ? "border-success/40 bg-success/15 text-success"
-                              : activeTab === step.id
-                              ? "border-foreground bg-foreground text-background"
-                              : "border-border bg-background text-muted-foreground"
-                          }`}>
-                            {step.done ? <CheckCircle2 size={12} /> : i + 1}
-                          </div>
-                          <span className={`text-[13px] font-medium transition-colors ${
-                            activeTab === step.id ? "text-foreground" : "text-muted-foreground"
-                          }`}>{step.label}</span>
-                        </button>
-                        {i < steps.length - 1 && (
-                          <div className={`mx-3 h-px w-6 shrink-0 ${step.done ? "bg-success/40" : "bg-border"}`} />
-                        )}
-                      </div>
-                    ))}
-                  </nav>
-                );
-              })()}
-
-              {activeTab === "org" && (
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="text-lg font-medium">Step 1: Create Organisation</h3>
-                      <p className="text-sm text-muted-foreground">Organisations let you isolate tenants, routes and tokens across teams. You can invite teammates later.</p>
-                    </div>
+              <AnimatedStep stepKey={activeStepIndex} direction={direction}>
+                {/* ── Org step ── */}
+                {activeStepId === "org" && (
+                  <div className="space-y-5">
                     {(createdOrg || hasOrg) ? (
-                      <div className="enterprise-feedback enterprise-feedback--success space-y-4 p-6 text-center">
-                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success/20 text-success">
-                          <CheckCircle2 size={24} />
-                        </div>
-                        <div>
-                          <p className="font-semibold text-foreground">Organisation Ready</p>
-                          <p className="text-sm text-muted-foreground">
-                            {createdOrg ? `"${createdOrg.name}" was created.` : "Your active organisation is selected."}
-                          </p>
-                        </div>
-                        <Button onPress={() => setActiveTab("tenant")} className="bg-foreground text-background">
-                          Next: Create Tenant
-                          <ArrowRight size={16} />
+                      <div className="enterprise-feedback enterprise-feedback--success flex items-center gap-3 p-4">
+                        <CheckCircle2 size={16} className="shrink-0 text-success" />
+                        <p className="text-sm">
+                          {createdOrg ? `"${createdOrg.name}" created.` : "Organisation already active."}
+                        </p>
+                        <Button className="ml-auto bg-foreground text-background" size="sm" onPress={goNext}>
+                          Continue <ArrowRight size={14} />
                         </Button>
                       </div>
                     ) : (
-                      <Form className="grid gap-5" onSubmit={handleOrgSubmit}>
+                      <>
                         <div className="enterprise-panel grid gap-4 p-4">
                           <TextField className="grid gap-2">
                             <Label>Organisation name</Label>
-                            <Input name="name" placeholder="Acme Platform" required variant="secondary" />
+                            <Input placeholder="Acme Platform" required value={orgName} onChange={(e) => setOrgName(e.target.value)} />
                             <div className="enterprise-note">Your team or company name — visible to all members.</div>
                           </TextField>
                         </div>
-                        {orgError && (
-                          <div className="enterprise-feedback enterprise-feedback--error">{orgError}</div>
-                        )}
-                        <Button type="submit" className="mt-1 h-11 rounded-[1rem] bg-foreground text-background" isDisabled={isPending}>
-                          <Building2 size={16} />
-                          {isPending ? "Creating..." : "Create Organisation"}
-                        </Button>
-                      </Form>
+                        {orgError && <div className="enterprise-feedback enterprise-feedback--error">{orgError}</div>}
+                        <div className="flex justify-end">
+                          <Button
+                            className="bg-foreground text-background"
+                            isDisabled={!orgName.trim() || isPending}
+                            onPress={submitOrg}
+                          >
+                            {isPending ? "Creating…" : "Create Organisation"}
+                          </Button>
+                        </div>
+                      </>
                     )}
                   </div>
-              )}
+                )}
 
-              {activeTab === "tenant" && (
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="text-lg font-medium">Step 2: Create Tenant</h3>
-                      <p className="text-sm text-muted-foreground">Define where traffic for this customer or environment should go and which tenant header the proxy should inject upstream.</p>
-                    </div>
+                {/* ── Tenant step ── */}
+                {activeStepId === "tenant" && (
+                  <div className="space-y-5">
                     {createdTenant ? (
-                      <div className="enterprise-feedback enterprise-feedback--success space-y-4 p-6 text-center">
-                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success/20 text-success">
-                          <CheckCircle2 size={24} />
-                        </div>
-                        <div>
-                          <p className="font-semibold text-foreground">Tenant Created</p>
-                          <p className="text-sm text-muted-foreground">Tenant {createdTenant.name} ({createdTenant.tenantID}) is ready.</p>
-                        </div>
-                      <Button 
-                          onPress={() => setActiveTab("route")}
-                          className="bg-foreground text-background"
-                        >
-                          Next: Configure Route
-                          <ArrowRight size={16} />
+                      <div className="enterprise-feedback enterprise-feedback--success flex items-center gap-3 p-4">
+                        <CheckCircle2 size={16} className="shrink-0 text-success" />
+                        <p className="text-sm">Tenant <strong>{createdTenant.tenantID}</strong> created.</p>
+                        <Button className="ml-auto bg-foreground text-background" size="sm" onPress={goNext}>
+                          Continue <ArrowRight size={14} />
                         </Button>
                       </div>
                     ) : (
-                      <Form className="grid gap-5" onSubmit={handleTenantSubmit}>
+                      <>
                         <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
                           <TextField className="grid gap-2">
                             <Label>Tenant name</Label>
-                            <Input name="name" placeholder="Acme Observability" required variant="secondary" />
-                            <div className="enterprise-note">Friendly label shown in the admin UI.</div>
+                            <Input placeholder="Acme Observability" required value={tenantName} onChange={(e) => setTenantName(e.target.value)} />
+                            <div className="enterprise-note">Friendly label for the admin UI.</div>
                           </TextField>
                           <TextField className="grid gap-2">
                             <Label>Tenant ID</Label>
-                            <Input name="tenantID" placeholder="acme-prod" required variant="secondary" />
-                            <div className="enterprise-note">Stable machine identifier that will be injected into the upstream tenant header.</div>
+                            <Input placeholder="acme-prod" required value={tenantID} onChange={(e) => setTenantID(e.target.value)} />
+                            <div className="enterprise-note">Stable machine identifier injected upstream.</div>
                           </TextField>
-                        </div>
-                        <div className="enterprise-panel grid gap-4 p-4">
                           <TextField className="grid gap-2">
                             <Label>Upstream URL</Label>
-                            <Input name="upstreamURL" placeholder="https://mimir.internal.example" required type="url" variant="secondary" />
-                            <div className="enterprise-note">Base URL of the backend that should receive this tenant&apos;s traffic, for example your Mimir, Loki, or Tempo endpoint.</div>
+                            <Input placeholder="https://mimir.internal.example" required type="url" value={upstreamURL} onChange={(e) => setUpstreamURL(e.target.value)} />
+                            <div className="enterprise-note">Backend that receives this tenant's traffic.</div>
                           </TextField>
                           <TextField className="grid gap-2">
                             <Label>Injected header</Label>
-                            <Input name="headerName" defaultValue="X-Scope-OrgID" required variant="secondary" />
-                            <div className="enterprise-note">Header name the proxy adds upstream to represent the tenant. For Grafana backends this is usually X-Scope-OrgID.</div>
+                            <Input required value={headerName} onChange={(e) => setHeaderName(e.target.value)} />
+                            <div className="enterprise-note">Usually X-Scope-OrgID for Grafana backends.</div>
                           </TextField>
                         </div>
-                        {tenantError && (
-                          <div className="enterprise-feedback enterprise-feedback--error">{tenantError}</div>
+                        {upstreamURL && tenantID && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="rounded-xl border border-accent/20 bg-accent/5 px-4 py-2.5 font-mono text-[12px]"
+                          >
+                            <span className="text-muted-foreground">{headerName || "X-Scope-OrgID"}: </span>
+                            <span className="text-accent">{tenantID}</span>
+                            <span className="ml-2 text-muted-foreground/60 truncate">&rarr; {upstreamURL}</span>
+                          </motion.div>
                         )}
-                        <Button type="submit" className="mt-1 h-11 rounded-[1rem] bg-foreground text-background" isDisabled={isPending}>
-                          {isPending ? "Creating..." : "Save Tenant"}
-                        </Button>
-                      </Form>
+                        {tenantError && <div className="enterprise-feedback enterprise-feedback--error">{tenantError}</div>}
+                        <div className="flex items-center justify-between gap-3">
+                          {!hasOrg ? (
+                            <Button variant="ghost" onPress={goBack}><ArrowLeft size={15} />Back</Button>
+                          ) : <div />}
+                          <Button
+                            className="bg-foreground text-background"
+                            isDisabled={!tenantName.trim() || !tenantID.trim() || !upstreamURL.trim() || isPending}
+                            onPress={submitTenant}
+                          >
+                            {isPending ? "Creating…" : "Save Tenant"}
+                          </Button>
+                        </div>
+                      </>
                     )}
                   </div>
-              )}
+                )}
 
-              {activeTab === "route" && (
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="text-lg font-medium">Step 3: Register Route</h3>
-                      <p className="text-sm text-muted-foreground">Create the public proxy entry point that agents or operators will call for this tenant.</p>
-                    </div>
-                    {routeSuccess ? (
-                      <div className="enterprise-feedback enterprise-feedback--success space-y-4 p-6 text-center">
-                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success/20 text-success">
-                          <CheckCircle2 size={24} />
-                        </div>
-                        <div>
-                          <p className="font-semibold text-foreground">Route Registered</p>
-                          <p className="text-sm text-muted-foreground">{routeSuccess}</p>
-                        </div>
-                        <Button 
-                          onPress={() => setActiveTab("token")}
-                          className="bg-foreground text-background"
-                        >
-                          Next: Issue Token
-                          <ArrowRight size={16} />
+                {/* ── Route step ── */}
+                {activeStepId === "route" && (
+                  <div className="space-y-5">
+                    {routeCreated ? (
+                      <div className="enterprise-feedback enterprise-feedback--success flex items-center gap-3 p-4">
+                        <CheckCircle2 size={16} className="shrink-0 text-success" />
+                        <p className="text-sm">Route <strong>/proxy/{routeSlug}</strong> registered.</p>
+                        <Button className="ml-auto bg-foreground text-background" size="sm" onPress={goNext}>
+                          Continue <ArrowRight size={14} />
                         </Button>
                       </div>
                     ) : (
-                      <Form className="grid gap-5" onSubmit={handleRouteSubmit}>
-                        <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
+                      <>
+                        <div className="enterprise-panel grid items-start gap-4 p-4 md:grid-cols-2">
                           <TextField className="grid gap-2">
                             <Label>Proxy slug</Label>
-                            <Input name="slug" placeholder="metrics-ingest" required variant="secondary" />
-                            <div className="enterprise-note">Becomes the public path /proxy/&lt;slug&gt;. Keep it short and stable — no slashes.</div>
+                            <Input placeholder="metrics-ingest" required value={routeSlug} onChange={(e) => setRouteSlug(e.target.value)} />
+                            <div className="enterprise-note">Becomes /proxy/&lt;slug&gt;. No slashes.</div>
                           </TextField>
-                          <Select className="w-full" isRequired value={routeTenantID} onChange={(v) => setRouteTenantID(String(v))} variant="secondary">
+                          <Select
+                            className="w-full"
+                            isRequired
+                            placeholder="Select tenant"
+                            value={routeTenantID}
+                            variant="secondary"
+                            onChange={(v) => setRouteTenantID(String(v))}
+                          >
                             <Label>Tenant ID</Label>
-                            <Select.Trigger>
-                              <Select.Value />
-                              <Select.Indicator />
-                            </Select.Trigger>
+                            <Select.Trigger><Select.Value /><Select.Indicator /></Select.Trigger>
                             <Select.Popover>
                               <ListBox>
                                 {localTenantIDs.map((tid) => (
-                                  <ListBox.Item key={tid} id={tid} textValue={tid}>
-                                    {tid}
-                                  </ListBox.Item>
+                                  <ListBox.Item key={tid} id={tid} textValue={tid}>{tid}<ListBox.ItemIndicator /></ListBox.Item>
                                 ))}
                               </ListBox>
                             </Select.Popover>
                           </Select>
-                            <div className="enterprise-note md:col-span-2">Choose which tenant this route should forward to.</div>
-                        </div>
-                          <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
                           <TextField className="grid gap-2">
                             <Label>Target path</Label>
-                            <Input name="targetPath" defaultValue="/" required variant="secondary" />
-                              <div className="enterprise-note">Path appended to the tenant upstream URL, for example /api/v1/push.</div>
+                            <Input placeholder="/api/v1/push" required value={targetPath} onChange={(e) => setTargetPath(e.target.value)} />
                           </TextField>
                           <TextField className="grid gap-2">
                             <Label>Required scope</Label>
-                            <Input name="requiredScope" placeholder="metrics:write" required variant="secondary" />
-                              <div className="enterprise-note">Permission a token must contain before it can call this route.</div>
+                            <Input placeholder="metrics:write" required value={requiredScope} onChange={(e) => setRequiredScope(e.target.value)} />
                           </TextField>
-                            <TextField className="grid gap-2 md:col-span-2">
-                              <Label>Allowed methods (comma separated)</Label>
-                              <Input name="methods" defaultValue="POST,PUT" required variant="secondary" />
-                              <div className="enterprise-note">HTTP verbs allowed on this route, for example POST or GET,POST.</div>
-                            </TextField>
+                          <TextField className="grid gap-2 md:col-span-2">
+                            <Label>Allowed methods</Label>
+                            <Input placeholder="POST, PUT" required value={routeMethods} onChange={(e) => setRouteMethods(e.target.value)} />
+                            <div className="enterprise-note">Comma-separated HTTP verbs.</div>
+                          </TextField>
                         </div>
-                        {routeError && (
-                            <div className="enterprise-feedback enterprise-feedback--error">{routeError}</div>
+                        {(routeSlug || routeTenantID) && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="rounded-xl border border-accent/20 bg-accent/5 px-4 py-2.5 font-mono text-[12px]"
+                          >
+                            <span className="text-muted-foreground">{(routeMethods.split(",")[0] || "POST").trim()} </span>
+                            <span className="text-accent">/proxy/{routeSlug || "…"}</span>
+                            {routeTenantID && <span className="text-muted-foreground"> &rarr; {routeTenantID}{targetPath}</span>}
+                            {requiredScope && <span className="text-muted-foreground/70 ml-2">scope: {requiredScope}</span>}
+                          </motion.div>
                         )}
-                          <Button type="submit" className="mt-1 h-11 rounded-[1rem] bg-foreground text-background" isDisabled={isPending}>
-                          {isPending ? "Creating..." : "Save Route"}
-                        </Button>
-                      </Form>
+                        {routeError && <div className="enterprise-feedback enterprise-feedback--error">{routeError}</div>}
+                        <div className="flex items-center justify-between gap-3">
+                          <Button variant="ghost" onPress={goBack}><ArrowLeft size={15} />Back</Button>
+                          <Button
+                            className="bg-foreground text-background"
+                            isDisabled={!routeSlug.trim() || !routeTenantID || !requiredScope.trim() || isPending}
+                            onPress={submitRoute}
+                          >
+                            {isPending ? "Saving…" : "Save Route"}
+                          </Button>
+                        </div>
+                      </>
                     )}
                   </div>
-              )}
+                )}
 
-              {activeTab === "token" && (
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="text-lg font-medium">Step 4: Issue Token</h3>
-                      <p className="text-sm text-muted-foreground">Create the credential that clients will use. The token should include the scope required by the route you just created.</p>
-                    </div>
+                {/* ── Token step ── */}
+                {activeStepId === "token" && (
+                  <div className="space-y-5">
                     {issuedToken ? (
-                      <div className="enterprise-feedback enterprise-feedback--success space-y-4 p-6">
-                        <div className="flex items-center gap-3 text-success">
-                          <CheckCircle2 size={24} />
-                          <p className="font-semibold">Token Issued Successfully</p>
+                      <div className="enterprise-feedback enterprise-feedback--success space-y-4 p-5">
+                        <div className="flex items-center gap-2 text-success">
+                          <Check size={16} />
+                          <p className="font-semibold text-sm">Setup complete — copy your secret now</p>
+                          <span className="ml-auto text-[10px] font-medium uppercase tracking-[0.18em] text-warning">Shown once</span>
                         </div>
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Secret key — save this now</p>
-                            <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-warning">Shown once</span>
+                        <div className="flex items-start gap-2">
+                          <div className="min-w-0 flex-1 rounded-[0.9rem] border border-border/70 bg-background/75 px-3 py-3 font-mono text-sm break-all select-all">
+                            {issuedToken.secret}
                           </div>
-                          <div className="flex items-start gap-2">
-                            <div className="min-w-0 flex-1 rounded-xl border border-border bg-background p-4 font-mono text-sm break-all select-all">
-                              {issuedToken.secret}
-                            </div>
-                            <Button
-                              className="mt-1 h-9 w-9 min-w-9 shrink-0 rounded-xl border border-border bg-surface px-0 text-muted-foreground hover:text-foreground"
-                              onPress={() => handleCopySecret(issuedToken.secret)}
-                              size="sm"
-                              variant="ghost"
-                              aria-label="Copy secret"
-                            >
-                              {secretCopied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
-                            </Button>
-                          </div>
-                          <p className="text-[10px] text-muted-foreground">
-                            For security, this secret is never displayed again.
-                          </p>
-                        </div>
-                        <div className="flex justify-end pt-4">
-                          <Button 
-                            variant="secondary"
-                            onPress={() => setIsOpen(false)}
+                          <Button
+                            aria-label="Copy secret"
+                            className="mt-1 h-9 w-9 min-w-9 shrink-0 rounded-xl border border-border bg-surface px-0 text-muted-foreground hover:text-foreground"
+                            size="sm"
+                            variant="ghost"
+                            onPress={() => handleCopySecret(issuedToken.secret)}
                           >
-                            Finish & Close
+                            {secretCopied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
                           </Button>
+                        </div>
+                        <div className="flex justify-end pt-1">
+                          <Button variant="secondary" onPress={() => setIsOpen(false)}>Finish &amp; close</Button>
                         </div>
                       </div>
                     ) : (
-                      <Form className="grid gap-5" onSubmit={handleTokenSubmit}>
-                        <div className="enterprise-panel grid gap-4 p-4 md:grid-cols-2">
+                      <>
+                        <div className="enterprise-panel grid items-start gap-4 p-4 md:grid-cols-2">
                           <TextField className="grid gap-2 md:col-span-2">
                             <Label>Token name</Label>
-                            <Input name="name" placeholder="grafana-agent" required variant="secondary" />
-                            <div className="enterprise-note">Friendly label for the client or workload that will use this token.</div>
+                            <Input placeholder="grafana-agent" required value={tokenName} onChange={(e) => setTokenName(e.target.value)} />
+                            <div className="enterprise-note">Friendly label for the workload using this token.</div>
                           </TextField>
-                          <Select className="w-full" isRequired value={tokenTenantID} onChange={(v) => setTokenTenantID(String(v))} variant="secondary">
+                          <Select
+                            className="w-full"
+                            isRequired
+                            placeholder="Select tenant"
+                            value={tokenTenantID}
+                            variant="secondary"
+                            onChange={(v) => setTokenTenantID(String(v))}
+                          >
                             <Label>Tenant ID</Label>
-                            <Select.Trigger>
-                              <Select.Value />
-                              <Select.Indicator />
-                            </Select.Trigger>
+                            <Select.Trigger><Select.Value /><Select.Indicator /></Select.Trigger>
                             <Select.Popover>
                               <ListBox>
                                 {localTenantIDs.map((tid) => (
-                                  <ListBox.Item key={tid} id={tid} textValue={tid}>
-                                    {tid}
-                                  </ListBox.Item>
+                                  <ListBox.Item key={tid} id={tid} textValue={tid}>{tid}<ListBox.ItemIndicator /></ListBox.Item>
                                 ))}
                               </ListBox>
                             </Select.Popover>
                           </Select>
                           <TextField className="grid gap-2">
                             <Label>Expires in (days)</Label>
-                            <Input min="1" name="expiresAt" defaultValue="30" type="number" required variant="secondary" />
-                            <div className="enterprise-note">How many days from now the token should remain valid.</div>
+                            <Input min="1" required type="number" value={expiresInDays} onChange={(e) => setExpiresInDays(e.target.value)} />
                           </TextField>
-                          <div className="enterprise-note md:col-span-2">This token can only be used with routes that belong to this tenant.</div>
-                        </div>
-                        <div className="enterprise-panel grid gap-4 p-4">
-                          <TextField className="grid gap-2">
-                            <Label>Scopes (comma separated)</Label>
-                            <Input name="scopes" placeholder="metrics:write" defaultValue="metrics:write" required variant="secondary" />
-                            <div className="enterprise-note">Include at least the scope required by the route, for example metrics:write.</div>
+                          <TextField className="grid gap-2 md:col-span-2">
+                            <Label>Scopes</Label>
+                            <Input placeholder="metrics:write" required value={scopes} onChange={(e) => setScopes(e.target.value)} />
+                            <div className="enterprise-note">Include at least the scope required by the route, e.g. metrics:write.</div>
                           </TextField>
                         </div>
-                        {tokenError && (
-                          <div className="enterprise-feedback enterprise-feedback--error">{tokenError}</div>
-                        )}
-                        <Button type="submit" className="mt-1 h-11 rounded-[1rem] bg-foreground text-background" isDisabled={isPending}>
-                          {isPending ? "Issuing..." : "Issue Token"}
-                        </Button>
-                      </Form>
+                        {tokenError && <div className="enterprise-feedback enterprise-feedback--error">{tokenError}</div>}
+                        <div className="flex items-center justify-between gap-3">
+                          <Button variant="ghost" onPress={goBack}><ArrowLeft size={15} />Back</Button>
+                          <Button
+                            className="bg-foreground text-background"
+                            isDisabled={!tokenName.trim() || !tokenTenantID || !scopes.trim() || isPending}
+                            onPress={submitToken}
+                          >
+                            {isPending ? "Issuing…" : "Issue Token"}
+                          </Button>
+                        </div>
+                      </>
                     )}
                   </div>
-              )}
+                )}
+              </AnimatedStep>
             </Modal.Body>
           </Modal.Dialog>
         </Modal.Container>
