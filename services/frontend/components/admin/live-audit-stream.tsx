@@ -8,29 +8,24 @@ export function LiveAuditStream() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [open, setOpen] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
+  const esRef = useRef<EventSource | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const connect = useCallback(async () => {
-    if (wsRef.current) return;
+    if (esRef.current) return;
     try {
       const res = await fetch("/api/admin/audit/socket-info", { cache: "no-store" });
       if (!res.ok) return;
-      const { token, wsUrl } = (await res.json()) as { token: string; wsUrl: string };
-      const ws = new WebSocket(`${wsUrl}?access_token=${encodeURIComponent(token)}`);
-      wsRef.current = ws;
+      const { token, sseUrl } = (await res.json()) as { token: string; sseUrl: string };
+      const es = new EventSource(`${sseUrl}?access_token=${encodeURIComponent(token)}`);
+      esRef.current = es;
 
-      ws.onopen = () => setConnected(true);
-      ws.onclose = () => {
+      es.onopen = () => setConnected(true);
+      es.onerror = () => {
         setConnected(false);
-        wsRef.current = null;
+        // EventSource will auto-reconnect; just reflect disconnected state.
       };
-      ws.onerror = () => {
-        setConnected(false);
-        ws.close();
-        wsRef.current = null;
-      };
-      ws.onmessage = (msg) => {
+      es.onmessage = (msg) => {
         try {
           const event = JSON.parse(msg.data) as AuditEvent;
           setEvents((prev) => [event, ...prev].slice(0, 200));
@@ -44,9 +39,10 @@ export function LiveAuditStream() {
       connect();
     }
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+        setConnected(false);
       }
     };
   }, [open, connect]);
@@ -88,9 +84,10 @@ export function LiveAuditStream() {
           onClick={() => {
             setOpen(false);
             setEvents([]);
-            if (wsRef.current) {
-              wsRef.current.close();
-              wsRef.current = null;
+            if (esRef.current) {
+              esRef.current.close();
+              esRef.current = null;
+              setConnected(false);
             }
           }}
           className="text-muted-foreground hover:text-foreground"

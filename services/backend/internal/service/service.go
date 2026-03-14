@@ -21,8 +21,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 const defaultAdminJWTSecret = "justgate-local-backend-jwt-secret"
@@ -653,7 +651,8 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/tokens/", s.withAdminAuth(s.withOrgContext(s.handleTokenByID)))
 	mux.HandleFunc("/api/v1/admin/audit", s.withAdminAuth(s.withOrgContext(s.handleAudit)))
 	mux.HandleFunc("/api/v1/admin/topology", s.withAdminAuth(s.withOrgContext(s.handleTopology)))
-	mux.HandleFunc("/api/v1/admin/topology/stream", s.handleTopologyStream)
+	mux.HandleFunc("/api/v1/admin/topology/stream", s.handleTopologySSE) // legacy alias
+	mux.HandleFunc("/api/v1/admin/topology/sse", s.handleTopologySSE)
 	mux.HandleFunc("/api/v1/admin/orgs", s.withAdminAuth(s.handleOrgs))
 	mux.HandleFunc("/api/v1/admin/orgs/", s.withAdminAuth(s.handleOrgByID))
 	mux.HandleFunc("/api/v1/admin/settings/oidc", s.withAdminAuth(s.handleOIDCSettings))
@@ -680,7 +679,8 @@ func (s *Service) Handler() http.Handler {
 	// Route tester
 	mux.HandleFunc("/api/v1/admin/route-test", s.withAdminAuth(s.withOrgContext(s.handleRouteTest)))
 	// Audit stream & filtered
-	mux.HandleFunc("/api/v1/admin/audit/stream", s.handleAuditStream)
+	mux.HandleFunc("/api/v1/admin/audit/sse", s.handleAuditSSE)
+	mux.HandleFunc("/api/v1/admin/audit/stream", s.handleAuditSSE) // legacy alias
 	mux.HandleFunc("/api/v1/admin/audit/filtered", s.withAdminAuth(s.withOrgContext(s.handleAuditFiltered)))
 	// Global search
 	mux.HandleFunc("/api/v1/admin/search", s.withAdminAuth(s.withOptionalOrgContext(s.handleSearch)))
@@ -706,10 +706,6 @@ func (s *Service) Handler() http.Handler {
 
 		mux.ServeHTTP(loggingWriter, request)
 	})
-}
-
-var topologyUpgrader = websocket.Upgrader{
-	CheckOrigin: func(_ *http.Request) bool { return true },
 }
 
 func (s *Service) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -1063,7 +1059,7 @@ func (s *Service) handleTopology(writer http.ResponseWriter, request *http.Reque
 	writeJSON(writer, http.StatusOK, topology)
 }
 
-func (s *Service) handleTopologyStream(writer http.ResponseWriter, request *http.Request) {
+func (s *Service) handleTopologySSE(writer http.ResponseWriter, request *http.Request) {
 	tokenValue := extractBearerToken(request.Header.Get("Authorization"))
 	if tokenValue == "" {
 		tokenValue = strings.TrimSpace(request.URL.Query().Get("access_token"))
@@ -1095,51 +1091,43 @@ func (s *Service) handleTopologyStream(writer http.ResponseWriter, request *http
 	}
 	request = request.WithContext(ctx)
 
-	connection, err := topologyUpgrader.Upgrade(writer, request, nil)
-	if err != nil {
+	flusher, ok := writer.(http.Flusher)
+	if !ok {
+		http.Error(writer, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
-	defer connection.Close()
 
-	_ = connection.SetReadDeadline(time.Now().Add(60 * time.Second))
-	connection.SetPongHandler(func(string) error {
-		return connection.SetReadDeadline(time.Now().Add(60 * time.Second))
-	})
+	writer.Header().Set("Content-Type", "text/event-stream")
+	writer.Header().Set("Cache-Control", "no-cache")
+	writer.Header().Set("Connection", "keep-alive")
+	// Tell nginx / Traefik not to buffer this response.
+	writer.Header().Set("X-Accel-Buffering", "no")
+	writer.WriteHeader(http.StatusOK)
+	flusher.Flush()
 
-	stop := make(chan struct{})
-	go func() {
-		defer close(stop)
-		for {
-			if _, _, readErr := connection.ReadMessage(); readErr != nil {
-				return
-			}
+	sendSnapshot := func() {
+		topology, buildErr := s.buildTopologyResponse(request.Context())
+		var payload []byte
+		if buildErr != nil {
+			payload, _ = json.Marshal(map[string]any{"type": "error", "error": buildErr.Error()})
+		} else {
+			payload, _ = json.Marshal(map[string]any{"type": "snapshot", "data": topology})
 		}
-	}()
+		fmt.Fprintf(writer, "data: %s\n\n", payload)
+		flusher.Flush()
+	}
+
+	sendSnapshot()
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	sendSnapshot := func() error {
-		topology, buildErr := s.buildTopologyResponse(request.Context())
-		if buildErr != nil {
-			return connection.WriteJSON(map[string]any{"type": "error", "error": buildErr.Error()})
-		}
-		return connection.WriteJSON(map[string]any{"type": "snapshot", "data": topology})
-	}
-
-	if err := sendSnapshot(); err != nil {
-		return
-	}
-
 	for {
 		select {
-		case <-stop:
+		case <-request.Context().Done():
 			return
 		case <-ticker.C:
-			_ = connection.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second))
-			if err := sendSnapshot(); err != nil {
-				return
-			}
+			sendSnapshot()
 		}
 	}
 }

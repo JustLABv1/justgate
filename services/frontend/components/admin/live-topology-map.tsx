@@ -240,9 +240,9 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       const attemptID = connectionAttemptRef.current + 1;
       connectionAttemptRef.current = attemptID;
 
-      // If a socket is already open but for a different org, close it first
-      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-        socketRef.current.close();
+      // Close any existing SSE connection.
+      if (socketRef.current) {
+        (socketRef.current as unknown as EventSource).close();
         socketRef.current = null;
       }
 
@@ -259,12 +259,13 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           return;
         }
 
-        const socketInfo = (await response.json()) as { token: string; wsUrl: string; orgId?: string | null };
+        const socketInfo = (await response.json()) as { token: string; sseUrl: string; orgId?: string | null };
         const orgParam = socketInfo.orgId ? `&org_id=${encodeURIComponent(socketInfo.orgId)}` : "";
-        const socket = new WebSocket(`${socketInfo.wsUrl}?access_token=${encodeURIComponent(socketInfo.token)}${orgParam}`);
-        socketRef.current = socket;
+        const es = new EventSource(`${socketInfo.sseUrl}?access_token=${encodeURIComponent(socketInfo.token)}${orgParam}`);
+        // Store as unknown cast – the ref type is WebSocket for legacy reasons.
+        socketRef.current = es as unknown as WebSocket;
 
-        socket.onopen = () => {
+        es.onopen = () => {
           if (disposed || attemptID !== connectionAttemptRef.current) {
             return;
           }
@@ -275,7 +276,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           setStreamStatus("live");
         };
 
-        socket.onmessage = (event) => {
+        es.onmessage = (event) => {
           if (disposed || attemptID !== connectionAttemptRef.current) {
             return;
           }
@@ -291,21 +292,12 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           }));
         };
 
-        socket.onclose = () => {
+        es.onerror = () => {
           if (disposed || attemptID !== connectionAttemptRef.current) {
             return;
           }
-          socketRef.current = null;
+          // EventSource auto-reconnects; just show retrying status.
           setStreamStatus("retrying");
-          scheduleReconnect();
-        };
-
-        socket.onerror = () => {
-          if (disposed || attemptID !== connectionAttemptRef.current) {
-            return;
-          }
-          setStreamStatus("retrying");
-          socket.close();
         };
       } catch {
         if (disposed || attemptID !== connectionAttemptRef.current) {

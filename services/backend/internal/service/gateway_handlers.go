@@ -2,14 +2,13 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 // ── Traffic analytics & overview ───────────────────────────────────────
@@ -620,13 +619,13 @@ func (s *Service) handleRouteTest(writer http.ResponseWriter, request *http.Requ
 	})
 }
 
-// ── Live audit stream (WebSocket) ──────────────────────────────────────
+// ── Live audit stream – Server-Sent Events ────────────────────────────
+//
+// SSE works through every reverse proxy (Traefik, nginx, etc.) without
+// requiring a WebSocket upgrade handshake.  The browser reconnects
+// automatically when the connection drops.
 
-var auditStreamUpgrader = websocket.Upgrader{
-	CheckOrigin: func(_ *http.Request) bool { return true },
-}
-
-func (s *Service) handleAuditStream(writer http.ResponseWriter, request *http.Request) {
+func (s *Service) handleAuditSSE(writer http.ResponseWriter, request *http.Request) {
 	tokenValue := extractBearerToken(request.Header.Get("Authorization"))
 	if tokenValue == "" {
 		tokenValue = strings.TrimSpace(request.URL.Query().Get("access_token"))
@@ -636,28 +635,38 @@ func (s *Service) handleAuditStream(writer http.ResponseWriter, request *http.Re
 		return
 	}
 
-	conn, err := auditStreamUpgrader.Upgrade(writer, request, nil)
-	if err != nil {
-		s.logger.Error("audit stream websocket upgrade failed", "error", err)
+	flusher, ok := writer.(http.Flusher)
+	if !ok {
+		http.Error(writer, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
-	defer conn.Close()
+
+	writer.Header().Set("Content-Type", "text/event-stream")
+	writer.Header().Set("Cache-Control", "no-cache")
+	writer.Header().Set("Connection", "keep-alive")
+	// Tell nginx / Traefik not to buffer this response.
+	writer.Header().Set("X-Accel-Buffering", "no")
+	writer.WriteHeader(http.StatusOK)
+	flusher.Flush()
 
 	ch := s.auditSubscribers.Subscribe()
 	defer s.auditSubscribers.Unsubscribe(ch)
 
-	// Read pump: just drain client messages
-	go func() {
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				return
-			}
-		}
-	}()
+	keepalive := time.NewTicker(30 * time.Second)
+	defer keepalive.Stop()
 
-	for data := range ch {
-		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	for {
+		select {
+		case <-request.Context().Done():
 			return
+		case data := <-ch:
+			fmt.Fprintf(writer, "data: %s\n\n", data)
+			flusher.Flush()
+		case <-keepalive.C:
+			// SSE comment keeps the connection alive through proxies that
+			// close idle HTTP connections (e.g. nginx proxy_read_timeout).
+			fmt.Fprintf(writer, ": keepalive\n\n")
+			flusher.Flush()
 		}
 	}
 }

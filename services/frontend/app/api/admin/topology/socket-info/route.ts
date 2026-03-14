@@ -9,11 +9,10 @@ export async function GET() {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // Use the public backend URL so the browser can reach the WS endpoint.
-  // In a reverse-proxy setup where the backend is on a different domain/port
-  // than the frontend, set JUST_GATE_PUBLIC_BACKEND_URL accordingly.
-  const wsUrl = getPublicBackendUrl().replace(/^http/, "ws") + "/api/v1/admin/topology/stream";
+  // SSE endpoint – works through every reverse proxy without a WebSocket
+  // upgrade handshake.  The browser reconnects automatically on disconnect.
+  const sseUrl = getPublicBackendUrl() + "/api/v1/admin/topology/sse";
   const token = await createBackendAdminToken(session);
 
-  return NextResponse.json({ token, wsUrl, orgId: session.activeOrgId ?? null });
+  return NextResponse.json({ token, sseUrl, orgId: session.activeOrgId ?? null });
 }

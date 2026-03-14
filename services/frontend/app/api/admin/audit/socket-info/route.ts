@@ -9,8 +9,10 @@ export async function GET() {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const wsUrl = getPublicBackendUrl().replace(/^http/, "ws") + "/api/v1/admin/audit/stream";
+  // SSE endpoint – works through every reverse proxy without a WebSocket
+  // upgrade handshake.  The browser reconnects automatically on disconnect.
+  const sseUrl = getPublicBackendUrl() + "/api/v1/admin/audit/sse";
   const token = await createBackendAdminToken(session);
 
-  return NextResponse.json({ token, wsUrl });
+  return NextResponse.json({ token, sseUrl });
 }

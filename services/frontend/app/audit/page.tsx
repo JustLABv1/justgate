@@ -3,7 +3,7 @@ import { LiveAuditStream } from "@/components/admin/live-audit-stream";
 import { SectionPage } from "@/components/admin/section-page";
 import { getAuditEventsPaginated } from "@/lib/backend-client";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 20;
 
 export default async function AuditPage({
   searchParams,
