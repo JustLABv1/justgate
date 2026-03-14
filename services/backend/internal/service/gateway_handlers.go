@@ -716,15 +716,16 @@ func (s *Service) handleAuditFiltered(writer http.ResponseWriter, request *http.
 	items := make([]auditEvent, 0, len(audits))
 	for _, audit := range audits {
 		items = append(items, auditEvent{
-			ID:        audit.ID,
-			Timestamp: audit.Timestamp.Format(time.RFC3339),
-			RouteSlug: audit.RouteSlug,
-			TenantID:  audit.TenantID,
-			TokenID:   audit.TokenID,
-			Method:    audit.Method,
-			Status:    audit.Status,
-			Upstream:  audit.Upstream,
-			LatencyMs: audit.LatencyMs,
+			ID:          audit.ID,
+			Timestamp:   audit.Timestamp.Format(time.RFC3339),
+			RouteSlug:   audit.RouteSlug,
+			TenantID:    audit.TenantID,
+			TokenID:     audit.TokenID,
+			Method:      audit.Method,
+			Status:      audit.Status,
+			Upstream:    audit.Upstream,
+			LatencyMs:   audit.LatencyMs,
+			RequestPath: audit.RequestPath,
 		})
 	}
 

@@ -168,9 +168,9 @@ func (store *sqlStore) ListAudits(ctx context.Context) ([]auditRecord, error) {
 	var rows *sql.Rows
 	var err error
 	if orgID := orgIDFromContext(ctx); orgID != "" {
-		rows, err = store.queryContext(ctx, `SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url, COALESCE(a.latency_ms, 0) FROM audits a INNER JOIN tenants tn ON a.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY a.timestamp DESC`, orgID)
+		rows, err = store.queryContext(ctx, `SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url, COALESCE(a.latency_ms, 0), COALESCE(a.request_path, '') FROM audits a INNER JOIN tenants tn ON a.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY a.timestamp DESC`, orgID)
 	} else {
-		rows, err = store.queryContext(ctx, `SELECT id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url, COALESCE(latency_ms, 0) FROM audits ORDER BY timestamp DESC`)
+		rows, err = store.queryContext(ctx, `SELECT id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url, COALESCE(latency_ms, 0), COALESCE(request_path, '') FROM audits ORDER BY timestamp DESC`)
 	}
 	if err != nil {
 		return nil, err
@@ -180,7 +180,7 @@ func (store *sqlStore) ListAudits(ctx context.Context) ([]auditRecord, error) {
 	items := make([]auditRecord, 0)
 	for rows.Next() {
 		var audit auditRecord
-		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream, &audit.LatencyMs); err != nil {
+		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream, &audit.LatencyMs, &audit.RequestPath); err != nil {
 			return nil, err
 		}
 		items = append(items, audit)
@@ -452,6 +452,18 @@ func (store *sqlStore) RouteBySlug(ctx context.Context, slug string) (routeRecor
 	return route, true, nil
 }
 
+func (store *sqlStore) GetTenantByTenantID(ctx context.Context, tenantID string) (tenantRecord, bool, error) {
+	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, upstream_url, auth_mode, header_name, org_id, health_check_path FROM tenants WHERE tenant_id = ? LIMIT 1`, tenantID)
+	var t tenantRecord
+	if err := row.Scan(&t.ID, &t.Name, &t.TenantID, &t.Upstream, &t.AuthMode, &t.HeaderName, &t.OrgID, &t.HealthCheckPath); err != nil {
+		if err == sql.ErrNoRows {
+			return tenantRecord{}, false, nil
+		}
+		return tenantRecord{}, false, err
+	}
+	return t, true, nil
+}
+
 func (store *sqlStore) ValidateToken(ctx context.Context, secret string) (tokenRecord, bool, error) {
 	hashedSecret := hashToken(secret)
 	now := store.now()
@@ -481,7 +493,7 @@ func (store *sqlStore) RecordAudit(ctx context.Context, audit auditRecord) error
 		audit.Timestamp = store.now()
 	}
 
-	if _, err := store.execContext(ctx, `INSERT INTO audits (id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url, latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, audit.ID, audit.Timestamp, audit.RouteSlug, audit.TenantID, audit.TokenID, audit.Method, audit.Status, audit.Upstream, audit.LatencyMs); err != nil {
+	if _, err := store.execContext(ctx, `INSERT INTO audits (id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url, latency_ms, request_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, audit.ID, audit.Timestamp, audit.RouteSlug, audit.TenantID, audit.TokenID, audit.Method, audit.Status, audit.Upstream, audit.LatencyMs, audit.RequestPath); err != nil {
 		return err
 	}
 
@@ -1100,13 +1112,13 @@ func (store *sqlStore) ListAuditsPaginated(ctx context.Context, limit, offset in
 	var err error
 	if orgID != "" {
 		rows, err = store.queryContext(ctx,
-			`SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url, COALESCE(a.latency_ms, 0)
+			`SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url, COALESCE(a.latency_ms, 0), COALESCE(a.request_path, '')
 			 FROM audits a INNER JOIN tenants tn ON a.tenant_id = tn.tenant_id
 			 WHERE tn.org_id = ? ORDER BY a.timestamp DESC LIMIT ? OFFSET ?`,
 			orgID, limit, offset)
 	} else {
 		rows, err = store.queryContext(ctx,
-			`SELECT id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url, COALESCE(latency_ms, 0)
+			`SELECT id, timestamp, route_slug, tenant_id, token_id, method, status, upstream_url, COALESCE(latency_ms, 0), COALESCE(request_path, '')
 			 FROM audits ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
 			limit, offset)
 	}
@@ -1118,7 +1130,7 @@ func (store *sqlStore) ListAuditsPaginated(ctx context.Context, limit, offset in
 	items := make([]auditRecord, 0, limit)
 	for rows.Next() {
 		var audit auditRecord
-		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream, &audit.LatencyMs); err != nil {
+		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream, &audit.LatencyMs, &audit.RequestPath); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, audit)
@@ -1556,11 +1568,11 @@ func (store *sqlStore) ListAuditsPaginatedFiltered(ctx context.Context, limit, o
 		args = append(args, orgID)
 	}
 	if filters.TenantID != "" {
-		conditions = append(conditions, "a.tenant_id = ?")
+		conditions = append(conditions, "LOWER(a.tenant_id) LIKE '%' || LOWER(?) || '%'")
 		args = append(args, filters.TenantID)
 	}
 	if filters.RouteSlug != "" {
-		conditions = append(conditions, "a.route_slug = ?")
+		conditions = append(conditions, "LOWER(a.route_slug) LIKE '%' || LOWER(?) || '%'")
 		args = append(args, filters.RouteSlug)
 	}
 	if filters.TokenID != "" {
@@ -1597,7 +1609,7 @@ func (store *sqlStore) ListAuditsPaginatedFiltered(ctx context.Context, limit, o
 		return nil, 0, err
 	}
 
-	dataQuery := "SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url, COALESCE(a.latency_ms, 0) FROM audits a" + joinClause + whereClause + " ORDER BY a.timestamp DESC LIMIT ? OFFSET ?"
+	dataQuery := "SELECT a.id, a.timestamp, a.route_slug, a.tenant_id, a.token_id, a.method, a.status, a.upstream_url, COALESCE(a.latency_ms, 0), COALESCE(a.request_path, '') FROM audits a" + joinClause + whereClause + " ORDER BY a.timestamp DESC LIMIT ? OFFSET ?"
 	dataArgs := append(args, limit, offset)
 
 	rows, err := store.queryContext(ctx, dataQuery, dataArgs...)
@@ -1609,7 +1621,7 @@ func (store *sqlStore) ListAuditsPaginatedFiltered(ctx context.Context, limit, o
 	items := make([]auditRecord, 0, limit)
 	for rows.Next() {
 		var audit auditRecord
-		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream, &audit.LatencyMs); err != nil {
+		if err := rows.Scan(&audit.ID, &audit.Timestamp, &audit.RouteSlug, &audit.TenantID, &audit.TokenID, &audit.Method, &audit.Status, &audit.Upstream, &audit.LatencyMs, &audit.RequestPath); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, audit)

@@ -98,6 +98,24 @@ export function getAuditEventsPaginated(page = 1, pageSize = 50) {
   );
 }
 
+export function getAuditEventsPaginatedFiltered(
+  page = 1,
+  pageSize = 50,
+  filters: { status?: string; tenantID?: string; routeSlug?: string },
+) {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize),
+  });
+  if (filters.status && filters.status !== "all") params.set("status", filters.status);
+  if (filters.tenantID) params.set("tenantID", filters.tenantID);
+  if (filters.routeSlug) params.set("routeSlug", filters.routeSlug);
+  return fetchBackend<PaginatedAuditResponse>(
+    `/api/v1/admin/audit/filtered?${params.toString()}`,
+    { items: [], total: 0, page, pageSize },
+  );
+}
+
 export function getPlatformAdmins() {
   return fetchBackend<PlatformAdminSummary[]>("/api/v1/admin/platform/admins", []);
 }

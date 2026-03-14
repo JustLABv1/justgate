@@ -131,6 +131,8 @@ type dataStore interface {
 	ListExpiringTokens(ctx context.Context, before time.Time) ([]tokenRecord, error)
 	// Filtered audit queries
 	ListAuditsPaginatedFiltered(ctx context.Context, limit, offset int, filters auditFilters) ([]auditRecord, int, error)
+	// Tenant lookup for proxy header injection
+	GetTenantByTenantID(ctx context.Context, tenantID string) (tenantRecord, bool, error)
 }
 
 type createOrgRequest struct {
@@ -242,15 +244,16 @@ type tokenSummary struct {
 }
 
 type auditEvent struct {
-	ID        string `json:"id"`
-	Timestamp string `json:"timestamp"`
-	RouteSlug string `json:"routeSlug"`
-	TenantID  string `json:"tenantID"`
-	TokenID   string `json:"tokenID"`
-	Method    string `json:"method"`
-	Status    int    `json:"status"`
-	Upstream  string `json:"upstreamURL"`
-	LatencyMs int    `json:"latencyMs"`
+	ID          string `json:"id"`
+	Timestamp   string `json:"timestamp"`
+	RouteSlug   string `json:"routeSlug"`
+	TenantID    string `json:"tenantID"`
+	TokenID     string `json:"tokenID"`
+	Method      string `json:"method"`
+	Status      int    `json:"status"`
+	Upstream    string `json:"upstreamURL"`
+	LatencyMs   int    `json:"latencyMs"`
+	RequestPath string `json:"requestPath"`
 }
 
 type topologyResponse struct {
@@ -353,15 +356,16 @@ type tokenRecord struct {
 }
 
 type auditRecord struct {
-	ID        string
-	Timestamp time.Time
-	RouteSlug string
-	TenantID  string
-	TokenID   string
-	Method    string
-	Status    int
-	Upstream  string
-	LatencyMs int
+	ID          string
+	Timestamp   time.Time
+	RouteSlug   string
+	TenantID    string
+	TokenID     string
+	Method      string
+	Status      int
+	Upstream    string
+	LatencyMs   int
+	RequestPath string
 }
 
 type localAdminRecord struct {
@@ -1029,15 +1033,16 @@ func (s *Service) handleAudit(writer http.ResponseWriter, request *http.Request)
 	items := make([]auditEvent, 0, len(audits))
 	for _, audit := range audits {
 		items = append(items, auditEvent{
-			ID:        audit.ID,
-			Timestamp: audit.Timestamp.Format(time.RFC3339),
-			RouteSlug: audit.RouteSlug,
-			TenantID:  audit.TenantID,
-			TokenID:   audit.TokenID,
-			Method:    audit.Method,
-			Status:    audit.Status,
-			Upstream:  audit.Upstream,
-			LatencyMs: audit.LatencyMs,
+			ID:          audit.ID,
+			Timestamp:   audit.Timestamp.Format(time.RFC3339),
+			RouteSlug:   audit.RouteSlug,
+			TenantID:    audit.TenantID,
+			TokenID:     audit.TokenID,
+			Method:      audit.Method,
+			Status:      audit.Status,
+			Upstream:    audit.Upstream,
+			LatencyMs:   audit.LatencyMs,
+			RequestPath: audit.RequestPath,
 		})
 	}
 
@@ -1778,6 +1783,9 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
+	// Capture the full incoming proxy request URI (path + query) for audit logging.
+	requestPath := request.URL.RequestURI()
+
 	route, ok, err := s.store.RouteBySlug(request.Context(), parts[0])
 	if err != nil {
 		s.logger.Error("proxy route lookup failed", "route_slug", parts[0], "error", err)
@@ -1792,32 +1800,32 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 	// ── IP allow/deny check ────────────────────────────────────────
 	clientIP := clientAddress(request)
 	if route.DenyCIDRs != "" && matchesCIDRList(clientIP, route.DenyCIDRs) {
-		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusForbidden, route.UpstreamURL, 0)
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusForbidden, route.UpstreamURL, 0, requestPath)
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "IP address denied"})
 		return
 	}
 	if route.AllowCIDRs != "" && !matchesCIDRList(clientIP, route.AllowCIDRs) {
-		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusForbidden, route.UpstreamURL, 0)
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusForbidden, route.UpstreamURL, 0, requestPath)
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "IP address not allowed"})
 		return
 	}
 
 	// ── Circuit breaker check ──────────────────────────────────────
 	if !s.circuitBreakers.AllowRequest(route.ID) {
-		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusServiceUnavailable, route.UpstreamURL, 0)
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusServiceUnavailable, route.UpstreamURL, 0, requestPath)
 		writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"error": "circuit breaker is open; upstream is unhealthy"})
 		return
 	}
 
 	if !slices.Contains(route.Methods, request.Method) {
-		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusMethodNotAllowed, route.UpstreamURL, 0)
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusMethodNotAllowed, route.UpstreamURL, 0, requestPath)
 		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed for route"})
 		return
 	}
 
 	tokenValue := extractBearerToken(request.Header.Get("Authorization"))
 	if tokenValue == "" {
-		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusUnauthorized, route.UpstreamURL, 0)
+		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusUnauthorized, route.UpstreamURL, 0, requestPath)
 		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "missing bearer token"})
 		return
 	}
@@ -1829,20 +1837,20 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	if !ok {
-		s.recordAudit(request.Context(), parts[0], "unknown", "unknown", request.Method, http.StatusUnauthorized, route.UpstreamURL, 0)
+		s.recordAudit(request.Context(), parts[0], "unknown", "unknown", request.Method, http.StatusUnauthorized, route.UpstreamURL, 0, requestPath)
 		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "invalid or expired token"})
 		return
 	}
 
 	if token.TenantID != route.TenantID {
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusForbidden, route.UpstreamURL, 0)
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusForbidden, route.UpstreamURL, 0, requestPath)
 		s.recordTrafficStat(route, token, http.StatusForbidden, 0)
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "token is not valid for this tenant route"})
 		return
 	}
 
 	if route.RequiredScope != "" && !slices.Contains(token.Scopes, route.RequiredScope) {
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusForbidden, route.UpstreamURL, 0)
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusForbidden, route.UpstreamURL, 0, requestPath)
 		s.recordTrafficStat(route, token, http.StatusForbidden, 0)
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "token is missing the required scope"})
 		return
@@ -1859,7 +1867,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		rateLimitKey = "token:" + token.ID
 	}
 	if rateLimitRPM > 0 && !s.rateLimiter.Allow(rateLimitKey, rateLimitRPM, rateLimitBurst) {
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusTooManyRequests, route.UpstreamURL, 0)
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusTooManyRequests, route.UpstreamURL, 0, requestPath)
 		s.recordTrafficStat(route, token, http.StatusTooManyRequests, 0)
 		writer.Header().Set("Retry-After", "60")
 		writeJSON(writer, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
@@ -1894,7 +1902,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 	targetURL, err := url.Parse(selectedUpstreamURL)
 	if err != nil {
 		s.logger.Error("proxy upstream configuration is invalid", "route_slug", parts[0], "upstream", selectedUpstreamURL, "error", err)
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, selectedUpstreamURL, 0)
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, selectedUpstreamURL, 0, requestPath)
 		s.recordTrafficStat(route, token, http.StatusBadGateway, 0)
 		writeJSON(writer, http.StatusBadGateway, map[string]string{"error": "invalid upstream configuration"})
 		return
@@ -1904,6 +1912,9 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 	if len(parts) == 2 {
 		remainingPath = "/" + parts[1]
 	}
+
+	// Look up tenant config for per-tenant header injection (e.g. X-Scope-OrgID for Grafana Loki).
+	tenantCfg, _, _ := s.store.GetTenantByTenantID(request.Context(), route.TenantID)
 
 	proxyStart := time.Now()
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
@@ -1916,10 +1927,15 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		proxyRequest.Header.Set(s.config.TenantHeaderName, token.TenantID)
 		proxyRequest.Header.Set("X-Proxy-Route", route.Slug)
 		proxyRequest.Header.Set("X-Proxy-Token", token.ID)
+		// Inject the tenant-specific auth header when configured (e.g. X-Scope-OrgID for Grafana Loki).
+		// This means Alloy / the upstream client only needs to authenticate with the JustGate bearer token.
+		if tenantCfg.AuthMode == "header" && tenantCfg.HeaderName != "" {
+			proxyRequest.Header.Set(tenantCfg.HeaderName, token.TenantID)
+		}
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
 		latency := int(time.Since(proxyStart).Milliseconds())
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, response.StatusCode, response.Request.URL.String(), latency)
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, response.StatusCode, response.Request.URL.String(), latency, requestPath)
 		s.recordTrafficStat(route, token, response.StatusCode, latency)
 		if response.StatusCode >= 500 {
 			s.circuitBreakers.RecordFailure(route.ID)
@@ -1931,7 +1947,7 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 	proxy.ErrorHandler = func(proxyWriter http.ResponseWriter, proxyRequest *http.Request, proxyErr error) {
 		latency := int(time.Since(proxyStart).Milliseconds())
 		s.logger.Error("proxy upstream request failed", "route_slug", parts[0], "tenant_id", token.TenantID, "token_id", token.ID, "upstream", route.UpstreamURL, "error", proxyErr)
-		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, route.UpstreamURL, latency)
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusBadGateway, route.UpstreamURL, latency, requestPath)
 		s.recordTrafficStat(route, token, http.StatusBadGateway, latency)
 		s.circuitBreakers.RecordFailure(route.ID)
 		writeJSON(proxyWriter, http.StatusBadGateway, map[string]string{
@@ -2003,31 +2019,33 @@ func (s *Service) recordTrafficStat(route routeRecord, token tokenRecord, status
 	}()
 }
 
-func (s *Service) recordAudit(ctx context.Context, routeSlug, tenantID, tokenID, method string, status int, upstreamURL string, latencyMs int) {
+func (s *Service) recordAudit(ctx context.Context, routeSlug, tenantID, tokenID, method string, status int, upstreamURL string, latencyMs int, requestPath string) {
 	audit := auditRecord{
-		Timestamp: time.Now().UTC(),
-		RouteSlug: routeSlug,
-		TenantID:  tenantID,
-		TokenID:   tokenID,
-		Method:    method,
-		Status:    status,
-		Upstream:  upstreamURL,
-		LatencyMs: latencyMs,
+		Timestamp:   time.Now().UTC(),
+		RouteSlug:   routeSlug,
+		TenantID:    tenantID,
+		TokenID:     tokenID,
+		Method:      method,
+		Status:      status,
+		Upstream:    upstreamURL,
+		LatencyMs:   latencyMs,
+		RequestPath: requestPath,
 	}
 	if err := s.store.RecordAudit(ctx, audit); err != nil {
 		s.logger.Error("failed to record audit event", "route_slug", routeSlug, "tenant_id", tenantID, "token_id", tokenID, "method", method, "status", status, "upstream", upstreamURL, "error", err)
 	}
 	if s.auditSubscribers != nil {
 		s.auditSubscribers.Broadcast(auditEvent{
-			ID:        audit.ID,
-			Timestamp: audit.Timestamp.Format(time.RFC3339),
-			RouteSlug: audit.RouteSlug,
-			TenantID:  audit.TenantID,
-			TokenID:   audit.TokenID,
-			Method:    audit.Method,
-			Status:    audit.Status,
-			Upstream:  audit.Upstream,
-			LatencyMs: audit.LatencyMs,
+			ID:          audit.ID,
+			Timestamp:   audit.Timestamp.Format(time.RFC3339),
+			RouteSlug:   audit.RouteSlug,
+			TenantID:    audit.TenantID,
+			TokenID:     audit.TokenID,
+			Method:      audit.Method,
+			Status:      audit.Status,
+			Upstream:    audit.Upstream,
+			LatencyMs:   audit.LatencyMs,
+			RequestPath: audit.RequestPath,
 		})
 	}
 }

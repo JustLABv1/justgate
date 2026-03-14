@@ -16,16 +16,56 @@ interface AuditViewProps {
   pageSize: number;
   total: number;
   totalPages: number;
+  initialStatusFilter?: string;
+  initialTenantFilter?: string;
+  initialRouteFilter?: string;
 }
 
-export function AuditView({ events, page, pageSize, total, totalPages }: AuditViewProps) {
+export function AuditView({
+  events,
+  page,
+  pageSize,
+  total,
+  totalPages,
+  initialStatusFilter = "all",
+  initialTenantFilter = "",
+  initialRouteFilter = "",
+}: AuditViewProps) {
   const router = useRouter();
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [tenantFilter, setTenantFilter] = useState("");
-  const [routeFilter, setRouteFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    (initialStatusFilter as StatusFilter) ?? "all",
+  );
+  const [tenantFilter, setTenantFilter] = useState(initialTenantFilter);
+  const [routeFilter, setRouteFilter] = useState(initialRouteFilter);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function buildParams(overrides: Record<string, string> = {}) {
+    const params = new URLSearchParams(window.location.search);
+    const merged = { status: statusFilter, tenant: tenantFilter, route: routeFilter, ...overrides };
+    params.set("page", "1");
+    if (merged.status && merged.status !== "all") {
+      params.set("status", merged.status);
+    } else {
+      params.delete("status");
+    }
+    if (merged.tenant) {
+      params.set("tenant", merged.tenant);
+    } else {
+      params.delete("tenant");
+    }
+    if (merged.route) {
+      params.set("route", merged.route);
+    } else {
+      params.delete("route");
+    }
+    return params.toString();
+  }
+
+  function applyFilter(key: string, value: string) {
+    router.push(`?${buildParams({ [key]: value })}`);
+  }
 
   function refresh() {
     setIsRefreshing(true);
@@ -47,21 +87,18 @@ export function AuditView({ events, page, pageSize, total, totalPages }: AuditVi
     };
   }, []);
 
-  const filtered = events.filter((e) => {
-    if (statusFilter === "success" && e.status >= 400) return false;
-    if (statusFilter === "error" && e.status < 400) return false;
-    if (tenantFilter && !e.tenantID.toLowerCase().includes(tenantFilter.toLowerCase())) return false;
-    if (routeFilter && !e.routeSlug.toLowerCase().includes(routeFilter.toLowerCase())) return false;
-    return true;
-  });
-
   const hasFilters = statusFilter !== "all" || tenantFilter !== "" || routeFilter !== "";
-  const uniqueTenants = Array.from(new Set(events.map((e) => e.tenantID))).sort();
 
   function clearFilters() {
     setStatusFilter("all");
     setTenantFilter("");
     setRouteFilter("");
+    const params = new URLSearchParams(window.location.search);
+    params.delete("status");
+    params.delete("tenant");
+    params.delete("route");
+    params.set("page", "1");
+    router.push(`?${params.toString()}`);
   }
 
   const secondsAgo = Math.round((Date.now() - lastRefreshed.getTime()) / 1000);
@@ -80,7 +117,10 @@ export function AuditView({ events, page, pageSize, total, totalPages }: AuditVi
             <button
               key={val}
               type="button"
-              onClick={() => setStatusFilter(val)}
+              onClick={() => {
+                setStatusFilter(val);
+                applyFilter("status", val);
+              }}
               className={`rounded-md px-3 py-1 text-[12px] font-medium capitalize transition-colors ${
                 statusFilter === val
                   ? "bg-surface text-foreground shadow-[var(--field-shadow)]"
@@ -92,19 +132,18 @@ export function AuditView({ events, page, pageSize, total, totalPages }: AuditVi
           ))}
         </div>
 
-        {/* Tenant filter */}
-        {uniqueTenants.length > 1 && (
-          <select
-            value={tenantFilter}
-            onChange={(e) => setTenantFilter(e.target.value)}
-            className="h-8 rounded-lg border border-border bg-panel px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
-          >
-            <option value="">All tenants</option>
-            {uniqueTenants.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        )}
+        {/* Tenant filter (text input – server-side LIKE search) */}
+        <input
+          type="text"
+          placeholder="Filter by tenant…"
+          value={tenantFilter}
+          onChange={(e) => setTenantFilter(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") applyFilter("tenant", tenantFilter);
+          }}
+          onBlur={() => applyFilter("tenant", tenantFilter)}
+          className="h-8 rounded-lg border border-border bg-panel px-2.5 text-[12px] text-foreground placeholder:text-muted-foreground outline-none focus:border-accent"
+        />
 
         {/* Route slug search */}
         <input
@@ -112,6 +151,10 @@ export function AuditView({ events, page, pageSize, total, totalPages }: AuditVi
           placeholder="Filter by route…"
           value={routeFilter}
           onChange={(e) => setRouteFilter(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") applyFilter("route", routeFilter);
+          }}
+          onBlur={() => applyFilter("route", routeFilter)}
           className="h-8 rounded-lg border border-border bg-panel px-2.5 text-[12px] text-foreground placeholder:text-muted-foreground outline-none focus:border-accent"
         />
 
@@ -147,11 +190,9 @@ export function AuditView({ events, page, pageSize, total, totalPages }: AuditVi
       {/* Result count + pagination info */}
       <div className="flex items-center justify-between">
         <div className="text-[11px] text-muted-foreground">
-          {hasFilters
-            ? `Showing ${filtered.length} of ${events.length} event${events.length !== 1 ? "s" : ""} on this page`
-            : total > 0
-              ? `Showing ${pageStart}–${pageEnd} of ${total} event${total !== 1 ? "s" : ""}`
-              : "No events recorded yet"}
+          {total > 0
+            ? `${hasFilters ? "Filtered: " : ""}${pageStart}–${pageEnd} of ${total} event${total !== 1 ? "s" : ""}`
+            : "No events recorded yet"}
         </div>
         {totalPages > 1 && (
           <div className="flex items-center gap-1">
@@ -180,7 +221,7 @@ export function AuditView({ events, page, pageSize, total, totalPages }: AuditVi
 
       {/* Table */}
       <div className="rounded-lg border border-border bg-surface">
-        <AuditTable events={filtered} />
+        <AuditTable events={events} />
       </div>
     </div>
   );

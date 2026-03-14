@@ -1,7 +1,7 @@
 import { AuditView } from "@/components/admin/audit-view";
 import { LiveAuditStream } from "@/components/admin/live-audit-stream";
 import { SectionPage } from "@/components/admin/section-page";
-import { getAuditEventsPaginated } from "@/lib/backend-client";
+import { getAuditEventsPaginated, getAuditEventsPaginatedFiltered } from "@/lib/backend-client";
 
 const PAGE_SIZE = 20;
 
@@ -12,8 +12,20 @@ export default async function AuditPage({
 }) {
   const sp = await searchParams;
   const page = Math.max(1, parseInt(String(sp.page ?? "1"), 10) || 1);
+  const statusFilter = String(sp.status ?? "all");
+  const tenantFilter = String(sp.tenant ?? "");
+  const routeFilter = String(sp.route ?? "");
 
-  const result = await getAuditEventsPaginated(page, PAGE_SIZE);
+  const hasFilters = statusFilter !== "all" || tenantFilter !== "" || routeFilter !== "";
+
+  const result = hasFilters
+    ? await getAuditEventsPaginatedFiltered(page, PAGE_SIZE, {
+        status: statusFilter,
+        tenantID: tenantFilter,
+        routeSlug: routeFilter,
+      })
+    : await getAuditEventsPaginated(page, PAGE_SIZE);
+
   const { items, total, pageSize } = result.data;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -34,6 +46,9 @@ export default async function AuditPage({
         pageSize={pageSize}
         total={total}
         totalPages={totalPages}
+        initialStatusFilter={statusFilter}
+        initialTenantFilter={tenantFilter}
+        initialRouteFilter={routeFilter}
       />
     </SectionPage>
   );

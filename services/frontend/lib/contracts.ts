@@ -76,6 +76,7 @@ export interface AuditEvent {
   status: number;
   upstreamURL: string;
   latencyMs: number;
+  requestPath?: string;
 }
 
 export interface QueryResult<T> {

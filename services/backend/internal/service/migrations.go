@@ -292,6 +292,15 @@ var schemaMigrations = []migration{
 			)`,
 		},
 	},
+	{
+		version: 10,
+		name:    "audit_request_path",
+		statements: []string{
+			// Store the incoming proxy request URI (path + query) so operators can
+			// see exactly which path the client hit on the proxy side.
+			`ALTER TABLE audits ADD COLUMN request_path TEXT NOT NULL DEFAULT ''`,
+		},
+	},
 }
 
 func (store *sqlStore) runMigrations(ctx context.Context) error {

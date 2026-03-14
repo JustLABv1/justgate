@@ -210,6 +210,16 @@ export function CreateTenantForm({
                         </Select.Popover>
                       </Select>
                       <div className="enterprise-note">header — inject tenant header; bearer — forward token; none — no auth injection.</div>
+                      {formState.authMode === "header" && (
+                        <div className="rounded-lg border border-border bg-panel px-4 py-3 text-sm leading-6 text-muted-foreground">
+                          <span className="font-semibold text-foreground">Header injection active. </span>
+                          JustGate automatically sets the configured header on every proxied request, using the Tenant ID as the value — no client-side header setup needed.
+                          <br />
+                          <span className="mt-1 block text-[12px] text-muted-foreground/70">
+                            Example: Grafana Alloy sending to Loki only needs a JustGate bearer token. JustGate injects <code className="font-mono text-[11px]">X-Scope-OrgID: &lt;tenantID&gt;</code> automatically.
+                          </span>
+                        </div>
+                      )}
                       <div className="grid gap-4 md:grid-cols-2">
                         <TextField className="grid gap-2">
                           <Label>Injected header</Label>
