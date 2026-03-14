@@ -1557,6 +1557,339 @@ func (store *sqlStore) ListExpiringTokens(ctx context.Context, before time.Time)
 
 // ── Filtered audit queries ─────────────────────────────────────────────
 
+// ── Protected Apps ─────────────────────────────────────────────────────
+
+func (store *sqlStore) ListProtectedApps(ctx context.Context, orgID string) ([]protectedAppRecord, error) {
+	var rows *sql.Rows
+	var err error
+	if orgID != "" {
+		rows, err = store.queryContext(ctx, `SELECT id, name, slug, upstream_url, org_id, auth_mode, inject_headers_json, strip_headers_json, extra_ca_pem, rate_limit_rpm, rate_limit_burst, rate_limit_per, allow_cidrs, deny_cidrs, health_check_path, created_at, created_by FROM protected_apps WHERE org_id = ? ORDER BY created_at DESC`, orgID)
+	} else {
+		rows, err = store.queryContext(ctx, `SELECT id, name, slug, upstream_url, org_id, auth_mode, inject_headers_json, strip_headers_json, extra_ca_pem, rate_limit_rpm, rate_limit_burst, rate_limit_per, allow_cidrs, deny_cidrs, health_check_path, created_at, created_by FROM protected_apps ORDER BY created_at DESC`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]protectedAppRecord, 0)
+	for rows.Next() {
+		app, err := scanProtectedApp(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, app)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) GetProtectedApp(ctx context.Context, appID string) (protectedAppRecord, bool, error) {
+	row := store.queryRowContext(ctx, `SELECT id, name, slug, upstream_url, org_id, auth_mode, inject_headers_json, strip_headers_json, extra_ca_pem, rate_limit_rpm, rate_limit_burst, rate_limit_per, allow_cidrs, deny_cidrs, health_check_path, created_at, created_by FROM protected_apps WHERE id = ? LIMIT 1`, appID)
+	app, err := scanProtectedApp(row)
+	if err == sql.ErrNoRows {
+		return protectedAppRecord{}, false, nil
+	}
+	if err != nil {
+		return protectedAppRecord{}, false, err
+	}
+	return app, true, nil
+}
+
+func (store *sqlStore) GetProtectedAppBySlug(ctx context.Context, slug string) (protectedAppRecord, bool, error) {
+	row := store.queryRowContext(ctx, `SELECT id, name, slug, upstream_url, org_id, auth_mode, inject_headers_json, strip_headers_json, extra_ca_pem, rate_limit_rpm, rate_limit_burst, rate_limit_per, allow_cidrs, deny_cidrs, health_check_path, created_at, created_by FROM protected_apps WHERE slug = ? LIMIT 1`, slug)
+	app, err := scanProtectedApp(row)
+	if err == sql.ErrNoRows {
+		return protectedAppRecord{}, false, nil
+	}
+	if err != nil {
+		return protectedAppRecord{}, false, err
+	}
+	return app, true, nil
+}
+
+func (store *sqlStore) CreateProtectedApp(ctx context.Context, payload createAppRequest, orgID, createdBy string) (protectedAppRecord, error) {
+	injectJSON, err := json.Marshal(payload.InjectHeaders)
+	if err != nil {
+		return protectedAppRecord{}, err
+	}
+	stripJSON, err := json.Marshal(payload.StripHeaders)
+	if err != nil {
+		return protectedAppRecord{}, err
+	}
+	app := protectedAppRecord{
+		ID:              newResourceID("app"),
+		Name:            payload.Name,
+		Slug:            payload.Slug,
+		UpstreamURL:     payload.UpstreamURL,
+		OrgID:           orgID,
+		AuthMode:        payload.AuthMode,
+		InjectHeaders:   payload.InjectHeaders,
+		StripHeaders:    payload.StripHeaders,
+		ExtraCAPEM:      payload.ExtraCAPEM,
+		RateLimitRPM:    payload.RateLimitRPM,
+		RateLimitBurst:  payload.RateLimitBurst,
+		RateLimitPer:    payload.RateLimitPer,
+		AllowCIDRs:      payload.AllowCIDRs,
+		DenyCIDRs:       payload.DenyCIDRs,
+		HealthCheckPath: payload.HealthCheckPath,
+		CreatedAt:       store.now(),
+		CreatedBy:       createdBy,
+	}
+	if app.AuthMode == "" {
+		app.AuthMode = "oidc"
+	}
+	if app.RateLimitPer == "" {
+		app.RateLimitPer = "session"
+	}
+	_, err = store.execContext(ctx,
+		`INSERT INTO protected_apps (id, name, slug, upstream_url, org_id, auth_mode, inject_headers_json, strip_headers_json, extra_ca_pem, rate_limit_rpm, rate_limit_burst, rate_limit_per, allow_cidrs, deny_cidrs, health_check_path, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		app.ID, app.Name, app.Slug, app.UpstreamURL, orgID, app.AuthMode, string(injectJSON), string(stripJSON), app.ExtraCAPEM, app.RateLimitRPM, app.RateLimitBurst, app.RateLimitPer, app.AllowCIDRs, app.DenyCIDRs, app.HealthCheckPath, app.CreatedAt, app.CreatedBy)
+	if err != nil {
+		return protectedAppRecord{}, translateDBError(err, "slug already exists")
+	}
+	return app, nil
+}
+
+func (store *sqlStore) UpdateProtectedApp(ctx context.Context, appID string, payload createAppRequest) (protectedAppRecord, error) {
+	injectJSON, err := json.Marshal(payload.InjectHeaders)
+	if err != nil {
+		return protectedAppRecord{}, err
+	}
+	stripJSON, err := json.Marshal(payload.StripHeaders)
+	if err != nil {
+		return protectedAppRecord{}, err
+	}
+	result, err := store.execContext(ctx,
+		`UPDATE protected_apps SET name = ?, slug = ?, upstream_url = ?, auth_mode = ?, inject_headers_json = ?, strip_headers_json = ?, extra_ca_pem = ?, rate_limit_rpm = ?, rate_limit_burst = ?, rate_limit_per = ?, allow_cidrs = ?, deny_cidrs = ?, health_check_path = ? WHERE id = ?`,
+		payload.Name, payload.Slug, payload.UpstreamURL, payload.AuthMode, string(injectJSON), string(stripJSON), payload.ExtraCAPEM, payload.RateLimitRPM, payload.RateLimitBurst, payload.RateLimitPer, payload.AllowCIDRs, payload.DenyCIDRs, payload.HealthCheckPath, appID)
+	if err != nil {
+		return protectedAppRecord{}, translateDBError(err, "slug already exists")
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return protectedAppRecord{}, err
+	}
+	if rowsAffected == 0 {
+		return protectedAppRecord{}, fmt.Errorf("app not found")
+	}
+	app, _, err := store.GetProtectedApp(ctx, appID)
+	return app, err
+}
+
+func (store *sqlStore) DeleteProtectedApp(ctx context.Context, appID string) error {
+	// Cascade: delete sessions and tokens first
+	if _, err := store.execContext(ctx, `DELETE FROM app_sessions WHERE app_id = ?`, appID); err != nil {
+		return err
+	}
+	if _, err := store.execContext(ctx, `DELETE FROM app_tokens WHERE app_id = ?`, appID); err != nil {
+		return err
+	}
+	result, err := store.execContext(ctx, `DELETE FROM protected_apps WHERE id = ?`, appID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("app not found")
+	}
+	return nil
+}
+
+// ── App Sessions ────────────────────────────────────────────────────────
+
+func (store *sqlStore) CreateAppSession(ctx context.Context, session appSessionRecord) error {
+	groupsJSON, err := json.Marshal(session.UserGroups)
+	if err != nil {
+		return err
+	}
+	if session.ID == "" {
+		session.ID = newResourceID("aps")
+	}
+	_, err = store.execContext(ctx,
+		`INSERT INTO app_sessions (id, app_id, user_sub, user_email, user_name, user_groups_json, token_hash, ip, created_at, expires_at, last_used_at, revoked) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false)`,
+		session.ID, session.AppID, session.UserSub, session.UserEmail, session.UserName, string(groupsJSON), session.TokenHash, session.IP, session.CreatedAt, session.ExpiresAt, session.LastUsedAt)
+	return err
+}
+
+func (store *sqlStore) GetAppSessionByToken(ctx context.Context, secret string) (appSessionRecord, bool, error) {
+	tokenHash := hashToken(secret)
+	now := store.now()
+	row := store.queryRowContext(ctx,
+		`SELECT id, app_id, user_sub, user_email, user_name, user_groups_json, token_hash, ip, created_at, expires_at, last_used_at, revoked FROM app_sessions WHERE token_hash = ? AND revoked = false AND expires_at > ? LIMIT 1`,
+		tokenHash, now)
+	session, err := scanAppSession(row)
+	if err == sql.ErrNoRows {
+		return appSessionRecord{}, false, nil
+	}
+	if err != nil {
+		return appSessionRecord{}, false, err
+	}
+	return session, true, nil
+}
+
+func (store *sqlStore) ListAppSessions(ctx context.Context, appID string) ([]appSessionRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, app_id, user_sub, user_email, user_name, user_groups_json, token_hash, ip, created_at, expires_at, last_used_at, revoked FROM app_sessions WHERE app_id = ? AND revoked = false ORDER BY created_at DESC`,
+		appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]appSessionRecord, 0)
+	for rows.Next() {
+		s, err := scanAppSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, s)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) RevokeAppSession(ctx context.Context, sessionID string) error {
+	result, err := store.execContext(ctx, `UPDATE app_sessions SET revoked = true WHERE id = ?`, sessionID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("session not found")
+	}
+	return nil
+}
+
+func (store *sqlStore) TouchAppSession(ctx context.Context, sessionID string, now time.Time) error {
+	_, err := store.execContext(ctx, `UPDATE app_sessions SET last_used_at = ? WHERE id = ?`, now, sessionID)
+	return err
+}
+
+// ── App Tokens ──────────────────────────────────────────────────────────
+
+func (store *sqlStore) CreateAppToken(ctx context.Context, appID, name, secret string, rateLimitRPM, rateLimitBurst int, expiresAt time.Time) (appTokenRecord, error) {
+	token := appTokenRecord{
+		ID:             newResourceID("atk"),
+		Name:           name,
+		AppID:          appID,
+		TokenHash:      hashToken(secret),
+		Preview:        previewSecret(secret),
+		Active:         true,
+		RateLimitRPM:   rateLimitRPM,
+		RateLimitBurst: rateLimitBurst,
+		ExpiresAt:      expiresAt,
+		LastUsedAt:     store.now(),
+		CreatedAt:      store.now(),
+	}
+	_, err := store.execContext(ctx,
+		`INSERT INTO app_tokens (id, name, app_id, token_hash, preview, active, rate_limit_rpm, rate_limit_burst, expires_at, last_used_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		token.ID, token.Name, token.AppID, token.TokenHash, token.Preview, token.Active, token.RateLimitRPM, token.RateLimitBurst, token.ExpiresAt, token.LastUsedAt, token.CreatedAt)
+	if err != nil {
+		return appTokenRecord{}, translateDBError(err, "token creation failed")
+	}
+	return token, nil
+}
+
+func (store *sqlStore) ListAppTokens(ctx context.Context, appID string) ([]appTokenRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, name, app_id, token_hash, preview, active, rate_limit_rpm, rate_limit_burst, expires_at, last_used_at, created_at FROM app_tokens WHERE app_id = ? ORDER BY created_at DESC`,
+		appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]appTokenRecord, 0)
+	for rows.Next() {
+		var t appTokenRecord
+		if err := rows.Scan(&t.ID, &t.Name, &t.AppID, &t.TokenHash, &t.Preview, &t.Active, &t.RateLimitRPM, &t.RateLimitBurst, &t.ExpiresAt, &t.LastUsedAt, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, t)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) ValidateAppToken(ctx context.Context, secret string) (appTokenRecord, bool, error) {
+	tokenHash := hashToken(secret)
+	now := store.now()
+	row := store.queryRowContext(ctx,
+		`SELECT id, name, app_id, token_hash, preview, active, rate_limit_rpm, rate_limit_burst, expires_at, last_used_at, created_at FROM app_tokens WHERE token_hash = ? AND active = true AND expires_at > ? LIMIT 1`,
+		tokenHash, now)
+	var t appTokenRecord
+	if err := row.Scan(&t.ID, &t.Name, &t.AppID, &t.TokenHash, &t.Preview, &t.Active, &t.RateLimitRPM, &t.RateLimitBurst, &t.ExpiresAt, &t.LastUsedAt, &t.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return appTokenRecord{}, false, nil
+		}
+		return appTokenRecord{}, false, err
+	}
+	t.LastUsedAt = now
+	_, _ = store.execContext(ctx, `UPDATE app_tokens SET last_used_at = ? WHERE id = ?`, now, t.ID)
+	return t, true, nil
+}
+
+func (store *sqlStore) DeleteAppToken(ctx context.Context, tokenID string) error {
+	result, err := store.execContext(ctx, `DELETE FROM app_tokens WHERE id = ?`, tokenID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("token not found")
+	}
+	return nil
+}
+
+// ── Protected App scan helpers ─────────────────────────────────────────
+
+func scanProtectedApp(scanner interface{ Scan(dest ...any) error }) (protectedAppRecord, error) {
+	var app protectedAppRecord
+	var injectJSON, stripJSON string
+	if err := scanner.Scan(
+		&app.ID, &app.Name, &app.Slug, &app.UpstreamURL, &app.OrgID,
+		&app.AuthMode, &injectJSON, &stripJSON, &app.ExtraCAPEM,
+		&app.RateLimitRPM, &app.RateLimitBurst, &app.RateLimitPer,
+		&app.AllowCIDRs, &app.DenyCIDRs, &app.HealthCheckPath,
+		&app.CreatedAt, &app.CreatedBy,
+	); err != nil {
+		return protectedAppRecord{}, err
+	}
+	_ = json.Unmarshal([]byte(injectJSON), &app.InjectHeaders)
+	_ = json.Unmarshal([]byte(stripJSON), &app.StripHeaders)
+	if app.InjectHeaders == nil {
+		app.InjectHeaders = []headerInjectionRule{}
+	}
+	if app.StripHeaders == nil {
+		app.StripHeaders = []string{}
+	}
+	return app, nil
+}
+
+func scanAppSession(scanner interface{ Scan(dest ...any) error }) (appSessionRecord, error) {
+	var s appSessionRecord
+	var groupsJSON string
+	if err := scanner.Scan(
+		&s.ID, &s.AppID, &s.UserSub, &s.UserEmail, &s.UserName,
+		&groupsJSON, &s.TokenHash, &s.IP,
+		&s.CreatedAt, &s.ExpiresAt, &s.LastUsedAt, &s.Revoked,
+	); err != nil {
+		return appSessionRecord{}, err
+	}
+	_ = json.Unmarshal([]byte(groupsJSON), &s.UserGroups)
+	if s.UserGroups == nil {
+		s.UserGroups = []string{}
+	}
+	return s, nil
+}
+
 func (store *sqlStore) ListAuditsPaginatedFiltered(ctx context.Context, limit, offset int, filters auditFilters) ([]auditRecord, int, error) {
 	orgID := orgIDFromContext(ctx)
 

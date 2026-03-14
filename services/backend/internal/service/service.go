@@ -20,6 +20,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -133,6 +134,24 @@ type dataStore interface {
 	ListAuditsPaginatedFiltered(ctx context.Context, limit, offset int, filters auditFilters) ([]auditRecord, int, error)
 	// Tenant lookup for proxy header injection
 	GetTenantByTenantID(ctx context.Context, tenantID string) (tenantRecord, bool, error)
+	// Protected Apps
+	ListProtectedApps(ctx context.Context, orgID string) ([]protectedAppRecord, error)
+	GetProtectedApp(ctx context.Context, appID string) (protectedAppRecord, bool, error)
+	GetProtectedAppBySlug(ctx context.Context, slug string) (protectedAppRecord, bool, error)
+	CreateProtectedApp(ctx context.Context, payload createAppRequest, orgID, createdBy string) (protectedAppRecord, error)
+	UpdateProtectedApp(ctx context.Context, appID string, payload createAppRequest) (protectedAppRecord, error)
+	DeleteProtectedApp(ctx context.Context, appID string) error
+	// App sessions (browser OIDC)
+	CreateAppSession(ctx context.Context, session appSessionRecord) error
+	GetAppSessionByToken(ctx context.Context, secret string) (appSessionRecord, bool, error)
+	ListAppSessions(ctx context.Context, appID string) ([]appSessionRecord, error)
+	RevokeAppSession(ctx context.Context, sessionID string) error
+	TouchAppSession(ctx context.Context, sessionID string, now time.Time) error
+	// App tokens (machine-to-machine)
+	CreateAppToken(ctx context.Context, appID, name, secret string, rateLimitRPM, rateLimitBurst int, expiresAt time.Time) (appTokenRecord, error)
+	ListAppTokens(ctx context.Context, appID string) ([]appTokenRecord, error)
+	ValidateAppToken(ctx context.Context, secret string) (appTokenRecord, bool, error)
+	DeleteAppToken(ctx context.Context, tokenID string) error
 }
 
 type createOrgRequest struct {
@@ -181,6 +200,10 @@ type Service struct {
 	rateLimiter      rateLimiter
 	circuitBreakers  *circuitBreakerManager
 	auditSubscribers *auditBroadcaster
+	// Cache of per-app custom-CA transports; keyed by "appID:sha256prefix" of PEM.
+	appTransports sync.Map
+	// Cache of fetched OIDC discovery documents; keyed by issuer URL.
+	oidcDiscovery sync.Map
 }
 
 type overviewResponse struct {
@@ -533,6 +556,140 @@ type auditFilters struct {
 	To        time.Time
 }
 
+// ── Protected Apps data types ──────────────────────────────────────────
+
+type headerInjectionRule struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type protectedAppRecord struct {
+	ID              string
+	Name            string
+	Slug            string
+	UpstreamURL     string
+	OrgID           string
+	AuthMode        string // "oidc", "bearer", "any"
+	InjectHeaders   []headerInjectionRule
+	StripHeaders    []string
+	ExtraCAPEM      string
+	RateLimitRPM    int
+	RateLimitBurst  int
+	RateLimitPer    string // "session", "ip", "token"
+	AllowCIDRs      string
+	DenyCIDRs       string
+	HealthCheckPath string
+	CreatedAt       time.Time
+	CreatedBy       string
+}
+
+type appSessionRecord struct {
+	ID         string
+	AppID      string
+	UserSub    string
+	UserEmail  string
+	UserName   string
+	UserGroups []string
+	TokenHash  string
+	IP         string
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	LastUsedAt time.Time
+	Revoked    bool
+}
+
+type appTokenRecord struct {
+	ID             string
+	Name           string
+	AppID          string
+	TokenHash      string
+	Preview        string
+	Active         bool
+	RateLimitRPM   int
+	RateLimitBurst int
+	ExpiresAt      time.Time
+	LastUsedAt     time.Time
+	CreatedAt      time.Time
+}
+
+// ── Protected Apps API types ───────────────────────────────────────────
+
+type createAppRequest struct {
+	Name            string                `json:"name"`
+	Slug            string                `json:"slug"`
+	UpstreamURL     string                `json:"upstreamURL"`
+	AuthMode        string                `json:"authMode"`
+	InjectHeaders   []headerInjectionRule `json:"injectHeaders"`
+	StripHeaders    []string              `json:"stripHeaders"`
+	ExtraCAPEM      string                `json:"extraCAPEM"`
+	RateLimitRPM    int                   `json:"rateLimitRPM"`
+	RateLimitBurst  int                   `json:"rateLimitBurst"`
+	RateLimitPer    string                `json:"rateLimitPer"`
+	AllowCIDRs      string                `json:"allowCIDRs"`
+	DenyCIDRs       string                `json:"denyCIDRs"`
+	HealthCheckPath string                `json:"healthCheckPath"`
+}
+
+type appSummary struct {
+	ID              string                `json:"id"`
+	Name            string                `json:"name"`
+	Slug            string                `json:"slug"`
+	UpstreamURL     string                `json:"upstreamURL"`
+	AuthMode        string                `json:"authMode"`
+	InjectHeaders   []headerInjectionRule `json:"injectHeaders"`
+	StripHeaders    []string              `json:"stripHeaders"`
+	ExtraCAPEM      string                `json:"extraCAPEM"`
+	RateLimitRPM    int                   `json:"rateLimitRPM"`
+	RateLimitBurst  int                   `json:"rateLimitBurst"`
+	RateLimitPer    string                `json:"rateLimitPer"`
+	AllowCIDRs      string                `json:"allowCIDRs"`
+	DenyCIDRs       string                `json:"denyCIDRs"`
+	HealthCheckPath string                `json:"healthCheckPath"`
+	CreatedAt       string                `json:"createdAt"`
+}
+
+type appSessionSummary struct {
+	ID         string `json:"id"`
+	UserSub    string `json:"userSub"`
+	UserEmail  string `json:"userEmail"`
+	UserName   string `json:"userName"`
+	IP         string `json:"ip"`
+	CreatedAt  string `json:"createdAt"`
+	ExpiresAt  string `json:"expiresAt"`
+	LastUsedAt string `json:"lastUsedAt"`
+}
+
+type createAppTokenRequest struct {
+	Name           string `json:"name"`
+	RateLimitRPM   int    `json:"rateLimitRPM"`
+	RateLimitBurst int    `json:"rateLimitBurst"`
+	ExpiresAt      string `json:"expiresAt"`
+}
+
+type appTokenSummary struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	AppID          string `json:"appID"`
+	Preview        string `json:"preview"`
+	Active         bool   `json:"active"`
+	RateLimitRPM   int    `json:"rateLimitRPM"`
+	RateLimitBurst int    `json:"rateLimitBurst"`
+	ExpiresAt      string `json:"expiresAt"`
+	LastUsedAt     string `json:"lastUsedAt"`
+	CreatedAt      string `json:"createdAt"`
+}
+
+type issuedAppTokenResponse struct {
+	Token  appTokenSummary `json:"token"`
+	Secret string          `json:"secret"`
+}
+
+// oidcDiscoveryDoc is the subset of the OIDC discovery document we need.
+type oidcDiscoveryDoc struct {
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+}
+
 // Route test request/response types
 type routeTestRequest struct {
 	Method      string            `json:"method"`
@@ -689,6 +846,11 @@ func (s *Service) Handler() http.Handler {
 	// Global search
 	mux.HandleFunc("/api/v1/admin/search", s.withAdminAuth(s.withOptionalOrgContext(s.handleSearch)))
 	s.registerPlatformRoutes(mux)
+	// Protected Apps — admin CRUD
+	mux.HandleFunc("/api/v1/admin/apps", s.withAdminAuth(s.withOrgContext(s.handleApps)))
+	mux.HandleFunc("/api/v1/admin/apps/", s.withAdminAuth(s.withOrgContext(s.handleAppByID)))
+	// Protected Apps — user-facing proxy (no admin auth; auth handled per-app)
+	mux.HandleFunc("/app/", s.handleApp)
 	mux.HandleFunc("/proxy/", s.handleProxy)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

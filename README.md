@@ -6,7 +6,7 @@
 
 **Multi-tenant proxy gateway with an admin UI**
 
-Route authenticated bearer tokens to upstream services, inject tenant identity headers, enforce rate limits and IP policies, and audit every request — all managed through a self-hosted web interface.
+Route authenticated bearer tokens to upstream services, inject tenant identity headers, enforce rate limits and IP policies, and audit every request — all managed through a self-hosted web interface. Proxy any upstream behind OIDC browser login or bearer-token auth with the Protected Apps feature.
 
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](services/backend/go.mod)
@@ -35,6 +35,10 @@ Route authenticated bearer tokens to upstream services, inject tenant identity h
 - [Platform Admin](#platform-admin)
   - [Bootstrap the first admin](#bootstrap-the-first-admin)
   - [Capabilities](#capabilities)
+- [Protected Apps](#protected-apps)
+  - [Auth modes](#auth-modes-1)
+  - [Upstream subpath configuration](#upstream-subpath-configuration)
+  - [Per-app configuration examples](#per-app-configuration-examples)
 - [OIDC / Single Sign-On](#oidc--single-sign-on)
   - [How auto-discovery works](#how-auto-discovery-works)
   - [Issuer URL format](#issuer-url-format)
@@ -93,6 +97,17 @@ Client (bearer token)
 - **Upstream health checks** — periodic reachability checks per tenant with history; latency tracking
 - **Live topology map** — WebSocket-streamed interactive graph of tokens → routes → tenants → upstreams; edges turn red within 30 seconds of an error and clear automatically; animated packet flow on active traffic
 - **Route tester** — built-in HTTP client in the admin UI with route/token selectors, auto-filled URL, `Authorization` header injection, and a live cURL command preview with one-click copy
+
+### Protected Apps
+- **Browser-authenticated upstream proxy** — protect any HTTP service with OIDC single sign-on; users log in once and are proxied transparently
+- **Machine-to-machine access** — issue scoped bearer tokens for CI/CD pipelines, scripts, or service accounts
+- **Four auth modes** — `oidc` (browser OIDC), `bearer` (M2M token), `any` (either), `none` (passthrough, IP rules only)
+- **IP allow / deny lists** — per-app CIDR filtering applied before any authentication check
+- **Rate limiting** — configurable RPM and burst; keyed per session, per IP, or per token
+- **Identity header injection** — forward user email, sub, name, or groups to the upstream as custom headers
+- **Custom CA support** — trust self-signed or internal CA certificates per app
+- **Health check path** — JustGate probes the upstream and reflects status in the UI
+- **Redirect rewriting** — 3xx redirects from the upstream are automatically rewritten to stay within the proxy path
 
 ### Administration
 - **Organisation management** — multi-org support with invite links and member roles
@@ -468,6 +483,139 @@ Health status is reflected in the topology map and tenant detail panel in real t
 
 ---
 
+## Protected Apps
+
+Protected Apps let you place any HTTP upstream service behind JustGate's authentication and access-control layer without modifying the upstream. Each app is served at:
+
+```
+https://<justgate-domain>/app/<slug>/
+```
+
+```
+Browser / API client
+    │
+    ▼
+┌─────────────────────────────────────────────────────┐
+│  JustGate  (/app/{slug}/…)                          │
+│                                                     │
+│  1. IP allow/deny check (CIDR)                      │
+│  2. Auth dispatch (OIDC session / bearer token)     │
+│  3. Rate limiting (per session, IP, or token)       │
+│  4. Header inject / strip                           │
+│  5. Reverse proxy → upstream                        │
+│  6. Redirect rewriting (3xx Location headers)       │
+└─────────────────────────────────────────────────────┘
+             │  X-Forwarded-Prefix: /app/{slug}
+             │  X-Forwarded-Host, X-Forwarded-Proto
+             ▼
+     Upstream service
+```
+
+### Auth modes
+
+| Mode | Description |
+|---|---|
+| `oidc` | Browser users authenticate via the platform OIDC provider. A session cookie is issued and renewed automatically. |
+| `bearer` | Requests must carry a valid app bearer token in the `Authorization: Bearer …` header. Suitable for M2M / scripts. |
+| `any` | Either an OIDC session cookie **or** a bearer token is accepted. |
+| `none` | All requests are forwarded without authentication. Only IP rules and rate limits apply. Useful when the upstream manages its own auth. |
+
+---
+
+### Upstream subpath configuration
+
+This is the most common issue when placing an existing web app behind a subpath proxy.
+
+**Why it matters:** when an upstream app generates HTML with embedded URLs (asset bundles, API prefixes, redirect targets), it usually uses paths relative to its own root — for example `/public/app.js` or `/login`. The browser resolves these against the proxy origin (`justgate-domain`), not the upstream host, so:
+
+```
+# Upstream sends:         Location: /login
+# Browser resolves to:   https://justgate.example.com/login   ← 404
+# Should be:             https://justgate.example.com/app/grafana/login
+```
+
+**What JustGate does automatically:**
+- **3xx redirects** — JustGate rewrites `Location` headers from the upstream. Relative paths (e.g. `/login`) are prefixed with `/app/<slug>/`. Absolute URLs pointing to the upstream host have their host stripped and the prefix prepended. External absolute URLs (e.g. the OIDC provider) are left untouched.
+- **Forwarding headers** — every proxied request carries:
+
+  | Header | Value |
+  |---|---|
+  | `X-Forwarded-Prefix` | `/app/<slug>` |
+  | `X-Forwarded-Host` | The original `Host` the browser connected to |
+  | `X-Forwarded-Proto` | `http` or `https` |
+
+**What still requires upstream config:** HTML and JavaScript that embed absolute or root-relative URLs at render time (static asset manifests, inline `<script src="/…">`, React/Vue router base paths) cannot be rewritten by the proxy without a full HTML parser. These require a one-time configuration on the upstream side.
+
+---
+
+### Per-app configuration examples
+
+#### Grafana
+
+```ini
+# grafana.ini
+[server]
+root_url = %(protocol)s://%(domain)s/app/<slug>/
+serve_from_sub_path = true
+```
+
+Or via environment variables:
+```bash
+GF_SERVER_ROOT_URL=https://justgate.example.com/app/grafana/
+GF_SERVER_SERVE_FROM_SUB_PATH=true
+```
+
+#### Prometheus
+
+```bash
+# Add to the Prometheus startup command:
+--web.external-url=https://justgate.example.com/app/<slug>/
+--web.route-prefix=/
+```
+
+#### Alertmanager
+
+```bash
+--web.external-url=https://justgate.example.com/app/<slug>/
+--web.route-prefix=/
+```
+
+#### Uptime Kuma
+
+```bash
+# Environment variable (v1.21+):
+BASE_URL=/app/<slug>
+```
+
+#### Gitea
+
+```ini
+# app.ini
+[server]
+ROOT_URL = https://justgate.example.com/app/<slug>/
+```
+
+#### Jupyter Lab / Notebook
+
+```bash
+jupyter lab --NotebookApp.base_url=/app/<slug>/
+# Or in jupyter_notebook_config.py:
+c.NotebookApp.base_url = "/app/<slug>/"
+```
+
+#### Generic (X-Forwarded-Prefix)
+
+Many frameworks read `X-Forwarded-Prefix` automatically and need no manual configuration:
+
+- **Traefik** (as a downstream service)
+- **Spring Boot** with `server.forward-headers-strategy=framework`
+- **Express.js** with `app.set('trust proxy', true)` and `express-http-proxy`
+- **Netdata** v1.37+
+
+For frameworks that don't, most have a "base path" or "application root" setting — consult their reverse-proxy documentation.
+
+---
+
 ## OIDC / Single Sign-On
 
 JustGate supports OIDC-based single sign-on on top of (or instead of) local accounts. There are two ways to configure it:
@@ -665,6 +813,13 @@ All admin endpoints require a valid backend admin JWT (`Authorization: Bearer <j
 | `GET/POST` | `/api/v1/admin/orgs` | List / create organisations |
 | `GET/POST` | `/api/v1/admin/sessions` | List / create admin sessions |
 | `DELETE` | `/api/v1/admin/sessions/{id}` | Revoke an admin session |
+| `GET/POST` | `/api/v1/admin/apps` | List / create protected apps |
+| `GET/PUT/DELETE` | `/api/v1/admin/apps/{id}` | Read / update / delete a protected app |
+| `GET/POST` | `/api/v1/admin/apps/{id}/tokens` | List / issue bearer tokens for an app |
+| `DELETE` | `/api/v1/admin/apps/{id}/tokens/{tokenID}` | Revoke an app bearer token |
+| `GET` | `/api/v1/admin/apps/{id}/sessions` | List active OIDC sessions for an app |
+| `DELETE` | `/api/v1/admin/apps/{id}/sessions/{sessionID}` | Revoke an app OIDC session |
+| `ANY` | `/app/{slug}/…` | Authenticated proxy surface for protected apps |
 | `GET` | `/api/v1/admin/platform/check` | Check caller's platform admin status |
 | `GET/POST` | `/api/v1/admin/platform/admins` | List platform admins / grant by email |
 | `DELETE` | `/api/v1/admin/platform/admins/{userID}` | Revoke platform admin |
@@ -672,7 +827,7 @@ All admin endpoints require a valid backend admin JWT (`Authorization: Bearer <j
 | `DELETE` | `/api/v1/admin/platform/users/{userID}` | Delete a user account |
 | `GET` | `/api/v1/admin/platform/orgs` | List all organisations (platform admin required) |
 | `DELETE` | `/api/v1/admin/platform/orgs/{orgID}` | Delete an organisation (cascades) |
-| `ANY` | `/proxy/{slug}/…` | Authenticated proxy surface for clients |
+| `ANY` | `/proxy/{slug}/…` | Tenant-aware proxy surface for bearer-token clients |
 
 ---
 
