@@ -1961,3 +1961,115 @@ func (store *sqlStore) ListAuditsPaginatedFiltered(ctx context.Context, limit, o
 	}
 	return items, total, rows.Err()
 }
+
+// ── Provisioning Grants ────────────────────────────────────────────────
+
+func (store *sqlStore) CreateProvisioningGrant(ctx context.Context, record provisioningGrantRecord) (provisioningGrantRecord, error) {
+	scopesJSON, err := json.Marshal(record.Scopes)
+	if err != nil {
+		return provisioningGrantRecord{}, err
+	}
+	_, err = store.execContext(ctx,
+		`INSERT INTO provisioning_grants (id, name, tenant_id, scopes_json, token_ttl_hours, max_uses, use_count, active, grant_hash, preview, rate_limit_rpm, rate_limit_burst, org_id, expires_at, created_at, created_by)
+		 VALUES (?, ?, ?, ?, ?, ?, 0, TRUE, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.ID, record.Name, record.TenantID, string(scopesJSON),
+		record.TokenTTLHours, record.MaxUses,
+		record.Hash, record.Preview,
+		record.RateLimitRPM, record.RateLimitBurst,
+		record.OrgID, record.ExpiresAt, record.CreatedAt, record.CreatedBy,
+	)
+	if err != nil {
+		return provisioningGrantRecord{}, err
+	}
+	return record, nil
+}
+
+func (store *sqlStore) ListProvisioningGrants(ctx context.Context) ([]provisioningGrantRecord, error) {
+	orgID := orgIDFromContext(ctx)
+	var rows *sql.Rows
+	var err error
+	if orgID != "" {
+		rows, err = store.queryContext(ctx,
+			`SELECT id, name, tenant_id, scopes_json, token_ttl_hours, max_uses, use_count, active, grant_hash, preview, rate_limit_rpm, rate_limit_burst, org_id, expires_at, created_at, created_by
+			 FROM provisioning_grants WHERE org_id = ? ORDER BY created_at DESC`, orgID)
+	} else {
+		rows, err = store.queryContext(ctx,
+			`SELECT id, name, tenant_id, scopes_json, token_ttl_hours, max_uses, use_count, active, grant_hash, preview, rate_limit_rpm, rate_limit_burst, org_id, expires_at, created_at, created_by
+			 FROM provisioning_grants ORDER BY created_at DESC`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]provisioningGrantRecord, 0)
+	for rows.Next() {
+		g, err := scanGrant(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, g)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) GetProvisioningGrantByHash(ctx context.Context, hash string) (provisioningGrantRecord, bool, error) {
+	row := store.queryRowContext(ctx,
+		`SELECT id, name, tenant_id, scopes_json, token_ttl_hours, max_uses, use_count, active, grant_hash, preview, rate_limit_rpm, rate_limit_burst, org_id, expires_at, created_at, created_by
+		 FROM provisioning_grants WHERE grant_hash = ? LIMIT 1`, hash)
+	g, err := scanGrant(row)
+	if err == sql.ErrNoRows {
+		return provisioningGrantRecord{}, false, nil
+	}
+	if err != nil {
+		return provisioningGrantRecord{}, false, err
+	}
+	return g, true, nil
+}
+
+func (store *sqlStore) IncrementGrantUseCount(ctx context.Context, id string, maxUses int) (bool, error) {
+	result, err := store.execContext(ctx,
+		`UPDATE provisioning_grants SET use_count = use_count + 1
+		 WHERE id = ? AND use_count < ? AND active = TRUE AND expires_at > ?`,
+		id, maxUses, store.now())
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
+}
+
+func (store *sqlStore) DeleteProvisioningGrant(ctx context.Context, id string) error {
+	result, err := store.execContext(ctx, `DELETE FROM provisioning_grants WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("grant not found")
+	}
+	return nil
+}
+
+func scanGrant(scanner interface{ Scan(dest ...any) error }) (provisioningGrantRecord, error) {
+	var g provisioningGrantRecord
+	var scopesJSON string
+	if err := scanner.Scan(
+		&g.ID, &g.Name, &g.TenantID, &scopesJSON,
+		&g.TokenTTLHours, &g.MaxUses, &g.UseCount, &g.Active,
+		&g.Hash, &g.Preview, &g.RateLimitRPM, &g.RateLimitBurst,
+		&g.OrgID, &g.ExpiresAt, &g.CreatedAt, &g.CreatedBy,
+	); err != nil {
+		return provisioningGrantRecord{}, err
+	}
+	if err := json.Unmarshal([]byte(scopesJSON), &g.Scopes); err != nil {
+		g.Scopes = []string{}
+	}
+	return g, nil
+}

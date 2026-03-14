@@ -1,7 +1,7 @@
 "use client";
 
 import { OrgSwitcher } from "@/components/admin/org-switcher";
-import { AppWindow, History, KeyRound, LayoutDashboard, Monitor, Orbit, Settings, Settings2, Shield, Users2, UsersRound } from "lucide-react";
+import { AppWindow, History, KeyRound, LayoutDashboard, Monitor, Orbit, Settings, Settings2, Share2, Shield, Users2, UsersRound } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -18,6 +18,7 @@ const sections = [
       { href: "/routes", label: "Routes", icon: Settings2 },
       { href: "/tenants", label: "Tenants", icon: Users2 },
       { href: "/tokens", label: "Tokens", icon: KeyRound },
+      { href: "/grants", label: "Grants", icon: Share2 },
     ],
   },
   {

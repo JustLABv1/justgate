@@ -9,9 +9,12 @@ import {
     type AppSession,
     type AppToken,
     type AuditEvent,
+    type BulkTokenResponse,
     type CircuitBreakerStatus,
     type ExpiringToken,
+    type GrantSummary,
     type HealthHistoryEntry,
+    type IssuedGrant,
     type MemberSummary,
     type OIDCConfig,
     type OIDCOrgMapping,
@@ -281,4 +284,58 @@ export function getAppTokens(appID: string) {
 
 export function getAppSessions(appID: string) {
   return fetchBackend<AppSession[]>(`/api/v1/admin/apps/${encodeURIComponent(appID)}/sessions`, []);
+}
+
+// ── Provisioning Grants ─────────────────────────────────────────
+
+export function getGrants() {
+  return fetchBackend<GrantSummary[]>("/api/v1/admin/grants", []);
+}
+
+export async function createGrant(payload: {
+  name: string;
+  tenantID: string;
+  scopes: string;
+  maxUses: number;
+  expiresAt: string;
+  tokenTTLHours: number;
+  rateLimitRPM?: number;
+  rateLimitBurst?: number;
+}): Promise<IssuedGrant | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/grants`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return response.json() as Promise<IssuedGrant | { error: string }>;
+}
+
+export async function deleteGrant(grantID: string): Promise<void> {
+  const headers = await getAdminRequestHeaders();
+  await fetch(`${backendUrl}/api/v1/admin/grants/${encodeURIComponent(grantID)}`, {
+    method: "DELETE",
+    headers,
+    cache: "no-store",
+  });
+}
+
+export async function bulkCreateTokens(payload: {
+  namePrefix: string;
+  tenantID: string;
+  scopes: string;
+  expiresAt: string;
+  count: number;
+  rateLimitRPM?: number;
+  rateLimitBurst?: number;
+}): Promise<BulkTokenResponse | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/tokens/bulk`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return response.json() as Promise<BulkTokenResponse | { error: string }>;
 }
