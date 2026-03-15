@@ -319,7 +319,6 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       socketRef.current = null;
     };
   // Re-run whenever the active org changes so the socket reconnects to the right stream
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
   const graph = useMemo(() => {
@@ -769,7 +768,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       edges: activeEdges,
       nodes: activeNodes,
     };
-  }, [draftGraph.draftEdges, draftGraph.draftNodes, graph.tenantEdges, graph.tokenEdges, selectedNodeId]);
+  }, [draftGraph.draftEdges, draftGraph.draftNodes, graph.tenantEdges, graph.tokenEdges, graph.upstreamEdges, selectedNodeId]);
 
   function handleBackgroundPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) {

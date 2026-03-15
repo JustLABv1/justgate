@@ -278,7 +278,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                           <TextField className="grid gap-2">
                             <Label>Upstream URL</Label>
                             <Input placeholder="https://mimir.internal.example" required type="url" value={upstreamURL} onChange={(e) => setUpstreamURL(e.target.value)} />
-                            <div className="enterprise-note">Backend that receives this tenant's traffic.</div>
+                            <div className="enterprise-note">Backend that receives this tenant&apos;s traffic.</div>
                           </TextField>
                           <TextField className="grid gap-2">
                             <Label>Injected header</Label>
