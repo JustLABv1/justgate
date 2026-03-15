@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import type { TenantUpstream } from "@/lib/contracts";
 import { Button, Form, Input, Label, TextField } from "@heroui/react";
 import { Layers, Pencil, Plus, Trash2 } from "lucide-react";
@@ -192,15 +193,23 @@ export function TenantUpstreams({ tenantInternalID }: TenantUpstreamsProps) {
                 >
                   <Pencil size={10} />
                 </Button>
-                <Button
-                  className="h-5 w-5 min-w-5 rounded-md px-0 text-muted-foreground hover:text-danger"
-                  size="sm"
-                  variant="ghost"
-                  aria-label="Delete upstream"
-                  onPress={() => handleDelete(u.id)}
-                >
-                  <Trash2 size={10} />
-                </Button>
+                <ConfirmDialog
+                  trigger={(open) => (
+                    <Button
+                      className="h-5 w-5 min-w-5 rounded-md px-0 text-muted-foreground hover:text-danger"
+                      size="sm"
+                      variant="ghost"
+                      aria-label="Delete upstream"
+                      onPress={open}
+                    >
+                      <Trash2 size={10} />
+                    </Button>
+                  )}
+                  title="Delete upstream?"
+                  description="This removes the upstream from load balancing. Traffic will immediately stop being routed to it."
+                  confirmLabel="Delete upstream"
+                  onConfirm={() => handleDelete(u.id)}
+                />
               </div>
             ),
           )}

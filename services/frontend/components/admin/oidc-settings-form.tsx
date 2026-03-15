@@ -1,42 +1,56 @@
 "use client";
 
 import type { OIDCConfig } from "@/lib/contracts";
-import { Button, Form, Input, Label, Switch, TextField } from "@heroui/react";
+import { Button, Input, Label, Switch, TextField } from "@heroui/react";
 import { Save } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 
 interface OIDCSettingsFormProps {
   initial: OIDCConfig;
+}
+
+interface FormState {
+  issuer: string;
+  clientID: string;
+  clientSecret: string;
+  displayName: string;
+  groupsClaim: string;
+  enabled: boolean;
+}
+
+function initState(initial: OIDCConfig): FormState {
+  return {
+    issuer: initial.issuer ?? "",
+    clientID: initial.clientID ?? "",
+    clientSecret: "",
+    displayName: initial.displayName || "Single Sign-On",
+    groupsClaim: initial.groupsClaim ?? "",
+    enabled: initial.enabled ?? false,
+  };
 }
 
 export function OIDCSettingsForm({ initial }: OIDCSettingsFormProps) {
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string>();
   const [success, setSuccess] = useState<string>();
-  const [enabled, setEnabled] = useState(initial.enabled);
+  const [hasSecret, setHasSecret] = useState(initial.hasSecret);
+  const [fields, setFields] = useState<FormState>(() => initState(initial));
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function set<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setFields((f) => ({ ...f, [key]: value }));
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
     setError(undefined);
     setSuccess(undefined);
     setIsPending(true);
 
     try {
-      const form = event.currentTarget;
-      const formData = new FormData(form);
-      const payload = {
-        issuer: String(formData.get("issuer") || ""),
-        clientID: String(formData.get("clientID") || ""),
-        clientSecret: String(formData.get("clientSecret") || ""),
-        displayName: String(formData.get("displayName") || ""),
-        groupsClaim: String(formData.get("groupsClaim") || ""),
-        enabled,
-      };
-
       const res = await fetch("/api/admin/settings/oidc", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(fields),
       });
 
       const data = await res.json().catch(() => null);
@@ -46,10 +60,13 @@ export function OIDCSettingsForm({ initial }: OIDCSettingsFormProps) {
         return;
       }
 
-      setSuccess("OIDC configuration saved. Restart the frontend service for changes to take effect.");
-      // Clear the secret field after save
-      const secretInput = form.querySelector<HTMLInputElement>('input[name="clientSecret"]');
-      if (secretInput) secretInput.value = "";
+      // Bust the frontend OIDC cache so the sign-in page reflects the change immediately.
+      await fetch("/api/admin/settings/oidc/reload", { method: "POST" }).catch(() => null);
+
+      setSuccess("OIDC configuration saved. Changes are now active.");
+      // Clear the secret field and mark as having a secret
+      if (fields.clientSecret) setHasSecret(true);
+      set("clientSecret", "");
     } finally {
       setIsPending(false);
     }
@@ -64,60 +81,76 @@ export function OIDCSettingsForm({ initial }: OIDCSettingsFormProps) {
       <div className="px-5 py-5">
         {initial.fromEnv && (
           <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-300">
-            These settings are currently sourced from <strong>environment variables</strong>. Saving will persist them to the database and take effect after the next frontend restart, allowing them to be managed from this page going forward.
+            These settings are currently sourced from <strong>environment variables</strong>. Saving will persist them to the database, allowing them to be managed from this page going forward.
           </div>
         )}
-        <Form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-5">
           <div className="flex items-center gap-3">
             <Switch
-              isSelected={enabled}
-              onChange={() => setEnabled((v) => !v)}
+              isSelected={fields.enabled}
+              onChange={(isSelected) => set("enabled", isSelected)}
             />
-            <span className="text-sm font-medium text-foreground">{enabled ? "Enabled" : "Disabled"}</span>
+            <span className="text-sm font-medium text-foreground">{fields.enabled ? "Enabled" : "Disabled"}</span>
           </div>
 
           <div className="grid gap-5 sm:grid-cols-2">
-            <TextField name="issuer" className="w-full">
+            <TextField
+              value={fields.issuer}
+              onChange={(v) => set("issuer", v)}
+              className="w-full"
+            >
               <Label className="text-sm font-medium text-foreground">Issuer URL</Label>
               <Input
-                defaultValue={initial.issuer}
                 placeholder="https://auth.example.com/realms/main"
                 className="mt-1.5 w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
               />
             </TextField>
 
-            <TextField name="clientID" className="w-full">
+            <TextField
+              value={fields.clientID}
+              onChange={(v) => set("clientID", v)}
+              className="w-full"
+            >
               <Label className="text-sm font-medium text-foreground">Client ID</Label>
               <Input
-                defaultValue={initial.clientID}
                 placeholder="justgate"
                 className="mt-1.5 w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
               />
             </TextField>
 
-            <TextField name="clientSecret" className="w-full">
+            <TextField
+              value={fields.clientSecret}
+              onChange={(v) => set("clientSecret", v)}
+              className="w-full"
+            >
               <Label className="text-sm font-medium text-foreground">Client Secret</Label>
               <Input
                 type="password"
-                placeholder={initial.hasSecret ? "••••••••  (leave blank to keep)" : "Enter client secret"}
+                placeholder={hasSecret ? "••••••••  (leave blank to keep)" : "Enter client secret"}
                 className="mt-1.5 w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
               />
             </TextField>
 
-            <TextField name="displayName" className="w-full">
+            <TextField
+              value={fields.displayName}
+              onChange={(v) => set("displayName", v)}
+              className="w-full"
+            >
               <Label className="text-sm font-medium text-foreground">Button Label</Label>
               <Input
-                defaultValue={initial.displayName || "Single Sign-On"}
                 placeholder="Single Sign-On"
                 className="mt-1.5 w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
               />
             </TextField>
           </div>
 
-          <TextField name="groupsClaim" className="w-full sm:w-1/2">
+          <TextField
+            value={fields.groupsClaim}
+            onChange={(v) => set("groupsClaim", v)}
+            className="w-full sm:w-1/2"
+          >
             <Label className="text-sm font-medium text-foreground">Groups Claim</Label>
             <Input
-              defaultValue={initial.groupsClaim}
               placeholder="groups"
               className="mt-1.5 w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
             />
@@ -140,7 +173,7 @@ export function OIDCSettingsForm({ initial }: OIDCSettingsFormProps) {
               {isPending ? "Saving…" : "Save configuration"}
             </Button>
           </div>
-        </Form>
+        </form>
       </div>
     </div>
   );

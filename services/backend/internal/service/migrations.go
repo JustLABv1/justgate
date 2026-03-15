@@ -359,6 +359,32 @@ var schemaMigrations = []migration{
 			`CREATE INDEX IF NOT EXISTS idx_app_tokens_hash ON app_tokens (token_hash)`,
 		},
 	},
+	{
+		version: 12,
+		name:    "create_provisioning_grants",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS provisioning_grants (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				tenant_id TEXT NOT NULL,
+				scopes_json TEXT NOT NULL DEFAULT '[]',
+				token_ttl_hours INTEGER NOT NULL DEFAULT 720,
+				max_uses INTEGER NOT NULL DEFAULT 10,
+				use_count INTEGER NOT NULL DEFAULT 0,
+				active BOOLEAN NOT NULL DEFAULT TRUE,
+				grant_hash TEXT NOT NULL UNIQUE,
+				preview TEXT NOT NULL DEFAULT '',
+				rate_limit_rpm INTEGER NOT NULL DEFAULT 0,
+				rate_limit_burst INTEGER NOT NULL DEFAULT 0,
+				org_id TEXT NOT NULL DEFAULT '',
+				expires_at TIMESTAMP NOT NULL,
+				created_at TIMESTAMP NOT NULL,
+				created_by TEXT NOT NULL DEFAULT ''
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_grants_org ON provisioning_grants (org_id)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_grants_hash ON provisioning_grants (grant_hash)`,
+		},
+	},
 }
 
 func (store *sqlStore) runMigrations(ctx context.Context) error {

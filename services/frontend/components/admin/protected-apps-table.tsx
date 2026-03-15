@@ -2,6 +2,7 @@
 
 import { AppDetailDrawer } from "@/components/admin/app-detail-drawer";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import { EditAppModal } from "@/components/admin/edit-app-modal";
 import { useToast } from "@/components/toast-provider";
 import type { ProtectedApp } from "@/lib/contracts";
 import { Button } from "@heroui/react";
@@ -127,6 +128,7 @@ export function ProtectedAppsTable({ apps, actionsDisabled }: ProtectedAppsTable
             </td>
             <td className="px-4 py-3">
               <div className="flex items-center justify-end gap-2">
+                <EditAppModal app={app} disabled={actionsDisabled} />
                 <AppDetailDrawer app={app} disabled={actionsDisabled} />
                 <DeleteAppButton appID={app.id} disabled={actionsDisabled} />
               </div>

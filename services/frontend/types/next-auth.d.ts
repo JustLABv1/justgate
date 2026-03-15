@@ -7,5 +7,6 @@ declare module "next-auth" {
     };
     activeOrgId?: string;
     isPlatformAdmin?: boolean;
+    provider?: string;
   }
 }

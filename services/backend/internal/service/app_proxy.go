@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -194,6 +195,11 @@ func (s *Service) handleApp(writer http.ResponseWriter, request *http.Request) {
 		r.Header.Set("X-Forwarded-Host", request.Host)
 		r.Header.Set("X-Forwarded-Prefix", "/app/"+slug)
 
+		// Remove Accept-Encoding so the upstream returns uncompressed responses.
+		// This is required for the base-tag HTML injection in ModifyResponse to
+		// work without having to decompress the response body.
+		r.Header.Del("Accept-Encoding")
+
 		// Strip spoofable headers before injecting our own.
 		for _, h := range app.StripHeaders {
 			r.Header.Del(h)
@@ -218,28 +224,65 @@ func (s *Service) handleApp(writer http.ResponseWriter, request *http.Request) {
 	//
 	//  - Absolute URLs pointing to the upstream host → strip host, prepend /app/{slug}
 	//  - Relative URLs (path-only, e.g. "/login") → prepend /app/{slug}
+	//
+	// For HTML responses, inject a <base href="/app/{slug}/"> tag immediately
+	// after the opening <head> element.  This fixes asset loading for apps that
+	// embed root-relative URLs (e.g. Next.js /_next/static/…) and do not
+	// honour X-Forwarded-Prefix natively.
+	baseTag := []byte(`<base href="/app/` + slug + `/">`)
 	proxy.ModifyResponse = func(resp *http.Response) error {
+		// ── Location rewriting ────────────────────────────────────────
 		loc := resp.Header.Get("Location")
-		if loc == "" {
-			return nil
-		}
-		parsed, err := url.Parse(loc)
-		if err != nil {
-			return nil
-		}
-		if parsed.IsAbs() {
-			// Absolute URL pointing at the upstream host → rewrite to go via proxy.
-			if strings.EqualFold(parsed.Host, targetURL.Host) {
-				newLoc := "/app/" + slug + parsed.RequestURI()
-				resp.Header.Set("Location", newLoc)
+		if loc != "" {
+			parsed, err := url.Parse(loc)
+			if err == nil {
+				if parsed.IsAbs() {
+					if strings.EqualFold(parsed.Host, targetURL.Host) {
+						resp.Header.Set("Location", "/app/"+slug+parsed.RequestURI())
+					}
+				} else {
+					newLoc := "/app/" + slug + "/" + strings.TrimPrefix(parsed.RequestURI(), "/")
+					resp.Header.Set("Location", newLoc)
+				}
 			}
-			// Absolute URL pointing elsewhere (e.g. external OIDC provider) → leave untouched.
-		} else {
-			// Relative URL — the browser would resolve it against the proxy origin
-			// (e.g. localhost:3000/login) not the upstream.  Prepend /app/{slug}.
-			newLoc := "/app/" + slug + "/" + strings.TrimPrefix(parsed.RequestURI(), "/")
-			resp.Header.Set("Location", newLoc)
 		}
+
+		// ── <base> tag injection into HTML responses ──────────────────
+		ct := resp.Header.Get("Content-Type")
+		if !strings.HasPrefix(ct, "text/html") {
+			return nil
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			resp.Body = io.NopCloser(strings.NewReader(""))
+			return nil
+		}
+
+		// Don't inject if the document already has a <base> tag.
+		lowerBody := bytes.ToLower(body)
+		if !bytes.Contains(lowerBody, []byte("<base")) {
+			// Find the first <head …> closing >, then insert right after it.
+			if idx := bytes.Index(lowerBody, []byte("<head")); idx != -1 {
+				// Advance to the end of the opening tag.
+				closing := bytes.IndexByte(lowerBody[idx:], '>')
+				if closing != -1 {
+					insertAt := idx + closing + 1
+					injected := make([]byte, 0, len(body)+len(baseTag))
+					injected = append(injected, body[:insertAt]...)
+					injected = append(injected, baseTag...)
+					injected = append(injected, body[insertAt:]...)
+					body = injected
+				}
+			}
+		}
+
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		resp.ContentLength = int64(len(body))
+		resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		// Remove Content-Encoding since the body is now uncompressed.
+		resp.Header.Del("Content-Encoding")
 		return nil
 	}
 

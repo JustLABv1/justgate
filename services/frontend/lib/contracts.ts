@@ -190,6 +190,7 @@ export interface UserAdminSummary {
   id: string;
   name: string;
   email: string;
+  source: string;
   createdAt: string;
   isPlatformAdmin: boolean;
 }
@@ -384,4 +385,33 @@ export interface IssuedAppToken {
   token: AppToken;
   secret: string;
 }
+
+// ── Provisioning Grants ─────────────────────────────────────────
+
+export interface GrantSummary {
+  id: string;
+  name: string;
+  tenantID: string;
+  scopes: string[];
+  tokenTTLHours: number;
+  maxUses: number;
+  useCount: number;
+  active: boolean;
+  preview: string;
+  rateLimitRPM: number;
+  rateLimitBurst: number;
+  orgID: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface IssuedGrant {
+  grant: GrantSummary;
+  secret: string;
+}
+
+export interface BulkTokenResponse {
+  tokens: IssuedToken[];
+}
+
 

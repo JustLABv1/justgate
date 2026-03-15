@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import type { PlatformAdminSummary } from "@/lib/contracts";
 import { Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -103,15 +104,24 @@ export function PlatformAdminsTable({ admins }: PlatformAdminsTableProps) {
                     {new Date(a.grantedAt).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      type="button"
-                      disabled={isPending}
-                      onClick={() => handleRevoke(a.userID)}
-                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
-                      title="Revoke platform admin"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    <ConfirmDialog
+                      trigger={(open) => (
+                        <button
+                          type="button"
+                          disabled={isPending}
+                          onClick={open}
+                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
+                          title="Revoke platform admin"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                      title="Revoke platform admin?"
+                      description={`Remove platform admin access from ${a.userName || a.userEmail}? They will lose all super-admin privileges immediately.`}
+                      confirmLabel="Revoke access"
+                      onConfirm={() => handleRevoke(a.userID)}
+                      variant="warning"
+                    />
                   </td>
                 </tr>
               ))}

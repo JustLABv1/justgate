@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import type { MemberSummary } from "@/lib/contracts";
 import { Button } from "@heroui/react";
 import { Trash2 } from "lucide-react";
@@ -68,16 +69,24 @@ export function TeamMembersTable({ members, orgID, currentUserID, isOwner }: Tea
               {(isOwner) && (
                 <td className="px-4 py-3">
                   {(isOwner && m.userID !== currentUserID) && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 w-7 min-w-7 rounded-md p-0 text-muted-foreground hover:text-destructive"
-                      isDisabled={isPending}
-                      onPress={() => handleRemove(m.userID)}
-                      aria-label="Remove member"
-                    >
-                      <Trash2 size={13} />
-                    </Button>
+                    <ConfirmDialog
+                      trigger={(open) => (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 min-w-7 rounded-md p-0 text-muted-foreground hover:text-danger"
+                          isDisabled={isPending}
+                          onPress={open}
+                          aria-label="Remove member"
+                        >
+                          <Trash2 size={13} />
+                        </Button>
+                      )}
+                      title="Remove member?"
+                      description={`Remove ${m.userName || m.userEmail} from this organisation? They will lose access to all its resources.`}
+                      confirmLabel="Remove member"
+                      onConfirm={() => handleRemove(m.userID)}
+                    />
                   )}
                 </td>
               )}

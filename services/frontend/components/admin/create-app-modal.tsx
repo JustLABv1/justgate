@@ -4,7 +4,7 @@ import { AnimatedStep, type StepDef, StepList } from "@/components/admin/modal-s
 import { useToast } from "@/components/toast-provider";
 import type { ProtectedApp } from "@/lib/contracts";
 import { Button, Chip, Input, Label, Modal, TextField } from "@heroui/react";
-import { ArrowLeft, ArrowRight, Plus } from "lucide-react";
+import { ArrowLeft, ArrowRight, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
@@ -32,7 +32,10 @@ const STEPS: StepDef[] = [
   { id: "identity", label: "Identity" },
   { id: "access", label: "Access" },
   { id: "policy", label: "Policy" },
+  { id: "headers", label: "Headers" },
 ];
+
+interface HeaderRule { name: string; value: string; }
 
 function toFormState() {
   return {
@@ -55,6 +58,9 @@ export function CreateAppModal({ disabled = false, existingCount, trigger }: Cre
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState());
+  const [injectHeaders, setInjectHeaders] = useState<HeaderRule[]>([]);
+  const [stripHeaders, setStripHeaders] = useState<string[]>([]);
+  const [stripInput, setStripInput] = useState("");
   const [currentStep, setCurrentStep] = useState(0);
   const [direction, setDirection] = useState(1);
   const [internalOpen, setInternalOpen] = useState(false);
@@ -66,6 +72,9 @@ export function CreateAppModal({ disabled = false, existingCount, trigger }: Cre
   function handleOpenChange(open: boolean) {
     if (open) {
       setFormState(toFormState());
+      setInjectHeaders([]);
+      setStripHeaders([]);
+      setStripInput("");
       setError(undefined);
       setCurrentStep(0);
       setDirection(1);
@@ -93,8 +102,8 @@ export function CreateAppModal({ disabled = false, existingCount, trigger }: Cre
         slug: formState.slug.trim(),
         upstreamURL: formState.upstreamURL.trim(),
         authMode: formState.authMode,
-        injectHeaders: [],
-        stripHeaders: [],
+        injectHeaders: injectHeaders.filter((r) => r.name.trim() !== ""),
+        stripHeaders: stripHeaders.filter((h) => h.trim() !== ""),
         extraCAPEM: "",
         rateLimitRPM: Number(formState.rateLimitRPM) || 0,
         rateLimitBurst: Number(formState.rateLimitBurst) || 0,
@@ -330,6 +339,121 @@ export function CreateAppModal({ disabled = false, existingCount, trigger }: Cre
                         />
                         <div className="enterprise-note">JustGate will probe this path on the upstream to monitor availability.</div>
                       </TextField>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <Button variant="ghost" onPress={goBack}>
+                        <ArrowLeft size={15} />
+                        Back
+                      </Button>
+                      <Button className="bg-foreground text-background" onPress={goNext}>
+                        Continue
+                        <ArrowRight size={15} />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Step 3: Headers ── */}
+                {currentStep === 3 && (
+                  <div className="space-y-5">
+                    <div className="enterprise-panel p-4 space-y-3">
+                      <div>
+                        <Label>Inject headers</Label>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          Headers added to every proxied request. Use substitution variables to
+                          forward authenticated user identity to the upstream. Leave empty to skip.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        {injectHeaders.map((rule, i) => (
+                          <div key={i} className="flex gap-2 items-start">
+                            <div className="flex-1 grid grid-cols-2 gap-2">
+                              <input
+                                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
+                                placeholder="Header name"
+                                value={rule.name}
+                                onChange={(e) => setInjectHeaders((prev) => prev.map((r, idx) => idx === i ? { ...r, name: e.target.value } : r))}
+                              />
+                              <input
+                                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none font-mono"
+                                placeholder="$user.email"
+                                value={rule.value}
+                                onChange={(e) => setInjectHeaders((prev) => prev.map((r, idx) => idx === i ? { ...r, value: e.target.value } : r))}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setInjectHeaders((prev) => prev.filter((_, idx) => idx !== i))}
+                              className="mt-2 rounded-lg p-1.5 text-muted-foreground hover:text-danger transition-colors"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => setInjectHeaders((prev) => [...prev, { name: "", value: "" }])}
+                          className="flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          <Plus size={12} />
+                          Add header
+                        </button>
+                        {injectHeaders.length > 0 && (
+                          <p className="text-[11px] text-muted-foreground">
+                            Variables: <code className="font-mono">$user.email</code>{" "}
+                            <code className="font-mono">$user.name</code>{" "}
+                            <code className="font-mono">$user.sub</code>{" "}
+                            <code className="font-mono">$user.groups</code>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="enterprise-panel p-4 space-y-3">
+                      <div>
+                        <Label>Strip headers</Label>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          Headers removed from the client request before forwarding. Prevents spoofing.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap gap-1.5">
+                          {stripHeaders.map((h, i) => (
+                            <span key={i} className="flex items-center gap-1 rounded-full border border-border bg-panel px-2.5 py-0.5 text-[11px] font-mono">
+                              {h}
+                              <button type="button" onClick={() => setStripHeaders((prev) => prev.filter((_, idx) => idx !== i))} className="text-muted-foreground hover:text-danger">
+                                <X size={10} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <input
+                            className="flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
+                            placeholder="Header to strip (e.g. X-Real-IP)"
+                            value={stripInput}
+                            onChange={(e) => setStripInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                const trimmed = stripInput.trim();
+                                if (trimmed && !stripHeaders.includes(trimmed)) setStripHeaders((prev) => [...prev, trimmed]);
+                                setStripInput("");
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const trimmed = stripInput.trim();
+                              if (trimmed && !stripHeaders.includes(trimmed)) setStripHeaders((prev) => [...prev, trimmed]);
+                              setStripInput("");
+                            }}
+                            className="rounded-xl border border-border px-3 py-2 text-sm text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors"
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </div>
                     </div>
                     {error && <div className="enterprise-feedback enterprise-feedback--error">{error}</div>}
                     <div className="flex items-center justify-between gap-3">
