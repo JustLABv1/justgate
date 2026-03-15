@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - develop
 
 jobs:
   build-frontend:
@@ -78,4 +79,4 @@ jobs:
         run: go vet ./...
 
       - name: Build
-        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o justgate-backend .
+        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o justgate-backend ./cmd/server
