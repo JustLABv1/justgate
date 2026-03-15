@@ -18,11 +18,11 @@ type platformAdminSummary struct {
 }
 
 type userAdminSummary struct {
-	ID             string `json:"id"`
-	Email          string `json:"email"`
-	Name           string `json:"name"`
-	Source         string `json:"source"`
-	CreatedAt      string `json:"createdAt"`
+	ID              string `json:"id"`
+	Email           string `json:"email"`
+	Name            string `json:"name"`
+	Source          string `json:"source"`
+	CreatedAt       string `json:"createdAt"`
 	IsPlatformAdmin bool   `json:"isPlatformAdmin"`
 }
 

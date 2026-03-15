@@ -1,7 +1,7 @@
 "use client";
 
-import type { GrantSummary } from "@/lib/contracts";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import type { GrantSummary } from "@/lib/contracts";
 import { Activity, ArrowUpRight, Clock, Repeat, Share2, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";

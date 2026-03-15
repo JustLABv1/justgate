@@ -1,5 +1,5 @@
 import { bustOIDCCache } from "@/lib/auth";
-import { hasAdminRequestAuthorization, getAdminRequestHeaders } from "@/lib/backend-server";
+import { getAdminRequestHeaders, hasAdminRequestAuthorization } from "@/lib/backend-server";
 import { NextResponse } from "next/server";
 
 /**
