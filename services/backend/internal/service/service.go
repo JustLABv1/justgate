@@ -158,6 +158,18 @@ type dataStore interface {
 	GetProvisioningGrantByHash(ctx context.Context, hash string) (provisioningGrantRecord, bool, error)
 	IncrementGrantUseCount(ctx context.Context, id string, maxUses int) (bool, error)
 	DeleteProvisioningGrant(ctx context.Context, id string) error
+	// Token analytics
+	GetTokenByID(ctx context.Context, tokenID string) (tokenRecord, bool, error)
+	ListTokenTrafficStats(ctx context.Context, tokenID string, from, to time.Time) ([]trafficStatRecord, error)
+	// Route traffic drilldown
+	ListRouteTrafficStats(ctx context.Context, routeSlug string, from, to time.Time, orgID string) ([]trafficStatRecord, error)
+	// Org IP allowlist
+	ListOrgIPRules(ctx context.Context, orgID string) ([]orgIPRuleRecord, error)
+	CreateOrgIPRule(ctx context.Context, rule orgIPRuleRecord) (orgIPRuleRecord, error)
+	DeleteOrgIPRule(ctx context.Context, ruleID string) error
+	// Grant audit trail
+	RecordGrantIssuance(ctx context.Context, record grantIssuanceRecord) error
+	ListGrantIssuances(ctx context.Context, grantID string) ([]grantIssuanceRecord, error)
 }
 
 type createOrgRequest struct {
@@ -757,6 +769,23 @@ type issuedAppTokenResponse struct {
 	Secret string          `json:"secret"`
 }
 
+type orgIPRuleRecord struct {
+	ID          string
+	OrgID       string
+	CIDR        string
+	Description string
+	CreatedAt   time.Time
+	CreatedBy   string
+}
+
+type grantIssuanceRecord struct {
+	ID        string
+	GrantID   string
+	TokenID   string
+	AgentName string
+	IssuedAt  time.Time
+}
+
 // oidcDiscoveryDoc is the subset of the OIDC discovery document we need.
 type oidcDiscoveryDoc struct {
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
@@ -930,6 +959,11 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/grants/", s.withAdminAuth(s.withOrgContext(s.handleGrantByID)))
 	mux.HandleFunc("/api/v1/admin/tokens/bulk", s.withAdminAuth(s.withOrgContext(s.handleBulkCreateTokens)))
 	mux.HandleFunc("/api/v1/provision", s.handleProvision)
+	// Route traffic drilldown
+	mux.HandleFunc("/api/v1/admin/traffic/route", s.withAdminAuth(s.withOptionalOrgContext(s.handleRouteTrafficStats)))
+	// Org IP allowlist
+	mux.HandleFunc("/api/v1/admin/org-ip-rules", s.withAdminAuth(s.withOrgContext(s.handleOrgIPRules)))
+	mux.HandleFunc("/api/v1/admin/org-ip-rules/", s.withAdminAuth(s.withOrgContext(s.handleOrgIPRuleByID)))
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		startedAt := time.Now()
@@ -1985,8 +2019,26 @@ func (s *Service) handleRouteByID(writer http.ResponseWriter, request *http.Requ
 }
 
 func (s *Service) handleTokenByID(writer http.ResponseWriter, request *http.Request) {
-	tokenID := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tokens/"), "/")
-	if tokenID == "" || strings.Contains(tokenID, "/") {
+	path := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tokens/"), "/")
+
+	// Sub-resource routing: /api/v1/admin/tokens/{id}/stats or /rotate
+	if idx := strings.Index(path, "/"); idx != -1 {
+		tokenID := path[:idx]
+		sub := path[idx+1:]
+		switch sub {
+		case "stats":
+			s.handleTokenStats(writer, request)
+		case "rotate":
+			s.handleRotateToken(writer, request)
+		default:
+			writeJSON(writer, http.StatusNotFound, map[string]string{"error": "not found"})
+		}
+		_ = tokenID
+		return
+	}
+
+	tokenID := path
+	if tokenID == "" {
 		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "token not found"})
 		return
 	}
@@ -2667,8 +2719,20 @@ func (s *Service) handleGrants(writer http.ResponseWriter, request *http.Request
 }
 
 func (s *Service) handleGrantByID(writer http.ResponseWriter, request *http.Request) {
-	grantID := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/grants/"), "/")
-	if grantID == "" || strings.Contains(grantID, "/") {
+	path := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/grants/"), "/")
+	// Sub-resource: /api/v1/admin/grants/{id}/issuances
+	if idx := strings.Index(path, "/"); idx != -1 {
+		grantID := path[:idx]
+		sub := path[idx+1:]
+		if sub == "issuances" && request.Method == http.MethodGet {
+			s.handleGrantIssuances(writer, request, grantID)
+		} else {
+			writeJSON(writer, http.StatusNotFound, map[string]string{"error": "not found"})
+		}
+		return
+	}
+	grantID := path
+	if grantID == "" {
 		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "grant not found"})
 		return
 	}
@@ -2685,6 +2749,215 @@ func (s *Service) handleGrantByID(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	s.recordAdminAction(request.Context(), "delete_grant", "provisioning_grant", grantID, "")
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleGrantIssuances(writer http.ResponseWriter, request *http.Request, grantID string) {
+	issuances, err := s.store.ListGrantIssuances(request.Context(), grantID)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load issuances"})
+		return
+	}
+	type issuanceSummary struct {
+		ID        string `json:"id"`
+		GrantID   string `json:"grantID"`
+		TokenID   string `json:"tokenID"`
+		AgentName string `json:"agentName"`
+		IssuedAt  string `json:"issuedAt"`
+	}
+	items := make([]issuanceSummary, 0, len(issuances))
+	for _, i := range issuances {
+		items = append(items, issuanceSummary{
+			ID:        i.ID,
+			GrantID:   i.GrantID,
+			TokenID:   i.TokenID,
+			AgentName: i.AgentName,
+			IssuedAt:  i.IssuedAt.Format(time.RFC3339),
+		})
+	}
+	writeJSON(writer, http.StatusOK, items)
+}
+
+// ── Token rotation ─────────────────────────────────────────────────────
+
+func (s *Service) handleRotateToken(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// Extract token ID from path: /api/v1/admin/tokens/{id}/rotate
+	path := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tokens/"), "/")
+	tokenID := strings.TrimSuffix(path, "/rotate")
+	tokenID = strings.TrimSuffix(tokenID, "/")
+	if tokenID == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "token ID required"})
+		return
+	}
+
+	existing, found, err := s.store.GetTokenByID(request.Context(), tokenID)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to look up token"})
+		return
+	}
+	if !found {
+		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "token not found"})
+		return
+	}
+
+	newName := existing.Name
+	newSecret, err := generateTokenSecret(newName)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to generate token secret"})
+		return
+	}
+
+	newPayload := createTokenRequest{
+		Name:           newName,
+		TenantID:       existing.TenantID,
+		RateLimitRPM:   existing.RateLimitRPM,
+		RateLimitBurst: existing.RateLimitBurst,
+	}
+
+	newToken, err := s.store.CreateToken(request.Context(), newPayload, existing.Scopes, existing.ExpiresAt, newSecret)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to create rotated token"})
+		return
+	}
+
+	// Revoke the old token.
+	if _, err := s.store.SetTokenActive(request.Context(), tokenID, false); err != nil {
+		s.logger.Warn("token rotation: failed to revoke old token", "old_token_id", tokenID, "error", err)
+	}
+
+	s.recordAdminAction(request.Context(), "rotate_token", "token", tokenID, "replaced by "+newToken.ID)
+
+	writeJSON(writer, http.StatusCreated, issuedTokenResponse{
+		Token: tokenSummary{
+			ID:             newToken.ID,
+			Name:           newToken.Name,
+			TenantID:       newToken.TenantID,
+			Scopes:         newToken.Scopes,
+			ExpiresAt:      newToken.ExpiresAt.Format(time.RFC3339),
+			LastUsedAt:     newToken.LastUsedAt.Format(time.RFC3339),
+			Preview:        newToken.Preview,
+			Active:         newToken.Active,
+			RateLimitRPM:   newToken.RateLimitRPM,
+			RateLimitBurst: newToken.RateLimitBurst,
+		},
+		Secret: newSecret,
+	})
+}
+
+// ── Org IP allowlist ───────────────────────────────────────────────────
+
+func (s *Service) handleOrgIPRules(writer http.ResponseWriter, request *http.Request) {
+	orgID := orgIDFromContext(request.Context())
+
+	switch request.Method {
+	case http.MethodGet:
+		rules, err := s.store.ListOrgIPRules(request.Context(), orgID)
+		if err != nil {
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load IP rules"})
+			return
+		}
+		type ipRuleSummary struct {
+			ID          string `json:"id"`
+			CIDR        string `json:"cidr"`
+			Description string `json:"description"`
+			CreatedAt   string `json:"createdAt"`
+			CreatedBy   string `json:"createdBy"`
+		}
+		items := make([]ipRuleSummary, 0, len(rules))
+		for _, r := range rules {
+			items = append(items, ipRuleSummary{
+				ID:          r.ID,
+				CIDR:        r.CIDR,
+				Description: r.Description,
+				CreatedAt:   r.CreatedAt.Format(time.RFC3339),
+				CreatedBy:   r.CreatedBy,
+			})
+		}
+		writeJSON(writer, http.StatusOK, items)
+
+	case http.MethodPost:
+		var payload struct {
+			CIDR        string `json:"cidr"`
+			Description string `json:"description"`
+		}
+		if err := decodeJSON(request, &payload); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		payload.CIDR = strings.TrimSpace(payload.CIDR)
+		if payload.CIDR == "" {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "cidr is required"})
+			return
+		}
+		// Normalise bare IPs to CIDR notation and validate.
+		cidr := payload.CIDR
+		if !strings.Contains(cidr, "/") {
+			if strings.Contains(cidr, ":") {
+				cidr += "/128"
+			} else {
+				cidr += "/32"
+			}
+		}
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "cidr is not a valid CIDR block"})
+			return
+		}
+
+		identity := adminIdentityFromContext(request.Context())
+		createdBy := ""
+		if identity != nil {
+			createdBy = identity.Subject
+		}
+		rule := orgIPRuleRecord{
+			ID:          newResourceID("iprule"),
+			OrgID:       orgID,
+			CIDR:        cidr,
+			Description: strings.TrimSpace(payload.Description),
+			CreatedAt:   time.Now().UTC(),
+			CreatedBy:   createdBy,
+		}
+		created, err := s.store.CreateOrgIPRule(request.Context(), rule)
+		if err != nil {
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to create IP rule"})
+			return
+		}
+		s.recordAdminAction(request.Context(), "create_ip_rule", "org_ip_rule", created.ID, cidr)
+		writeJSON(writer, http.StatusCreated, map[string]string{
+			"id":          created.ID,
+			"cidr":        created.CIDR,
+			"description": created.Description,
+			"createdAt":   created.CreatedAt.Format(time.RFC3339),
+		})
+
+	default:
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (s *Service) handleOrgIPRuleByID(writer http.ResponseWriter, request *http.Request) {
+	// Path: /api/v1/admin/org-ip-rules/{ruleID}
+	ruleID := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/org-ip-rules/"), "/")
+	if ruleID == "" || strings.Contains(ruleID, "/") {
+		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if request.Method != http.MethodDelete {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if err := s.store.DeleteOrgIPRule(request.Context(), ruleID); err != nil {
+		status := http.StatusInternalServerError
+		if err.Error() == "rule not found" {
+			status = http.StatusNotFound
+		}
+		writeJSON(writer, status, map[string]string{"error": err.Error()})
+		return
+	}
+	s.recordAdminAction(request.Context(), "delete_ip_rule", "org_ip_rule", ruleID, "")
 	writer.WriteHeader(http.StatusNoContent)
 }
 
@@ -2862,6 +3135,17 @@ func (s *Service) handleProvision(writer http.ResponseWriter, request *http.Requ
 		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to issue token"})
 		return
 	}
+
+	// Record issuance in the grant audit trail (async, non-blocking).
+	go func() {
+		_ = s.store.RecordGrantIssuance(context.Background(), grantIssuanceRecord{
+			ID:        newResourceID("gi"),
+			GrantID:   grant.ID,
+			TokenID:   token.ID,
+			AgentName: payload.AgentName,
+			IssuedAt:  time.Now().UTC(),
+		})
+	}()
 
 	writeJSON(writer, http.StatusCreated, issuedTokenResponse{
 		Token: tokenSummary{

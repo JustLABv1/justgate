@@ -1,10 +1,11 @@
 "use client";
 
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import { GrantIssuancesPanel } from "@/components/admin/grant-issuances-panel";
 import type { GrantSummary } from "@/lib/contracts";
-import { Activity, ArrowUpRight, Clock, Repeat, Share2, Trash2 } from "lucide-react";
+import { Activity, ArrowUpRight, Clock, History, Repeat, Share2, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 
 interface GrantsTableProps {
   grants: GrantSummary[];
@@ -53,6 +54,8 @@ function DeleteGrantButton({ grantID, disabled }: { grantID: string; disabled: b
 }
 
 export function GrantsTable({ grants, actionsDisabled = false }: GrantsTableProps) {
+  const [expandedID, setExpandedID] = useState<string | null>(null);
+
   if (grants.length === 0) {
     return (
       <div className="empty-state">
@@ -77,12 +80,15 @@ export function GrantsTable({ grants, actionsDisabled = false }: GrantsTableProp
         const expiry = expiryLabel(grant.expiresAt);
         const usedUp = grant.useCount >= grant.maxUses;
 
+        const isExpanded = expandedID === grant.id;
+
         return (
           <div
             key={grant.id}
-            className="group flex items-start justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-panel/50 animate-in fade-in duration-300 fill-mode-both"
+            className="animate-in fade-in duration-300 fill-mode-both"
             style={{ animationDelay: `${idx * 30}ms` }}
           >
+          <div className="group flex items-start justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-panel/50">
             <div className="min-w-0 flex-1 space-y-1.5">
               {/* Row 1: name, preview, status badges */}
               <div className="flex flex-wrap items-center gap-2">
@@ -127,8 +133,22 @@ export function GrantsTable({ grants, actionsDisabled = false }: GrantsTableProp
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setExpandedID(isExpanded ? null : grant.id)}
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-panel hover:text-foreground"
+                title="Show issuance history"
+              >
+                <History size={13} />
+              </button>
               <DeleteGrantButton grantID={grant.id} disabled={actionsDisabled} />
             </div>
+          </div>
+          {isExpanded && (
+            <div className="border-t border-border/60 bg-panel/40">
+              <GrantIssuancesPanel grantID={grant.id} />
+            </div>
+          )}
           </div>
         );
       })}

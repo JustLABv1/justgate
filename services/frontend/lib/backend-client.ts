@@ -12,13 +12,16 @@ import {
     type BulkTokenResponse,
     type CircuitBreakerStatus,
     type ExpiringToken,
+    type GrantIssuance,
     type GrantSummary,
     type HealthHistoryEntry,
     type IssuedGrant,
+    type IssuedToken,
     type MemberSummary,
     type OIDCConfig,
     type OIDCOrgMapping,
     type OrgAdminSummary,
+    type OrgIPRule,
     type OrgSummary,
     type PaginatedAdminAuditResponse,
     type PaginatedAuditResponse,
@@ -31,6 +34,7 @@ import {
     type TenantSummary,
     type TenantUpstream,
     type TokenSummary,
+    type TokenTrafficStat,
     type TopologySnapshot,
     type TrafficOverview,
     type TrafficStat,
@@ -268,8 +272,73 @@ export function getReplicas() {
 export function getSearchResults(query: string) {
   return fetchBackend<SearchResults>(
     `/api/v1/admin/search?q=${encodeURIComponent(query)}`,
-    { routes: [], tenants: [], tokens: [] },
+    { routes: [], tenants: [], tokens: [], grants: [], apps: [] },
   );
+}
+
+// ── Token Usage Analytics ────────────────────────────────────────
+
+export function getTokenTrafficStats(tokenID: string, hours = 24) {
+  return fetchBackend<TokenTrafficStat[]>(
+    `/api/v1/admin/tokens/${encodeURIComponent(tokenID)}/stats?hours=${hours}`,
+    [],
+  );
+}
+
+// ── Route Traffic Drilldown ──────────────────────────────────────
+
+export function getRouteTrafficStats(routeSlug: string, hours = 24) {
+  return fetchBackend<TrafficStat[]>(
+    `/api/v1/admin/traffic/route?routeSlug=${encodeURIComponent(routeSlug)}&hours=${hours}`,
+    [],
+  );
+}
+
+// ── Token Rotation ───────────────────────────────────────────────
+
+export async function rotateToken(tokenID: string): Promise<IssuedToken | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/tokens/${encodeURIComponent(tokenID)}/rotate`, {
+    method: "POST",
+    headers,
+    cache: "no-store",
+  });
+  return response.json() as Promise<IssuedToken | { error: string }>;
+}
+
+// ── Grant Issuances ──────────────────────────────────────────────
+
+export function getGrantIssuances(grantID: string) {
+  return fetchBackend<GrantIssuance[]>(
+    `/api/v1/admin/grants/${encodeURIComponent(grantID)}/issuances`,
+    [],
+  );
+}
+
+// ── Org IP Rules ─────────────────────────────────────────────────
+
+export function getOrgIPRules() {
+  return fetchBackend<OrgIPRule[]>("/api/v1/admin/org-ip-rules", []);
+}
+
+export async function createOrgIPRule(payload: { cidr: string; description: string }): Promise<OrgIPRule | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/org-ip-rules`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return response.json() as Promise<OrgIPRule | { error: string }>;
+}
+
+export async function deleteOrgIPRule(ruleID: string): Promise<void> {
+  const headers = await getAdminRequestHeaders();
+  await fetch(`${backendUrl}/api/v1/admin/org-ip-rules/${encodeURIComponent(ruleID)}`, {
+    method: "DELETE",
+    headers,
+    cache: "no-store",
+  });
 }
 
 // ── Protected Apps ───────────────────────────────────────────────

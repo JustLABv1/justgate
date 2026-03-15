@@ -280,3 +280,15 @@ a {
   stroke-dasharray: unset;
   opacity: 0.4;
 }
+
+.topology-flow-line--revoked {
+  stroke: color-mix(in oklab, var(--muted-foreground) 40%, var(--border));
+  stroke-width: 1.5;
+  stroke-dasharray: 4 6;
+  opacity: 0.5;
+}
+
+.topology-flow-line--glow-revoked {
+  stroke: transparent;
+  stroke-width: 0;
+}
