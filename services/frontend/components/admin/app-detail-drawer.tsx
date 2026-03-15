@@ -22,7 +22,7 @@ function formatDate(iso: string) {
   }
 }
 
-function TokensPanel({ app, onClose }: { app: ProtectedApp; onClose: () => void }) {
+function TokensPanel({ app, onClose: _onClose }: { app: ProtectedApp; onClose: () => void }) {
   const router = useRouter();
   const { addToast } = useToast();
   const [tokens, setTokens] = useState<AppToken[]>([]);

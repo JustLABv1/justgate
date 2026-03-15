@@ -4,7 +4,7 @@ import { AuditTable } from "@/components/admin/audit-table";
 import type { AuditEvent } from "@/lib/contracts";
 import { ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -67,12 +67,12 @@ export function AuditView({
     router.push(`?${buildParams({ [key]: value })}`);
   }
 
-  function refresh() {
+  const refresh = useCallback(() => {
     setIsRefreshing(true);
     router.refresh();
     setLastRefreshed(new Date());
     setTimeout(() => setIsRefreshing(false), 600);
-  }
+  }, [router]);
 
   function goToPage(p: number) {
     const params = new URLSearchParams(window.location.search);
@@ -85,7 +85,7 @@ export function AuditView({
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, []);
+  }, [refresh]);
 
   const hasFilters = statusFilter !== "all" || tenantFilter !== "" || routeFilter !== "";
 
@@ -101,7 +101,12 @@ export function AuditView({
     router.push(`?${params.toString()}`);
   }
 
-  const secondsAgo = Math.round((Date.now() - lastRefreshed.getTime()) / 1000);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const secondsAgo = Math.round((now - lastRefreshed.getTime()) / 1000);
   const refreshLabel = secondsAgo < 5 ? "Just now" : `${secondsAgo}s ago`;
 
   const pageStart = (page - 1) * pageSize + 1;

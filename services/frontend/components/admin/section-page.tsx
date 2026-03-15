@@ -38,7 +38,7 @@ function friendlyError(raw: string): { message: string; isOrgRequired: boolean }
 }
 
 export function SectionPage({
-  eyebrow,
+  eyebrow: _eyebrow,
   title,
   description,
   source,
