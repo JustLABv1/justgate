@@ -25,7 +25,7 @@ func main() {
 	databaseURL := os.Getenv("JUST_GATE_DATABASE_URL")
 
 	svc, err := service.New(service.Config{
-		Version:                   "1.1.9",
+		Version:                   "2.0.0-beta.1",
 		AdminJWTSecret:            adminJWTSecret,
 		DatabaseURL:               databaseURL,
 		TenantHeaderName:          tenantHeaderName,
