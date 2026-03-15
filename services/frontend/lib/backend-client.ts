@@ -6,6 +6,8 @@ import {
     fallbackTokens,
     type AdminOverview,
     type AdminSession,
+    type AppSession,
+    type AppToken,
     type AuditEvent,
     type CircuitBreakerStatus,
     type ExpiringToken,
@@ -18,6 +20,7 @@ import {
     type PaginatedAdminAuditResponse,
     type PaginatedAuditResponse,
     type PlatformAdminSummary,
+    type ProtectedApp,
     type QueryResult,
     type ReplicaInfo,
     type RouteSummary,
@@ -264,4 +267,18 @@ export function getSearchResults(query: string) {
     `/api/v1/admin/search?q=${encodeURIComponent(query)}`,
     { routes: [], tenants: [], tokens: [] },
   );
+}
+
+// ── Protected Apps ───────────────────────────────────────────────
+
+export function getProtectedApps() {
+  return fetchBackend<ProtectedApp[]>("/api/v1/admin/apps", []);
+}
+
+export function getAppTokens(appID: string) {
+  return fetchBackend<AppToken[]>(`/api/v1/admin/apps/${encodeURIComponent(appID)}/tokens`, []);
+}
+
+export function getAppSessions(appID: string) {
+  return fetchBackend<AppSession[]>(`/api/v1/admin/apps/${encodeURIComponent(appID)}/sessions`, []);
 }

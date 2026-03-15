@@ -326,3 +326,62 @@ export interface SearchResults {
   tokens: TokenSummary[];
 }
 
+// ── Protected Apps ───────────────────────────────────────────────
+
+export interface HeaderInjectionRule {
+  name: string;
+  value: string;
+}
+
+export interface ProtectedApp {
+  id: string;
+  name: string;
+  slug: string;
+  upstreamURL: string;
+  orgID: string;
+  authMode: "oidc" | "bearer" | "any" | "none";
+  injectHeaders: HeaderInjectionRule[];
+  stripHeaders: string[];
+  extraCAPEM: string;
+  rateLimitRPM: number;
+  rateLimitBurst: number;
+  rateLimitPer: "session" | "ip" | "token";
+  allowCIDRs: string;
+  denyCIDRs: string;
+  healthCheckPath: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface AppSession {
+  id: string;
+  appID: string;
+  userSub: string;
+  userEmail: string;
+  userName: string;
+  userGroups: string[];
+  ip: string;
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string;
+  revoked: boolean;
+}
+
+export interface AppToken {
+  id: string;
+  name: string;
+  appID: string;
+  preview: string;
+  active: boolean;
+  rateLimitRPM: number;
+  rateLimitBurst: number;
+  expiresAt: string;
+  lastUsedAt: string;
+  createdAt: string;
+}
+
+export interface IssuedAppToken {
+  token: AppToken;
+  secret: string;
+}
+
