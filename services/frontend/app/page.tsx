@@ -1,19 +1,21 @@
 import { ActivityFeed } from "@/components/admin/activity-feed";
 import { CollapsibleAnalytics } from "@/components/admin/collapsible-analytics";
+import { InstanceStatusPanel } from "@/components/admin/instance-status-panel";
 import { OnboardingModal } from "@/components/admin/onboarding-modal";
 import { QuickActions } from "@/components/admin/quick-actions";
 import { PageTransition } from "@/components/page-transition";
-import { getCircuitBreakers, getExpiringTokens, getTopology, getTrafficOverview, getTrafficStats } from "@/lib/backend-client";
+import { getCircuitBreakers, getExpiringTokens, getReplicas, getTopology, getTrafficOverview, getTrafficStats } from "@/lib/backend-client";
 import { Activity, AlertTriangle, ArrowRight, Clock, Globe, Lock, Server, TimerReset } from "lucide-react";
 import Link from "next/link";
 
 export default async function Home() {
-  const [topology, circuitBreakersResult, expiringTokensResult, statsResult, overviewResult] = await Promise.all([
+  const [topology, circuitBreakersResult, expiringTokensResult, statsResult, overviewResult, replicasResult] = await Promise.all([
     getTopology(),
     getCircuitBreakers(),
     getExpiringTokens(7),
     getTrafficStats(24),
     getTrafficOverview(),
+    getReplicas(),
   ]);
   const stats = {
     tenants: topology.data.stats.tenants,
@@ -234,6 +236,9 @@ export default async function Home() {
               </div>
             </div>
           )}
+
+          {/* Instance status */}
+          <InstanceStatusPanel initialReplicas={replicasResult.data} />
 
           {/* Expiring tokens */}
           {expiringTokensResult.data.length > 0 && (

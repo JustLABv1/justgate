@@ -105,7 +105,7 @@ export function DashboardCharts({ stats: initialStats, overview: initialOverview
   const xAxisTick = (props: { x: number; y: number; payload: { value: string }; index: number }) => {
     if (props.index % tickInterval !== 0) return null as unknown as React.ReactElement;
     return (
-      <text x={props.x} y={props.y + 10} textAnchor="middle" fontSize={11} fill="var(--color-muted-foreground)">
+      <text x={props.x} y={props.y + 10} textAnchor="middle" fontSize={11} fill="var(--muted-foreground)">
         {props.payload.value}
       </text>
     );
@@ -194,11 +194,11 @@ export function DashboardCharts({ stats: initialStats, overview: initialOverview
             )}
             <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
               <span className="flex items-center gap-1.5">
-                <span className="inline-block h-2 w-4 rounded-sm bg-[var(--color-accent)] opacity-70" />
+                <span className="inline-block h-2 w-4 rounded-sm bg-[var(--accent)] opacity-70" />
                 Requests
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-[var(--color-danger)]" />
+                <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-[var(--danger)]" />
                 Errors
               </span>
             </div>
@@ -214,25 +214,25 @@ export function DashboardCharts({ stats: initialStats, overview: initialOverview
           >
             <defs>
               <linearGradient id="reqGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="var(--color-accent)" stopOpacity={0.3} />
-                <stop offset="100%" stopColor="var(--color-accent)" stopOpacity={0} />
+                <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.3} />
+                <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis
               dataKey="time"
               tick={xAxisTick as unknown as React.ReactElement}
               interval={0}
             />
             <YAxis
-              tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
               allowDecimals={false}
               width={36}
             />
             <Tooltip
               contentStyle={{
-                backgroundColor: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--surface)",
+                border: "1px solid var(--border)",
                 borderRadius: 8,
                 fontSize: 12,
               }}
@@ -240,7 +240,7 @@ export function DashboardCharts({ stats: initialStats, overview: initialOverview
             <Area
               type="monotone"
               dataKey="requests"
-              stroke="var(--color-accent)"
+              stroke="var(--accent)"
               fill="url(#reqGrad)"
               strokeWidth={2}
               isAnimationActive={false}
@@ -248,7 +248,7 @@ export function DashboardCharts({ stats: initialStats, overview: initialOverview
             <Area
               type="monotone"
               dataKey="errors"
-              stroke="var(--color-danger)"
+              stroke="var(--danger)"
               fill="none"
               strokeWidth={1.5}
               strokeDasharray="4 2"
@@ -260,7 +260,7 @@ export function DashboardCharts({ stats: initialStats, overview: initialOverview
                 x1={zoomLeft}
                 x2={zoomRight}
                 strokeOpacity={0.3}
-                fill="var(--color-accent)"
+                fill="var(--accent)"
                 fillOpacity={0.15}
               />
             )}

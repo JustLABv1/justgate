@@ -2057,6 +2057,159 @@ func (store *sqlStore) DeleteProvisioningGrant(ctx context.Context, id string) e
 	return nil
 }
 
+// ── Token analytics ────────────────────────────────────────────────────
+
+func (store *sqlStore) GetTokenByID(ctx context.Context, tokenID string) (tokenRecord, bool, error) {
+	row := store.queryRowContext(ctx,
+		`SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens WHERE id = ? LIMIT 1`,
+		tokenID)
+	token, err := scanToken(row)
+	if err == sql.ErrNoRows {
+		return tokenRecord{}, false, nil
+	}
+	if err != nil {
+		return tokenRecord{}, false, err
+	}
+	return token, true, nil
+}
+
+func (store *sqlStore) ListTokenTrafficStats(ctx context.Context, tokenID string, from, to time.Time) ([]trafficStatRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id,
+		        SUM(request_count), SUM(error_count), ROUND(AVG(avg_latency_ms)),
+		        SUM(status_2xx), SUM(status_4xx), SUM(status_5xx)
+		 FROM traffic_stats
+		 WHERE token_id = ? AND bucket_start >= ? AND bucket_start <= ?
+		 GROUP BY bucket_start ORDER BY bucket_start ASC`,
+		tokenID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]trafficStatRecord, 0)
+	for rows.Next() {
+		var s trafficStatRecord
+		if err := rows.Scan(&s.ID, &s.BucketStart, &s.BucketMinutes, &s.RouteSlug, &s.TenantID, &s.TokenID, &s.OrgID,
+			&s.RequestCount, &s.ErrorCount, &s.AvgLatencyMs, &s.Status2xx, &s.Status4xx, &s.Status5xx); err != nil {
+			return nil, err
+		}
+		items = append(items, s)
+	}
+	return items, rows.Err()
+}
+
+// ── Route traffic drilldown ────────────────────────────────────────────
+
+func (store *sqlStore) ListRouteTrafficStats(ctx context.Context, routeSlug string, from, to time.Time, orgID string) ([]trafficStatRecord, error) {
+	var rows *sql.Rows
+	var err error
+	if orgID != "" {
+		rows, err = store.queryContext(ctx,
+			`SELECT id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id,
+			        request_count, error_count, avg_latency_ms, status_2xx, status_4xx, status_5xx
+			 FROM traffic_stats
+			 WHERE route_slug = ? AND org_id = ? AND bucket_start >= ? AND bucket_start <= ?
+			 ORDER BY bucket_start ASC`,
+			routeSlug, orgID, from, to)
+	} else {
+		rows, err = store.queryContext(ctx,
+			`SELECT id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id,
+			        request_count, error_count, avg_latency_ms, status_2xx, status_4xx, status_5xx
+			 FROM traffic_stats
+			 WHERE route_slug = ? AND bucket_start >= ? AND bucket_start <= ?
+			 ORDER BY bucket_start ASC`,
+			routeSlug, from, to)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]trafficStatRecord, 0)
+	for rows.Next() {
+		var s trafficStatRecord
+		if err := rows.Scan(&s.ID, &s.BucketStart, &s.BucketMinutes, &s.RouteSlug, &s.TenantID, &s.TokenID, &s.OrgID,
+			&s.RequestCount, &s.ErrorCount, &s.AvgLatencyMs, &s.Status2xx, &s.Status4xx, &s.Status5xx); err != nil {
+			return nil, err
+		}
+		items = append(items, s)
+	}
+	return items, rows.Err()
+}
+
+// ── Org IP allowlist ───────────────────────────────────────────────────
+
+func (store *sqlStore) ListOrgIPRules(ctx context.Context, orgID string) ([]orgIPRuleRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, org_id, cidr, description, created_at, created_by FROM org_ip_rules WHERE org_id = ? ORDER BY created_at ASC`,
+		orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]orgIPRuleRecord, 0)
+	for rows.Next() {
+		var r orgIPRuleRecord
+		if err := rows.Scan(&r.ID, &r.OrgID, &r.CIDR, &r.Description, &r.CreatedAt, &r.CreatedBy); err != nil {
+			return nil, err
+		}
+		items = append(items, r)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) CreateOrgIPRule(ctx context.Context, rule orgIPRuleRecord) (orgIPRuleRecord, error) {
+	_, err := store.execContext(ctx,
+		`INSERT INTO org_ip_rules (id, org_id, cidr, description, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
+		rule.ID, rule.OrgID, rule.CIDR, rule.Description, rule.CreatedAt, rule.CreatedBy)
+	if err != nil {
+		return orgIPRuleRecord{}, err
+	}
+	return rule, nil
+}
+
+func (store *sqlStore) DeleteOrgIPRule(ctx context.Context, ruleID string) error {
+	result, err := store.execContext(ctx, `DELETE FROM org_ip_rules WHERE id = ?`, ruleID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("rule not found")
+	}
+	return nil
+}
+
+// ── Grant audit trail ──────────────────────────────────────────────────
+
+func (store *sqlStore) RecordGrantIssuance(ctx context.Context, record grantIssuanceRecord) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO grant_issuances (id, grant_id, token_id, agent_name, issued_at) VALUES (?, ?, ?, ?, ?)`,
+		record.ID, record.GrantID, record.TokenID, record.AgentName, record.IssuedAt)
+	return err
+}
+
+func (store *sqlStore) ListGrantIssuances(ctx context.Context, grantID string) ([]grantIssuanceRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, grant_id, token_id, agent_name, issued_at FROM grant_issuances WHERE grant_id = ? ORDER BY issued_at DESC`,
+		grantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]grantIssuanceRecord, 0)
+	for rows.Next() {
+		var r grantIssuanceRecord
+		if err := rows.Scan(&r.ID, &r.GrantID, &r.TokenID, &r.AgentName, &r.IssuedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, r)
+	}
+	return items, rows.Err()
+}
+
 func scanGrant(scanner interface{ Scan(dest ...any) error }) (provisioningGrantRecord, error) {
 	var g provisioningGrantRecord
 	var scopesJSON string

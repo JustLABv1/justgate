@@ -325,6 +325,8 @@ export interface SearchResults {
   routes: RouteSummary[];
   tenants: TenantSummary[];
   tokens: TokenSummary[];
+  grants: GrantSummary[];
+  apps: ProtectedApp[];
 }
 
 // ── Protected Apps ───────────────────────────────────────────────
@@ -414,4 +416,37 @@ export interface BulkTokenResponse {
   tokens: IssuedToken[];
 }
 
+// ── Token Usage Analytics ────────────────────────────────────────
 
+export interface TokenTrafficStat {
+  bucket: string;
+  routeSlug: string;
+  tenantID: string;
+  tokenID: string;
+  requestCount: number;
+  errorCount: number;
+  avgLatencyMs: number;
+  status2xx: number;
+  status4xx: number;
+  status5xx: number;
+}
+
+// ── Grant Issuances ──────────────────────────────────────────────
+
+export interface GrantIssuance {
+  id: string;
+  grantID: string;
+  tokenID: string;
+  agentName: string;
+  issuedAt: string;
+}
+
+// ── Org IP Rules ─────────────────────────────────────────────────
+
+export interface OrgIPRule {
+  id: string;
+  cidr: string;
+  description: string;
+  createdAt: string;
+  createdBy: string;
+}

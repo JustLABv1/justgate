@@ -1,7 +1,7 @@
 "use client";
 
 import type { SearchResults } from "@/lib/contracts";
-import { Globe, KeyRound, Search, Users2, X } from "lucide-react";
+import { Globe, KeyRound, Layout, Search, Share2, Users2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -68,7 +68,9 @@ export function GlobalSearch() {
     results &&
     (Array.isArray(results.routes) && results.routes.length > 0 ||
       Array.isArray(results.tenants) && results.tenants.length > 0 ||
-      Array.isArray(results.tokens) && results.tokens.length > 0);
+      Array.isArray(results.tokens) && results.tokens.length > 0 ||
+      Array.isArray(results.grants) && results.grants.length > 0 ||
+      Array.isArray(results.apps) && results.apps.length > 0);
 
   return (
     <>
@@ -110,7 +112,7 @@ export function GlobalSearch() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search routes, tenants, tokens…"
+                placeholder="Search routes, tenants, tokens, grants, apps…"
                 className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
               {query && (
@@ -197,6 +199,46 @@ export function GlobalSearch() {
                           <KeyRound size={14} className="shrink-0 text-muted-foreground" />
                           <span className="font-medium text-foreground">{tk.name}</span>
                           <span className="text-xs text-muted-foreground">{tk.preview}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {results!.grants?.length > 0 && (
+                    <div>
+                      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                        Grants
+                      </div>
+                      {results!.grants.map((g) => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => navigate("/grants")}
+                          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-surface"
+                        >
+                          <Share2 size={14} className="shrink-0 text-muted-foreground" />
+                          <span className="font-medium text-foreground">{g.name}</span>
+                          <span className="text-xs text-muted-foreground">{g.preview}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {results!.apps?.length > 0 && (
+                    <div>
+                      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                        Apps
+                      </div>
+                      {results!.apps.map((app) => (
+                        <button
+                          key={app.id}
+                          type="button"
+                          onClick={() => navigate("/apps")}
+                          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-surface"
+                        >
+                          <Layout size={14} className="shrink-0 text-muted-foreground" />
+                          <span className="font-medium text-foreground">{app.name}</span>
+                          <span className="text-xs text-muted-foreground truncate">{app.slug}</span>
                         </button>
                       ))}
                     </div>

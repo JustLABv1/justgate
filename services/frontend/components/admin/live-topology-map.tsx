@@ -3,6 +3,7 @@
 import { CreateRouteForm } from "@/components/admin/create-route-form";
 import { CreateTenantForm } from "@/components/admin/create-tenant-form";
 import { CreateTokenForm } from "@/components/admin/create-token-form";
+import { TokenStatsPanel } from "@/components/admin/token-stats-panel";
 import { UpdateRouteForm } from "@/components/admin/update-route-form";
 import { UpdateTenantForm } from "@/components/admin/update-tenant-form";
 import type { QueryResult, TopologySnapshot } from "@/lib/contracts";
@@ -46,6 +47,7 @@ type GraphEdge = {
   hot: boolean;
   error: boolean;
   reachable?: boolean;
+  revoked?: boolean;
 };
 
 type CameraState = {
@@ -559,8 +561,9 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           from: `token:${token.id}`,
           to: `route:${route.id}`,
           kind: "access",
-          hot: hotTokenKeys.has(`token:${token.id}:${route.slug}`),
-          error: routeHasErrors,
+          hot: !token.active ? false : hotTokenKeys.has(`token:${token.id}:${route.slug}`),
+          error: !token.active ? false : routeHasErrors,
+          revoked: !token.active,
         });
       }
     }
@@ -1074,18 +1077,22 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                   const d = pathBetween(from, to);
                   const className = edge.kind === "draft"
                     ? "topology-flow-line topology-flow-line--draft"
+                    : edge.revoked
+                      ? "topology-flow-line topology-flow-line--revoked"
+                      : edge.error
+                        ? "topology-flow-line topology-flow-line--error"
+                        : edge.hot
+                          ? "topology-flow-line topology-flow-line--hot"
+                          : edge.reachable
+                            ? "topology-flow-line topology-flow-line--reachable"
+                            : "topology-flow-line";
+                  const glowClass = edge.revoked
+                    ? "topology-flow-line topology-flow-line--glow-revoked"
                     : edge.error
-                      ? "topology-flow-line topology-flow-line--error"
-                      : edge.hot
-                        ? "topology-flow-line topology-flow-line--hot"
-                        : edge.reachable
-                          ? "topology-flow-line topology-flow-line--reachable"
-                          : "topology-flow-line";
-                  const glowClass = edge.error
-                    ? "topology-flow-line topology-flow-line--glow-error"
-                    : edge.reachable
-                      ? "topology-flow-line topology-flow-line--glow-reachable"
-                      : "topology-flow-line topology-flow-line--glow";
+                      ? "topology-flow-line topology-flow-line--glow-error"
+                      : edge.reachable
+                        ? "topology-flow-line topology-flow-line--glow-reachable"
+                        : "topology-flow-line topology-flow-line--glow";
                   const packetColor = edge.error ? "var(--danger)" : (edge.kind === "binding" || edge.kind === "upstream") ? "var(--success)" : "var(--accent)";
 
                   return (
@@ -1216,6 +1223,14 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
               ) : null}
               {selectedTokenForInspector ? <Chip className="bg-background text-foreground ring-1 ring-border">Preview {selectedTokenForInspector.preview}</Chip> : null}
             </div>
+            {selectedTokenForInspector && (
+              <div className="mt-4 rounded-xl border border-border bg-background/60">
+                <div className="border-b border-border/60 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Usage (24h)
+                </div>
+                <TokenStatsPanel tokenID={selectedTokenForInspector.id} />
+              </div>
+            )}
           </Surface>
 
           <Surface className="surface-card-muted rounded-[22px] border-0 p-5 shadow-none">

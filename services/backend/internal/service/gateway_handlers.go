@@ -737,6 +737,64 @@ func (s *Service) handleAuditFiltered(writer http.ResponseWriter, request *http.
 	})
 }
 
+// ── Token usage analytics ──────────────────────────────────────────────
+
+func (s *Service) handleTokenStats(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	// Extract token ID from path: /api/v1/admin/tokens/{id}/stats
+	path := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tokens/"), "/")
+	tokenID := strings.TrimSuffix(path, "/stats")
+	tokenID = strings.TrimSuffix(tokenID, "/")
+	if tokenID == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "token ID required"})
+		return
+	}
+
+	hoursBack := parseQueryInt(request, "hours", 24)
+	to := time.Now().UTC()
+	from := to.Add(-time.Duration(hoursBack) * time.Hour)
+
+	stats, err := s.store.ListTokenTrafficStats(request.Context(), tokenID, from, to)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load token stats"})
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, stats)
+}
+
+// ── Route traffic drilldown ────────────────────────────────────────────
+
+func (s *Service) handleRouteTrafficStats(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	routeSlug := request.URL.Query().Get("routeSlug")
+	if routeSlug == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "routeSlug is required"})
+		return
+	}
+
+	hoursBack := parseQueryInt(request, "hours", 24)
+	orgID := orgIDFromContext(request.Context())
+	to := time.Now().UTC()
+	from := to.Add(-time.Duration(hoursBack) * time.Hour)
+
+	stats, err := s.store.ListRouteTrafficStats(request.Context(), routeSlug, from, to, orgID)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load route traffic stats"})
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, stats)
+}
+
 // ── Global search endpoint ─────────────────────────────────────────────
 
 func (s *Service) handleSearch(writer http.ResponseWriter, request *http.Request) {
@@ -758,12 +816,16 @@ func (s *Service) handleSearch(writer http.ResponseWriter, request *http.Request
 		Routes  []routeSummary  `json:"routes"`
 		Tenants []tenantSummary `json:"tenants"`
 		Tokens  []tokenSummary  `json:"tokens"`
+		Grants  []grantSummary  `json:"grants"`
+		Apps    []appSummary    `json:"apps"`
 	}
 
 	out := searchResults{
 		Routes:  []routeSummary{},
 		Tenants: []tenantSummary{},
 		Tokens:  []tokenSummary{},
+		Grants:  []grantSummary{},
+		Apps:    []appSummary{},
 	}
 
 	// Search routes
@@ -816,6 +878,41 @@ func (s *Service) handleSearch(writer http.ResponseWriter, request *http.Request
 				Active:         t.Active,
 				RateLimitRPM:   t.RateLimitRPM,
 				RateLimitBurst: t.RateLimitBurst,
+			})
+		}
+	}
+
+	// Search grants
+	grants, _ := s.store.ListProvisioningGrants(ctx)
+	for _, g := range grants {
+		if strings.Contains(strings.ToLower(g.Name), lower) || strings.Contains(strings.ToLower(g.Preview), lower) {
+			out.Grants = append(out.Grants, grantSummary{
+				ID:            g.ID,
+				Name:          g.Name,
+				TenantID:      g.TenantID,
+				Scopes:        g.Scopes,
+				TokenTTLHours: g.TokenTTLHours,
+				MaxUses:       g.MaxUses,
+				UseCount:      g.UseCount,
+				Active:        g.Active,
+				Preview:       g.Preview,
+				ExpiresAt:     g.ExpiresAt.Format(time.RFC3339),
+			})
+		}
+	}
+
+	// Search protected apps
+	orgID := orgIDFromContext(ctx)
+	apps, _ := s.store.ListProtectedApps(ctx, orgID)
+	for _, a := range apps {
+		if strings.Contains(strings.ToLower(a.Name), lower) || strings.Contains(strings.ToLower(a.Slug), lower) {
+			out.Apps = append(out.Apps, appSummary{
+				ID:          a.ID,
+				Name:        a.Name,
+				Slug:        a.Slug,
+				UpstreamURL: a.UpstreamURL,
+				AuthMode:    a.AuthMode,
+				CreatedAt:   a.CreatedAt.Format(time.RFC3339),
 			})
 		}
 	}
