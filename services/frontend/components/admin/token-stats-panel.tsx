@@ -55,7 +55,6 @@ export function TokenStatsPanel({ tokenID }: TokenStatsPanelProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
     fetch(`/api/admin/tokens/${encodeURIComponent(tokenID)}/stats?hours=24`, { cache: "no-store" })
       .then((r) => r.json())
       .then((data) => { if (Array.isArray(data)) setStats(data); })

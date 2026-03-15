@@ -20,8 +20,8 @@ function statusText(status: string) {
   return "text-danger";
 }
 
-function timeSince(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
+function timeSince(iso: string, now: number): string {
+  const ms = now - new Date(iso).getTime();
   const secs = Math.floor(ms / 1000);
   if (secs < 60) return `${secs}s ago`;
   const mins = Math.floor(secs / 60);
@@ -31,6 +31,7 @@ function timeSince(iso: string): string {
 
 export function InstanceStatusPanel({ initialReplicas }: InstanceStatusPanelProps) {
   const [replicas, setReplicas] = useState<ReplicaInfo[]>(initialReplicas);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     const refresh = () => {
@@ -43,10 +44,15 @@ export function InstanceStatusPanel({ initialReplicas }: InstanceStatusPanelProp
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   if (replicas.length === 0) return null;
 
   const onlineCount = replicas.filter((r) => {
-    const ms = Date.now() - new Date(r.lastHeartbeat).getTime();
+    const ms = now - new Date(r.lastHeartbeat).getTime();
     return ms < 120_000;
   }).length;
 
@@ -61,7 +67,7 @@ export function InstanceStatusPanel({ initialReplicas }: InstanceStatusPanelProp
       </div>
       <div className="mt-3 space-y-2.5">
         {replicas.map((replica) => {
-          const ms = Date.now() - new Date(replica.lastHeartbeat).getTime();
+          const ms = now - new Date(replica.lastHeartbeat).getTime();
           const status = ms < 30_000 ? "online" : ms < 120_000 ? "degraded" : "offline";
           return (
             <div key={replica.instanceID} className="flex items-center justify-between gap-2 text-xs">
@@ -77,7 +83,7 @@ export function InstanceStatusPanel({ initialReplicas }: InstanceStatusPanelProp
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-2 text-[10px]">
-                <span className="text-muted-foreground/60">{replica.lastHeartbeat ? timeSince(replica.lastHeartbeat) : "—"}</span>
+                <span className="text-muted-foreground/60">{replica.lastHeartbeat ? timeSince(replica.lastHeartbeat, now) : "—"}</span>
                 <span className={`font-medium ${statusText(status)}`}>{status}</span>
               </div>
             </div>

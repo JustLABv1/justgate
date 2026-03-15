@@ -13,7 +13,6 @@ export function GrantIssuancesPanel({ grantID }: GrantIssuancesPanelProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
     fetch(`/api/admin/grants/${encodeURIComponent(grantID)}/issuances`, { cache: "no-store" })
       .then((r) => r.json())
       .then((data) => { if (Array.isArray(data)) setIssuances(data); })

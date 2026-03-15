@@ -55,7 +55,6 @@ export function RouteTrafficPanel({ routeSlug }: RouteTrafficPanelProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
     fetch(`/api/admin/traffic/route?routeSlug=${encodeURIComponent(routeSlug)}&hours=24`, { cache: "no-store" })
       .then((r) => r.json())
       .then((data) => { if (Array.isArray(data)) setStats(data); })
@@ -109,7 +108,7 @@ export function RouteTrafficPanel({ routeSlug }: RouteTrafficPanelProps) {
             <Tooltip
               contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 11 }}
               labelStyle={{ color: "var(--muted-foreground)" }}
-              formatter={(value: number, name: string) => [value, name === "requests" ? "Requests" : "Errors"]}
+              formatter={(value, name) => [value, name === "requests" ? "Requests" : "Errors"]}
             />
             <Area type="monotone" dataKey="requests" stroke="var(--accent)" fill={`url(#rtFill-${routeSlug})`} strokeWidth={1.5} dot={false} />
             <Area type="monotone" dataKey="errors" stroke="var(--danger)" fill="none" strokeWidth={1} dot={false} />
