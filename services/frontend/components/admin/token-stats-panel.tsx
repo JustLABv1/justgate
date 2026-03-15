@@ -107,7 +107,7 @@ export function TokenStatsPanel({ tokenID }: TokenStatsPanelProps) {
             <Tooltip
               contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 11 }}
               labelStyle={{ color: "var(--muted-foreground)" }}
-              formatter={(value: number, name: string) => [value, name === "requests" ? "Requests" : "Errors"]}
+              formatter={(value, name) => [value, name === "requests" ? "Requests" : "Errors"]}
             />
             <Area type="monotone" dataKey="requests" stroke="var(--accent)" fill={`url(#tsFill-${tokenID})`} strokeWidth={1.5} dot={false} />
             <Area type="monotone" dataKey="errors" stroke="var(--danger)" fill="none" strokeWidth={1} dot={false} />
