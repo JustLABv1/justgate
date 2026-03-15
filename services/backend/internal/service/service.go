@@ -961,13 +961,36 @@ func (s *Service) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 			return
 		}
+		source := identity.Source
+		if source == "" {
+			source = "local"
+		}
 		_ = s.store.UpsertUser(request.Context(), userRecord{
 			ID:        identity.Subject,
 			Email:     identity.Email,
 			Name:      identity.Name,
-			Source:    "admin",
+			Source:    source,
 			CreatedAt: time.Now().UTC(),
 		})
+		// If a different user record with the same email already exists, merge
+		// platform admin status and org memberships into the current identity.
+		// This handles the common case where the same person first used local
+		// credentials and later signs in via OIDC (or vice-versa), ending up
+		// with two distinct IDs but the same email.
+		if identity.Email != "" {
+			if prior, ok, err := s.store.GetUserByEmail(request.Context(), identity.Email); err == nil && ok && prior.ID != identity.Subject {
+				// Inherit platform admin
+				if isAdmin, err := s.store.IsPlatformAdmin(request.Context(), prior.ID); err == nil && isAdmin {
+					_ = s.store.GrantPlatformAdmin(request.Context(), identity.Subject, "system:email-merge")
+				}
+				// Inherit org memberships
+				if priorOrgs, err := s.store.ListOrgs(request.Context(), prior.ID); err == nil {
+					for _, org := range priorOrgs {
+						_ = s.store.AddOrgMember(request.Context(), org.ID, identity.Subject, org.Role)
+					}
+				}
+			}
+		}
 		ip := clientAddress(request)
 		ua := request.Header.Get("User-Agent")
 		fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(identity.Subject+"|"+ip+"|"+ua)))

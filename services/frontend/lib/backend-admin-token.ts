@@ -19,6 +19,7 @@ export async function createBackendAdminToken(session: Session) {
     name: session.user?.name,
     roles: ["admin"],
     scope: "admin:control",
+    source: session.provider === "oidc" ? "oidc" : "local",
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(subject)

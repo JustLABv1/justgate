@@ -51,6 +51,15 @@ jupyter lab --NotebookApp.base_url=/app/<slug>/`,
     note: "Netdata honours X-Forwarded-Prefix out of the box (v1.37+).",
   },
   {
+    name: "Next.js",
+    config: `// next.config.ts
+const nextConfig = {
+  basePath: "/app/<slug>",
+};
+export default nextConfig;`,
+    note: "Set basePath to the exact path JustGate serves the app under. Next.js will prefix all asset and navigation URLs automatically. JustGate also injects a <base> tag into HTML responses as a fallback for apps that cannot be reconfigured.",
+  },
+  {
     name: "Generic (falls back to X-Forwarded-Prefix)",
     config: `# JustGate sends this header on every proxied request:
 X-Forwarded-Prefix: /app/<slug>
@@ -100,7 +109,10 @@ export function UpstreamConfigGuide() {
             <p className="text-sm text-muted-foreground leading-relaxed">
               JustGate automatically rewrites <strong>redirect responses</strong> (3xx) from the upstream to preserve
               the <code className="font-mono text-[11px] bg-surface px-1 rounded">/app/{"<slug>"}/</code> prefix.
-              However, <strong>HTML and JavaScript</strong> that embed absolute or root-relative URLs (like most SPA frameworks do for their asset bundles) must be configured at the upstream itself.
+              It also injects a <code className="font-mono text-[11px] bg-surface px-1 rounded">{`<base href="/app/<slug>/">`}</code> tag
+              into every HTML response, which fixes asset loading for apps that embed root-relative URLs without respecting
+              <code className="font-mono text-[11px] bg-surface px-1 rounded">X-Forwarded-Prefix</code>.
+              For full compatibility, configure the upstream app itself using the guides below.
             </p>
             <p className="text-sm text-muted-foreground leading-relaxed">
               JustGate passes these headers on every proxied request so upstreams can self-configure:

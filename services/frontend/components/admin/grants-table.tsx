@@ -1,6 +1,7 @@
 "use client";
 
 import type { GrantSummary } from "@/lib/contracts";
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { Activity, ArrowUpRight, Clock, Repeat, Share2, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
@@ -23,7 +24,6 @@ function DeleteGrantButton({ grantID, disabled }: { grantID: string; disabled: b
   const [isPending, startTransition] = useTransition();
 
   function handleDelete() {
-    if (!confirm("Revoke this provisioning grant? Agents that haven't provisioned yet will no longer be able to.")) return;
     startTransition(async () => {
       await fetch(`/api/admin/grants/${grantID}`, { method: "DELETE" });
       router.refresh();
@@ -31,15 +31,24 @@ function DeleteGrantButton({ grantID, disabled }: { grantID: string; disabled: b
   }
 
   return (
-    <button
-      className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-danger/10 hover:text-danger disabled:pointer-events-none disabled:opacity-30"
-      disabled={disabled || isPending}
-      onClick={handleDelete}
-      title="Revoke grant"
-      type="button"
-    >
-      <Trash2 size={13} />
-    </button>
+    <ConfirmDialog
+      trigger={(open) => (
+        <button
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-danger/10 hover:text-danger disabled:pointer-events-none disabled:opacity-30"
+          disabled={disabled || isPending}
+          onClick={open}
+          title="Revoke grant"
+          type="button"
+        >
+          <Trash2 size={13} />
+        </button>
+      )}
+      title="Revoke provisioning grant?"
+      description="Agents that haven't provisioned yet will no longer be able to use this grant. This cannot be undone."
+      confirmLabel="Revoke grant"
+      isPending={isPending}
+      onConfirm={handleDelete}
+    />
   );
 }
 

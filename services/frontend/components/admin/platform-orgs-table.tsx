@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import type { OrgAdminSummary } from "@/lib/contracts";
 import { Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -52,15 +53,23 @@ export function PlatformOrgsTable({ orgs }: PlatformOrgsTableProps) {
                 {new Date(o.createdAt).toLocaleDateString()}
               </td>
               <td className="px-4 py-3 text-right">
-                <button
-                  type="button"
-                  disabled={isPending}
-                  onClick={() => handleDelete(o.id)}
-                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
-                  title="Delete organisation"
-                >
-                  <Trash2 size={14} />
-                </button>
+                <ConfirmDialog
+                  trigger={(open) => (
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={open}
+                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
+                      title="Delete organisation"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                  title="Delete organisation?"
+                  description={`Permanently delete "${o.name}"? All members will lose access and the organisation cannot be recovered.`}
+                  confirmLabel="Delete organisation"
+                  onConfirm={() => handleDelete(o.id)}
+                />
               </td>
             </tr>
           ))}

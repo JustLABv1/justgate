@@ -18,11 +18,12 @@ type platformAdminSummary struct {
 }
 
 type userAdminSummary struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
-	Name      string `json:"name"`
-	Source    string `json:"source"`
-	CreatedAt string `json:"createdAt"`
+	ID             string `json:"id"`
+	Email          string `json:"email"`
+	Name           string `json:"name"`
+	Source         string `json:"source"`
+	CreatedAt      string `json:"createdAt"`
+	IsPlatformAdmin bool   `json:"isPlatformAdmin"`
 }
 
 type orgAdminSummary struct {
@@ -191,14 +192,21 @@ func (s *Service) handlePlatformUsers(writer http.ResponseWriter, request *http.
 		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to list users"})
 		return
 	}
+	// Build a set of platform admin IDs for O(1) lookup.
+	adminRecords, _ := s.store.ListPlatformAdmins(request.Context())
+	adminSet := make(map[string]bool, len(adminRecords))
+	for _, a := range adminRecords {
+		adminSet[a.UserID] = true
+	}
 	items := make([]userAdminSummary, 0, len(users))
 	for _, u := range users {
 		items = append(items, userAdminSummary{
-			ID:        u.ID,
-			Email:     u.Email,
-			Name:      u.Name,
-			Source:    u.Source,
-			CreatedAt: u.CreatedAt.Format(time.RFC3339),
+			ID:              u.ID,
+			Email:           u.Email,
+			Name:            u.Name,
+			Source:          u.Source,
+			CreatedAt:       u.CreatedAt.Format(time.RFC3339),
+			IsPlatformAdmin: adminSet[u.ID],
 		})
 	}
 	writeJSON(writer, http.StatusOK, items)

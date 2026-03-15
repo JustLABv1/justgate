@@ -1,12 +1,12 @@
 import { getAuthOptions } from "@/lib/auth";
 import NextAuth from "next-auth";
 
-const authOptionsPromise = getAuthOptions();
-
+// Auth options are resolved per-request so that OIDC config changes
+// (saved via the UI and TTL-cached in auth.ts) take effect without restart.
 async function handler(
   ...args: Parameters<ReturnType<typeof NextAuth>>
 ) {
-  const authOptions = await authOptionsPromise;
+  const authOptions = await getAuthOptions();
   return NextAuth(authOptions)(...args);
 }
 

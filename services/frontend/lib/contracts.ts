@@ -190,6 +190,7 @@ export interface UserAdminSummary {
   id: string;
   name: string;
   email: string;
+  source: string;
   createdAt: string;
   isPlatformAdmin: boolean;
 }

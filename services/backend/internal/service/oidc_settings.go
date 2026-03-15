@@ -119,6 +119,8 @@ func (s *Service) handleOIDCSettings(writer http.ResponseWriter, request *http.R
 
 		// Handle client secret: encrypt if new value provided, keep existing if empty
 		var encryptedSecret string
+		// Also capture the old issuer so we can evict its discovery cache if it changes.
+		var oldIssuer string
 		if payload.ClientSecret != "" {
 			encrypted, err := encryptSecret(payload.ClientSecret, s.config.AdminJWTSecret)
 			if err != nil {
@@ -131,6 +133,14 @@ func (s *Service) handleOIDCSettings(writer http.ResponseWriter, request *http.R
 			existing, ok, err := s.store.GetOIDCConfig(request.Context())
 			if err == nil && ok {
 				encryptedSecret = existing.ClientSecretEncrypted
+				oldIssuer = existing.Issuer
+			}
+		}
+		// If we didn't read the existing record yet (new secret provided), fetch the old issuer separately.
+		if oldIssuer == "" && payload.ClientSecret != "" {
+			existing, ok, err := s.store.GetOIDCConfig(request.Context())
+			if err == nil && ok {
+				oldIssuer = existing.Issuer
 			}
 		}
 
@@ -147,6 +157,16 @@ func (s *Service) handleOIDCSettings(writer http.ResponseWriter, request *http.R
 		}); err != nil {
 			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to save OIDC config"})
 			return
+		}
+
+		// Evict the cached OIDC discovery document for the old issuer so the next
+		// login attempt fetches fresh endpoints from the new provider.
+		if oldIssuer != "" && oldIssuer != payload.Issuer {
+			s.oidcDiscovery.Delete(oldIssuer)
+		}
+		// Always evict the current issuer's cache too — endpoints may have changed.
+		if payload.Issuer != "" {
+			s.oidcDiscovery.Delete(payload.Issuer)
 		}
 
 		writeJSON(writer, http.StatusOK, oidcConfigResponse{

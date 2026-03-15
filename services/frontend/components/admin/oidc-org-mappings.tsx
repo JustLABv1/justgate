@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import type { OIDCOrgMapping, OrgSummary } from "@/lib/contracts";
 import { Button, Form, Input, Label, TextField } from "@heroui/react";
 import { Plus, Trash2 } from "lucide-react";
@@ -132,15 +133,23 @@ export function OIDCOrgMappings({ initialMappings }: OIDCOrgMappingsProps) {
                   <span className="text-xs text-muted-foreground">→</span>
                   <span className="text-sm text-foreground truncate">{orgName(mapping.orgID)}</span>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 min-w-7 px-0 text-muted-foreground hover:text-danger"
-                  onPress={() => handleDelete(mapping.id)}
-                  aria-label="Remove mapping"
-                >
-                  <Trash2 size={13} />
-                </Button>
+                <ConfirmDialog
+                  trigger={(open) => (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 min-w-7 px-0 text-muted-foreground hover:text-danger"
+                      onPress={open}
+                      aria-label="Remove mapping"
+                    >
+                      <Trash2 size={13} />
+                    </Button>
+                  )}
+                  title="Remove mapping?"
+                  description={`Remove the mapping for group "${mapping.oidcGroup}"? Users with this group claim will no longer be auto-added to the organisation on login.`}
+                  confirmLabel="Remove mapping"
+                  onConfirm={() => handleDelete(mapping.id)}
+                />
               </div>
             ))}
           </div>

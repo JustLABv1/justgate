@@ -1,4 +1,5 @@
 import { OIDCOrgMappings } from "@/components/admin/oidc-org-mappings";
+import { OIDCProviderDocs } from "@/components/admin/oidc-provider-docs";
 import { OIDCSettingsForm } from "@/components/admin/oidc-settings-form";
 import { SectionPage } from "@/components/admin/section-page";
 import { auth } from "@/lib/auth";
@@ -26,6 +27,7 @@ export default async function SettingsPage() {
     >
       <div className="space-y-6">
         <OIDCSettingsForm initial={oidcResult.data} />
+        <OIDCProviderDocs />
         <OIDCOrgMappings initialMappings={mappingsResult.data} />
       </div>
     </SectionPage>

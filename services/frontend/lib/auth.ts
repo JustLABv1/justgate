@@ -105,23 +105,45 @@ async function resolveOIDCConfig(): Promise<ResolvedOIDCConfig | null> {
   };
 }
 
-// Cached resolved config — initialized once on first access
-let resolvedOIDCPromise: Promise<ResolvedOIDCConfig | null> | null = null;
-function getResolvedOIDC(): Promise<ResolvedOIDCConfig | null> {
-  if (!resolvedOIDCPromise) {
-    resolvedOIDCPromise = resolveOIDCConfig();
+// ── TTL-based OIDC config cache ────────────────────────────────────────
+// Refreshes every 60 seconds so changes saved via the UI take effect
+// without requiring a service restart.
+
+const OIDC_TTL_MS = 60_000;
+let oidcCacheValue: ResolvedOIDCConfig | null = null;
+let oidcCacheExpiry = 0;
+let oidcCachePending: Promise<ResolvedOIDCConfig | null> | null = null;
+
+async function getResolvedOIDC(): Promise<ResolvedOIDCConfig | null> {
+  const now = Date.now();
+  if (now < oidcCacheExpiry) return oidcCacheValue;
+
+  // Deduplicate concurrent refreshes
+  if (!oidcCachePending) {
+    oidcCachePending = resolveOIDCConfig().then((cfg) => {
+      oidcCacheValue = cfg;
+      oidcCacheExpiry = Date.now() + OIDC_TTL_MS;
+      oidcCachePending = null;
+      return cfg;
+    }).catch(() => {
+      // On error keep last known value and retry sooner (10s)
+      oidcCacheExpiry = Date.now() + 10_000;
+      oidcCachePending = null;
+      return oidcCacheValue;
+    });
   }
-  return resolvedOIDCPromise;
+  return oidcCachePending;
 }
 
-// Synchronous flag for quick checks (set after first resolve)
-let oidcEnabledCache: boolean | null = null;
+/** Immediately invalidate the OIDC config cache so the next request re-fetches. */
+export function bustOIDCCache() {
+  oidcCacheExpiry = 0;
+  oidcCachePending = null;
+}
 
 export async function isOIDCEnabled(): Promise<boolean> {
-  if (oidcEnabledCache !== null) return oidcEnabledCache;
   const cfg = await getResolvedOIDC();
-  oidcEnabledCache = cfg !== null;
-  return oidcEnabledCache;
+  return cfg !== null;
 }
 
 export async function getOIDCDisplayName(): Promise<string> {
@@ -139,14 +161,11 @@ export function isLocalRegistrationEnabled() {
 
 // ── Build auth options ─────────────────────────────────────────────────
 
-let authOptionsPromise: Promise<NextAuthOptions> | null = null;
-
 async function buildAuthOptions(): Promise<NextAuthOptions> {
   const providers: NonNullable<NextAuthOptions["providers"]> = [];
 
   const oidc = await getResolvedOIDC();
   if (oidc) {
-    oidcEnabledCache = true;
     providers.push({
       id: "oidc",
       name: oidc.displayName || "Single Sign-On",
@@ -175,8 +194,6 @@ async function buildAuthOptions(): Promise<NextAuthOptions> {
         };
       },
     } as NextAuthOptions["providers"][number]);
-  } else {
-    oidcEnabledCache = false;
   }
 
   if (isLocalAccountsEnabled()) {
@@ -271,17 +288,16 @@ async function buildAuthOptions(): Promise<NextAuthOptions> {
         }
         session.activeOrgId = (token.activeOrgId as string | undefined) ?? undefined;
         session.isPlatformAdmin = (token.isPlatformAdmin as boolean | undefined) ?? false;
+        session.provider = (token.provider as string | undefined) ?? undefined;
         return session;
       },
     },
   };
 }
 
+/** Build fresh auth options on every call. OIDC resolution is TTL-cached internally. */
 export function getAuthOptions(): Promise<NextAuthOptions> {
-  if (!authOptionsPromise) {
-    authOptionsPromise = buildAuthOptions();
-  }
-  return authOptionsPromise;
+  return buildAuthOptions();
 }
 
 export async function auth() {
