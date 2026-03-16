@@ -1,6 +1,7 @@
 "use client";
 
 import type { TokenSummary } from "@/lib/contracts";
+import { useState } from "react";
 
 interface TokenLifecycleGanttProps {
   tokens: TokenSummary[];
@@ -14,7 +15,7 @@ function pct(value: number, min: number, max: number) {
 const NEVER_USED = "0001-01-01T00:00:00Z";
 
 export function TokenLifecycleGantt({ tokens }: TokenLifecycleGanttProps) {
-  const now = Date.now();
+  const [now] = useState(Date.now);
 
   const validTokens = tokens.filter((t) => t.createdAt && !t.createdAt.startsWith("0001"));
   if (validTokens.length === 0) return null;

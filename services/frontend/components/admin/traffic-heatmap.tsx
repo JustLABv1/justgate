@@ -15,7 +15,6 @@ export function TrafficHeatmap({ days = 7 }: TrafficHeatmapProps) {
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    setLoading(true);
     fetch(`/api/admin/traffic/heatmap?days=${days}`)
       .then((r) => r.json())
       .then((data: TrafficHeatmapCell[]) => {

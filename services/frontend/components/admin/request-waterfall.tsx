@@ -6,10 +6,6 @@ interface RequestWaterfallProps {
   event: AuditEvent;
 }
 
-const STAGES = [
-  { key: "auth", label: "Auth & validate", color: "var(--accent)" },
-  { key: "proxy", label: "Upstream call", color: "var(--success)" },
-] as const;
 
 export function RequestWaterfall({ event }: RequestWaterfallProps) {
   const total = event.latencyMs;
