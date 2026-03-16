@@ -14,7 +14,7 @@ interface OrgIPRulesTableProps {
 
 export function OrgIPRulesTable({ rules }: OrgIPRulesTableProps) {
   const router = useRouter();
-  const { toast } = useToast();
+  const { addToast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [cidr, setCidr] = useState("");
   const [description, setDescription] = useState("");
@@ -42,7 +42,7 @@ export function OrgIPRulesTable({ rules }: OrgIPRulesTableProps) {
       }
       setCidr("");
       setDescription("");
-      toast({ title: "IP rule added", variant: "success" });
+      addToast("IP rule added", undefined, "success");
       startTransition(() => router.refresh());
     } catch {
       setAddError("Network error. Please try again.");
@@ -56,10 +56,10 @@ export function OrgIPRulesTable({ rules }: OrgIPRulesTableProps) {
       method: "DELETE",
     });
     if (res.ok || res.status === 204) {
-      toast({ title: "IP rule removed", variant: "success" });
+      addToast("IP rule removed", undefined, "success");
       startTransition(() => router.refresh());
     } else {
-      toast({ title: "Failed to remove rule", variant: "error" });
+      addToast("Failed to remove rule", undefined, "error");
     }
   }
 
