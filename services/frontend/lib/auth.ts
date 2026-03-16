@@ -108,37 +108,51 @@ async function resolveOIDCConfig(): Promise<ResolvedOIDCConfig | null> {
 // ── TTL-based OIDC config cache ────────────────────────────────────────
 // Refreshes every 60 seconds so changes saved via the UI take effect
 // without requiring a service restart.
+//
+// State is kept on globalThis so that all bundles within the same Node.js
+// process (Server Components, Route Handlers, etc.) share the same cache.
+// Module-level variables are not reliably shared across Next.js bundles.
 
 const OIDC_TTL_MS = 60_000;
-let oidcCacheValue: ResolvedOIDCConfig | null = null;
-let oidcCacheExpiry = 0;
-let oidcCachePending: Promise<ResolvedOIDCConfig | null> | null = null;
+
+type OIDCGlobalCache = {
+  oidcCacheValue: ResolvedOIDCConfig | null;
+  oidcCacheExpiry: number;
+  oidcCachePending: Promise<ResolvedOIDCConfig | null> | null;
+};
+
+const g = globalThis as typeof globalThis & OIDCGlobalCache;
+if (g.oidcCacheExpiry === undefined) {
+  g.oidcCacheValue = null;
+  g.oidcCacheExpiry = 0;
+  g.oidcCachePending = null;
+}
 
 async function getResolvedOIDC(): Promise<ResolvedOIDCConfig | null> {
   const now = Date.now();
-  if (now < oidcCacheExpiry) return oidcCacheValue;
+  if (now < g.oidcCacheExpiry) return g.oidcCacheValue;
 
   // Deduplicate concurrent refreshes
-  if (!oidcCachePending) {
-    oidcCachePending = resolveOIDCConfig().then((cfg) => {
-      oidcCacheValue = cfg;
-      oidcCacheExpiry = Date.now() + OIDC_TTL_MS;
-      oidcCachePending = null;
+  if (!g.oidcCachePending) {
+    g.oidcCachePending = resolveOIDCConfig().then((cfg) => {
+      g.oidcCacheValue = cfg;
+      g.oidcCacheExpiry = Date.now() + OIDC_TTL_MS;
+      g.oidcCachePending = null;
       return cfg;
     }).catch(() => {
       // On error keep last known value and retry sooner (10s)
-      oidcCacheExpiry = Date.now() + 10_000;
-      oidcCachePending = null;
-      return oidcCacheValue;
+      g.oidcCacheExpiry = Date.now() + 10_000;
+      g.oidcCachePending = null;
+      return g.oidcCacheValue;
     });
   }
-  return oidcCachePending;
+  return g.oidcCachePending;
 }
 
 /** Immediately invalidate the OIDC config cache so the next request re-fetches. */
 export function bustOIDCCache() {
-  oidcCacheExpiry = 0;
-  oidcCachePending = null;
+  g.oidcCacheExpiry = 0;
+  g.oidcCachePending = null;
 }
 
 export async function isOIDCEnabled(): Promise<boolean> {

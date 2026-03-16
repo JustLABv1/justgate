@@ -2,6 +2,8 @@ import { SignInPanel } from "@/components/auth/signin-panel";
 import { getOIDCDisplayName, isLocalAccountsEnabled, isLocalRegistrationEnabled, isOIDCEnabled } from "@/lib/auth";
 import { ShieldCheck } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+
 export default async function SignInPage({
   searchParams,
 }: {

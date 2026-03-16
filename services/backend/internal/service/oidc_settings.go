@@ -115,6 +115,14 @@ func (s *Service) handleOIDCSettings(writer http.ResponseWriter, request *http.R
 				writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "issuer must be a valid URL"})
 				return
 			}
+			// Require a client secret when enabling for the first time (no existing record has one).
+			if payload.ClientSecret == "" {
+				existing, ok, err := s.store.GetOIDCConfig(request.Context())
+				if err != nil || !ok || existing.ClientSecretEncrypted == "" {
+					writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "clientSecret is required when enabling OIDC"})
+					return
+				}
+			}
 		}
 
 		// Handle client secret: encrypt if new value provided, keep existing if empty
