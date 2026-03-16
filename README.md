@@ -274,6 +274,8 @@ docker compose up -d
 | `JUST_GATE_TENANT_HEADER` | — | `X-Scope-OrgID` | Header name injected into upstream requests to carry the tenant ID |
 | `JUST_GATE_REDIS_URL` | — | — | Redis connection URL (e.g. `redis://localhost:6379`). When set, rate limiting uses Redis instead of in-memory state. Required for multi-replica deployments. |
 | `JUSTGATE_INITIAL_ADMIN_EMAIL` | — | — | Email of the first platform admin. After this user signs in, they are automatically granted platform admin status (idempotent, retries for 10 min) |
+| `INSTANCE_ID` | — | *(hostname)* | Stable identifier for this backend instance, shown in Overview → Instances. Defaults to the machine hostname. In Kubernetes the Helm chart injects the pod name automatically via the Downward API. Set explicitly when running multiple instances on the same host. |
+| `REGION` | — | — | Optional region / availability-zone label displayed alongside the instance in the UI (e.g. `us-east-1`, `eu-west-1`). |
 | `PORT` | — | `9090` | Backend HTTP listen port |
 
 ### Frontend Environment
@@ -347,6 +349,8 @@ helm install justgate deploy/helm/justgate \
 | `backend.tenantHeaderName` | `X-Scope-OrgID` | Upstream tenant identity header |
 | `backend.initialAdminEmail` | — | Email of the first platform admin (see [Platform Admin](#platform-admin)) |
 | `backend.redisUrl` | — | Redis URL for distributed rate limiting (multi-replica only) |
+| `backend.instanceId` | *(pod name)* | Override the instance ID shown in Overview → Instances. Defaults to the pod name via the Downward API — leave empty in most cases. |
+| `backend.region` | — | Optional region / AZ label shown in the Instances panel (e.g. `us-east-1`) |
 | `ingress.enabled` | `false` | Enable Kubernetes Ingress |
 | `persistence.size` | `1Gi` | SQLite PVC size (PostgreSQL disabled only) |
 

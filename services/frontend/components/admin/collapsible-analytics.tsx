@@ -11,7 +11,7 @@ interface CollapsibleAnalyticsProps {
 }
 
 export function CollapsibleAnalytics({ stats, overview }: CollapsibleAnalyticsProps) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
 
   return (
     <div className="rounded-lg border border-border bg-surface">

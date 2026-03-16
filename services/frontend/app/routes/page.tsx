@@ -2,6 +2,7 @@ import { CreateRouteForm } from "@/components/admin/create-route-form";
 import { RouteTester } from "@/components/admin/route-tester";
 import { RoutesTable } from "@/components/admin/routes-table";
 import { SectionPage } from "@/components/admin/section-page";
+import { TrafficHeatmap } from "@/components/admin/traffic-heatmap";
 import { getRoutes, getTenants, getTokens } from "@/lib/backend-client";
 import { getPublicBaseUrl } from "@/lib/backend-server";
 import Link from "next/link";
@@ -34,6 +35,15 @@ export default async function RoutesPage() {
         {result.source !== "backend" && (
           <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning">
             Read-only mode — write operations are temporarily restricted.
+          </div>
+        )}
+
+        {result.data.length > 0 && (
+          <div className="rounded-lg border border-border bg-surface p-4">
+            <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Traffic heatmap — requests by route &amp; hour
+            </div>
+            <TrafficHeatmap days={7} />
           </div>
         )}
 

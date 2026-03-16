@@ -40,7 +40,9 @@ export function InstanceStatusPanel({ initialReplicas }: InstanceStatusPanelProp
         .then((data) => { if (Array.isArray(data)) setReplicas(data); })
         .catch(() => {});
     };
-    const id = setInterval(refresh, 30_000);
+    // Poll at the same cadence as the backend heartbeat (15 s) so the
+    // server-computed status stays current and never lags behind.
+    const id = setInterval(refresh, 15_000);
     return () => clearInterval(id);
   }, []);
 
@@ -53,7 +55,7 @@ export function InstanceStatusPanel({ initialReplicas }: InstanceStatusPanelProp
 
   const onlineCount = replicas.filter((r) => {
     const ms = now - new Date(r.lastHeartbeat).getTime();
-    return ms < 120_000;
+    return ms < 3 * 60_000;
   }).length;
 
   return (
@@ -67,8 +69,13 @@ export function InstanceStatusPanel({ initialReplicas }: InstanceStatusPanelProp
       </div>
       <div className="mt-3 space-y-2.5">
         {replicas.map((replica) => {
+          // Compute status client-side from the heartbeat timestamp so the
+          // indicator keeps advancing even when the backend is unreachable and
+          // fetches are silently failing.
+          // Threshold is 45s (> heartbeat 15s + poll 15s + buffer) so a healthy
+          // instance never flickers to "degraded" between polls.
           const ms = now - new Date(replica.lastHeartbeat).getTime();
-          const status = ms < 30_000 ? "online" : ms < 120_000 ? "degraded" : "offline";
+          const status = ms < 45_000 ? "online" : ms < 3 * 60_000 ? "degraded" : "offline";
           return (
             <div key={replica.instanceID} className="flex items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-1.5 min-w-0">

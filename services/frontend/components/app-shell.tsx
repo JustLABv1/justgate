@@ -49,7 +49,7 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
               {mobileNavOpen ? <X size={16} /> : <Menu size={16} />}
             </Button>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/justgate_logo.png" alt="JustGate" width={24} height={24} className="rounded-sm" />
+            <img src="/justgate_logo.png" alt="JustGate" width={24} height={24} className="rounded-sm brightness-0 dark:brightness-100" />
             <span className="text-sm font-semibold tracking-tight text-foreground">JustGate</span>
           </div>
 

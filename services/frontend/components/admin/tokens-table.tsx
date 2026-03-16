@@ -1,6 +1,7 @@
 "use client";
 
 import { DeleteTokenButton } from "@/components/admin/delete-token-button";
+import { RateLimitGauge } from "@/components/admin/rate-limit-gauge";
 import { RotateTokenButton } from "@/components/admin/rotate-token-button";
 import { RevokeTokenButton } from "@/components/admin/revoke-token-button";
 import { TokenStatsPanel } from "@/components/admin/token-stats-panel";
@@ -137,6 +138,15 @@ export function TokensTable({ tokens, actionsDisabled = false }: TokensTableProp
           </div>
           {isExpanded && (
             <div className="border-t border-border/60 bg-panel/40">
+              {token.rateLimitRPM > 0 && (
+                <div className="flex items-center gap-4 border-b border-border/40 px-4 py-3">
+                  <RateLimitGauge rpm={token.rateLimitRPM} burst={token.rateLimitBurst} label="Token limit" />
+                  <div className="space-y-0.5 text-[11px] text-muted-foreground">
+                    <div><span className="text-foreground font-medium">{token.rateLimitRPM}</span> req / min</div>
+                    <div><span className="text-foreground font-medium">{token.rateLimitBurst}</span> burst</div>
+                  </div>
+                </div>
+              )}
               <TokenStatsPanel tokenID={token.id} />
             </div>
           )}

@@ -1,11 +1,8 @@
 import { CreateTenantForm } from "@/components/admin/create-tenant-form";
-import { DeleteTenantButton } from "@/components/admin/delete-tenant-button";
-import { HealthHistory } from "@/components/admin/health-history";
 import { SectionPage } from "@/components/admin/section-page";
-import { TenantUpstreams } from "@/components/admin/tenant-upstreams";
-import { UpdateTenantForm } from "@/components/admin/update-tenant-form";
+import { TenantCard } from "@/components/admin/tenant-card";
 import { getTenants } from "@/lib/backend-client";
-import { ArrowRight, Building2, Shield } from "lucide-react";
+import { ArrowRight, Building2 } from "lucide-react";
 import Link from "next/link";
 
 export default async function TenantsPage() {
@@ -39,46 +36,12 @@ export default async function TenantsPage() {
         ) : (
           <div className="rounded-lg border border-border bg-surface divide-y divide-border">
             {result.data.map((tenant, idx) => (
-              <div
+              <TenantCard
                 key={tenant.id}
-                className="group flex items-start justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-panel/50 animate-in fade-in duration-300 fill-mode-both"
-                style={{ animationDelay: `${idx * 30}ms` }}
-              >
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  <div className="font-mono text-sm font-semibold tracking-tight text-foreground uppercase">{tenant.tenantID}</div>
-                  <div className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground truncate">
-                    <span
-                      className="inline-block h-2 w-2 shrink-0 rounded-full"
-                      style={{
-                        background: tenant.upstreamStatus === "up"
-                          ? "var(--success)"
-                          : tenant.upstreamStatus === "down"
-                            ? "var(--destructive)"
-                            : "var(--muted)",
-                      }}
-                      title={tenant.upstreamStatus === "up"
-                        ? `Up — ${tenant.upstreamLatencyMs ?? 0}ms`
-                        : tenant.upstreamStatus === "down"
-                          ? `Down — ${tenant.upstreamError || "unreachable"}`
-                          : "No health check"
-                      }
-                    />
-                    {tenant.upstreamURL}
-                  </div>
-                  <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <Shield size={10} className="text-muted-foreground/50" />
-                      {tenant.headerName}
-                    </span>
-                  </div>
-                  <TenantUpstreams tenantInternalID={tenant.id} />
-                  <HealthHistory tenantID={tenant.tenantID} />
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5 pt-0.5 opacity-60 transition-opacity group-hover:opacity-100">
-                  <UpdateTenantForm key={`${tenant.id}:${tenant.tenantID}:${tenant.upstreamURL}:${tenant.headerName}:${tenant.name}`} disabled={result.source !== "backend"} tenant={tenant} />
-                  <DeleteTenantButton disabled={result.source !== "backend"} id={tenant.id} />
-                </div>
-              </div>
+                tenant={tenant}
+                disabled={result.source !== "backend"}
+                animationDelay={idx * 30}
+              />
             ))}
           </div>
         )}

@@ -43,6 +43,14 @@ backend:
   # After this user signs in for the first time, they are automatically granted
   # platform admin privileges (idempotent — safe to leave set permanently).
   initialAdminEmail: ""
+  # Stable identifier for this backend instance, used in the Overview → Instances panel.
+  # Leave empty (default) to automatically use the pod name via the Downward API —
+  # this is unique per replica and changes only when the pod is replaced.
+  # Set to a custom string if you need a human-friendly name, e.g. "gateway-prod-1".
+  instanceId: ""
+  # Optional region / availability-zone label shown alongside the instance in the UI.
+  # Example: "us-east-1", "eu-west-1", "on-prem-dc1"
+  region: ""
 
 # ── Frontend configuration ─────────────────────────────────────────────────────
 frontend:

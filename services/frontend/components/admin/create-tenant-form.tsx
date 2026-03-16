@@ -4,7 +4,7 @@ import { AnimatedStep, type StepDef, StepList } from "@/components/admin/modal-s
 import { useToast } from "@/components/toast-provider";
 import type { TenantSummary } from "@/lib/contracts";
 import { Button, Chip, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
-import { ArrowLeft, ArrowRight, Plus } from "lucide-react";
+import { ArrowLeft, ArrowRight, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
@@ -32,6 +32,7 @@ function toFormState() {
 const STEPS: StepDef[] = [
   { id: "identity", label: "Identity" },
   { id: "upstream", label: "Upstream" },
+  { id: "loadbalancing", label: "Load balancing" },
 ];
 
 export function CreateTenantForm({
@@ -50,6 +51,7 @@ export function CreateTenantForm({
   const [currentStep, setCurrentStep] = useState(0);
   const [direction, setDirection] = useState(1);
   const [internalOpen, setInternalOpen] = useState(false);
+  const [additionalUpstreams, setAdditionalUpstreams] = useState<Array<{ url: string; weight: string }>>([]);
 
   const isControlled = controlledIsOpen !== undefined;
   const isOpen = isControlled ? controlledIsOpen : internalOpen;
@@ -60,6 +62,7 @@ export function CreateTenantForm({
       setError(undefined);
       setCurrentStep(0);
       setDirection(1);
+      setAdditionalUpstreams([]);
     }
     if (!isControlled) setInternalOpen(open);
     controlledOnOpenChange?.(open);
@@ -102,6 +105,16 @@ export function CreateTenantForm({
       }
 
       const tenant = result as TenantSummary;
+
+      const validUpstreams = additionalUpstreams.filter((u) => u.url.trim());
+      for (const u of validUpstreams) {
+        await fetch(`/api/admin/tenants/${encodeURIComponent(tenant.id)}/upstreams`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ upstreamURL: u.url.trim(), weight: Number(u.weight) || 1 }),
+        });
+      }
+
       addToast("Tenant created", tenant.name, "success");
       onCreated?.(tenant);
       handleOpenChange(false);
@@ -175,7 +188,7 @@ export function CreateTenantForm({
                       </Button>
                     </div>
                   </div>
-                ) : (
+                ) : currentStep === 1 ? (
                   <div className="space-y-5">
                     <div className="enterprise-panel grid gap-4 p-4">
                       <TextField className="grid gap-2">
@@ -187,7 +200,7 @@ export function CreateTenantForm({
                           value={formState.upstreamURL}
                           onChange={(e) => setFormState((s) => ({ ...s, upstreamURL: e.target.value }))}
                         />
-                        <div className="enterprise-note">Fallback origin. Load-balancing upstreams added later take precedence.</div>
+                        <div className="enterprise-note">Used for direct routing when no load-balancing upstreams are configured. Bypassed completely once you add any in the next step.</div>
                       </TextField>
                       <Select
                         className="w-full"
@@ -241,6 +254,86 @@ export function CreateTenantForm({
                         </TextField>
                       </div>
                     </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <Button variant="ghost" onPress={goBack}>
+                        <ArrowLeft size={15} />
+                        Back
+                      </Button>
+                      <Button
+                        className="bg-foreground text-background"
+                        isDisabled={!formState.upstreamURL.trim() || !formState.headerName.trim()}
+                        onPress={goNext}
+                      >
+                        Continue
+                        <ArrowRight size={15} />
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    <div className="enterprise-panel p-4">
+                      <p className="mb-3 text-sm text-muted-foreground">
+                        Optionally configure weighted load-balancing upstreams. Once any upstream is added here, the default URL from the previous step is <strong className="text-foreground font-medium">completely bypassed</strong> — all traffic routes through this pool instead.
+                      </p>
+                      {additionalUpstreams.length > 0 ? (
+                        <div className="mb-3 space-y-2">
+                          {additionalUpstreams.map((u, i) => (
+                            <div key={i} className="flex items-center gap-2">
+                              <Input
+                                className="flex-1"
+                                placeholder="https://backend-b.internal.example"
+                                type="url"
+                                value={u.url}
+                                onChange={(e) =>
+                                  setAdditionalUpstreams((prev) =>
+                                    prev.map((item, idx) => (idx === i ? { ...item, url: e.target.value } : item)),
+                                  )
+                                }
+                              />
+                              <Input
+                                className="w-20 shrink-0"
+                                min={1}
+                                placeholder="1"
+                                type="number"
+                                value={u.weight}
+                                onChange={(e) =>
+                                  setAdditionalUpstreams((prev) =>
+                                    prev.map((item, idx) => (idx === i ? { ...item, weight: e.target.value } : item)),
+                                  )
+                                }
+                              />
+                              <Button
+                                className="h-8 w-8 min-w-8 shrink-0 rounded-lg px-0 text-muted-foreground/60 hover:text-danger"
+                                size="sm"
+                                variant="ghost"
+                                aria-label="Remove upstream"
+                                onPress={() => setAdditionalUpstreams((prev) => prev.filter((_, idx) => idx !== i))}
+                              >
+                                <Trash2 size={13} />
+                              </Button>
+                            </div>
+                          ))}
+                          <div className="mt-1 flex gap-4 text-[11px] text-muted-foreground/50">
+                            <span className="flex-1 pl-1">URL</span>
+                            <span className="w-20 shrink-0 pl-1">Weight</span>
+                            <span className="w-8 shrink-0" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mb-3 rounded-lg border border-dashed border-border/60 px-3 py-4 text-center text-[12px] text-muted-foreground/50">
+                          No additional upstreams — the default upstream will handle all traffic.
+                        </div>
+                      )}
+                      <Button
+                        className="h-7 gap-1.5 rounded-lg text-[12px]"
+                        size="sm"
+                        variant="ghost"
+                        onPress={() => setAdditionalUpstreams((prev) => [...prev, { url: "", weight: "1" }])}
+                      >
+                        <Plus size={12} />
+                        Add upstream
+                      </Button>
+                    </div>
                     {error && <div className="enterprise-feedback enterprise-feedback--error">{error}</div>}
                     <div className="flex items-center justify-between gap-3">
                       <Button variant="ghost" onPress={goBack}>
@@ -249,7 +342,7 @@ export function CreateTenantForm({
                       </Button>
                       <Button
                         className="bg-foreground text-background"
-                        isDisabled={isPending || !formState.upstreamURL.trim() || !formState.headerName.trim()}
+                        isDisabled={isPending}
                         onPress={handleSubmit}
                       >
                         {isPending ? "Creating…" : "Create tenant"}
