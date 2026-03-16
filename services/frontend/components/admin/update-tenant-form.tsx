@@ -117,7 +117,7 @@ export function UpdateTenantForm({
       )}
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
-          <Modal.Dialog className="rounded-[28px] border border-border bg-overlay/96 shadow-[var(--overlay-shadow)]">
+          <Modal.Dialog className="!max-w-3xl rounded-[28px] border border-border bg-overlay/96 shadow-[var(--overlay-shadow)]">
             <Modal.CloseTrigger />
             <Modal.Header>
               <div>

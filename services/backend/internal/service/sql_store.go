@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -1237,24 +1238,52 @@ func (store *sqlStore) UpdateTenantUpstream(ctx context.Context, id, upstreamURL
 
 func (store *sqlStore) GetCircuitBreaker(ctx context.Context, routeID string) (circuitBreakerRecord, bool, error) {
 	row := store.queryRowContext(ctx,
-		`SELECT route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at FROM circuit_breakers WHERE route_id = ? LIMIT 1`, routeID)
+		`SELECT route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at, locked FROM circuit_breakers WHERE route_id = ? LIMIT 1`, routeID)
 	var cb circuitBreakerRecord
-	if err := row.Scan(&cb.RouteID, &cb.State, &cb.FailureCount, &cb.LastFailureAt, &cb.LastSuccessAt, &cb.OpenedAt, &cb.HalfOpenAt); err != nil {
+	var lastFailure, lastSuccess, openedAt, halfOpenAt sql.NullTime
+	if err := row.Scan(&cb.RouteID, &cb.State, &cb.FailureCount, &lastFailure, &lastSuccess, &openedAt, &halfOpenAt, &cb.Locked); err != nil {
 		if err == sql.ErrNoRows {
 			return circuitBreakerRecord{}, false, nil
 		}
 		return circuitBreakerRecord{}, false, err
 	}
+	cb.LastFailureAt = lastFailure.Time
+	cb.LastSuccessAt = lastSuccess.Time
+	cb.OpenedAt = openedAt.Time
+	cb.HalfOpenAt = halfOpenAt.Time
 	return cb, true, nil
+}
+
+func (store *sqlStore) ListCircuitBreakers(ctx context.Context) ([]circuitBreakerRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at, locked FROM circuit_breakers`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []circuitBreakerRecord
+	for rows.Next() {
+		var cb circuitBreakerRecord
+		var lastFailure, lastSuccess, openedAt, halfOpenAt sql.NullTime
+		if err := rows.Scan(&cb.RouteID, &cb.State, &cb.FailureCount, &lastFailure, &lastSuccess, &openedAt, &halfOpenAt, &cb.Locked); err != nil {
+			return nil, err
+		}
+		cb.LastFailureAt = lastFailure.Time
+		cb.LastSuccessAt = lastSuccess.Time
+		cb.OpenedAt = openedAt.Time
+		cb.HalfOpenAt = halfOpenAt.Time
+		out = append(out, cb)
+	}
+	return out, rows.Err()
 }
 
 func (store *sqlStore) UpsertCircuitBreaker(ctx context.Context, cb circuitBreakerRecord) error {
 	_, err := store.execContext(ctx,
-		`INSERT INTO circuit_breakers (route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(route_id) DO UPDATE SET state=?, failure_count=?, last_failure_at=?, last_success_at=?, opened_at=?, half_open_at=?`,
-		cb.RouteID, cb.State, cb.FailureCount, cb.LastFailureAt, cb.LastSuccessAt, cb.OpenedAt, cb.HalfOpenAt,
-		cb.State, cb.FailureCount, cb.LastFailureAt, cb.LastSuccessAt, cb.OpenedAt, cb.HalfOpenAt)
+		`INSERT INTO circuit_breakers (route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at, locked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(route_id) DO UPDATE SET state=?, failure_count=?, last_failure_at=?, last_success_at=?, opened_at=?, half_open_at=?, locked=?`,
+		cb.RouteID, cb.State, cb.FailureCount, cb.LastFailureAt, cb.LastSuccessAt, cb.OpenedAt, cb.HalfOpenAt, cb.Locked,
+		cb.State, cb.FailureCount, cb.LastFailureAt, cb.LastSuccessAt, cb.OpenedAt, cb.HalfOpenAt, cb.Locked)
 	return err
 }
 
@@ -2212,6 +2241,36 @@ func (store *sqlStore) ListGrantIssuances(ctx context.Context, grantID string) (
 		items = append(items, r)
 	}
 	return items, rows.Err()
+}
+
+// ── System settings ────────────────────────────────────────────────────
+
+func (store *sqlStore) GetSystemSetting(ctx context.Context, key string) (string, bool, error) {
+	var value string
+	err := store.db.QueryRowContext(ctx, `SELECT value FROM system_settings WHERE key = ?`, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return value, true, nil
+}
+
+func (store *sqlStore) SetSystemSetting(ctx context.Context, key, value string) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		key, value, time.Now().UTC())
+	return err
+}
+
+func (store *sqlStore) PurgeTrafficStats(ctx context.Context, olderThan time.Time) (int64, error) {
+	result, err := store.execContext(ctx, `DELETE FROM traffic_stats WHERE bucket_start < ?`, olderThan)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func scanGrant(scanner interface{ Scan(dest ...any) error }) (provisioningGrantRecord, error) {

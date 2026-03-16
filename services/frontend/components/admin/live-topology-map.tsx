@@ -51,6 +51,7 @@ type GraphEdge = {
   revoked?: boolean;
   latencyMs?: number;
   circuitBreakerState?: string;
+  circuitBreakerLocked?: boolean;
 };
 
 type CameraState = {
@@ -190,6 +191,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
     routeLabel: string;
     tenantLabel: string;
     state: string;
+    locked: boolean;
     latencyMs: number;
     sceneX: number;
     sceneY: number;
@@ -601,11 +603,16 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
     const routeNodeByRouteID = new Map(routes.map((route, index) => [route.id, routeNodes[index]]));
     const hotRouteKeys = new Set(activeAudits.map((event) => `route:${event.routeSlug}:${event.tenantID}`));
     const hotTokenKeys = new Set(activeAudits.map((event) => `token:${event.tokenID}:${event.routeSlug}`));
+    const tokenRouteErrorKeys = new Set(
+      activeAudits
+        .filter((a) => a.status >= 400)
+        .map((a) => `${a.tokenID}:${a.routeSlug}:${a.tenantID}`),
+    );
     // Only animate the upstream edge when the request was actually forwarded.
-    // Gateway-level rejections (rate limit 429, auth 401) never reach the upstream.
+    // Gateway-level rejections (auth 401, IP/scope 403, CB-blocked 503, rate limit 429) never reach the upstream.
     const hotUpstreamOrigins = new Set(
       activeAudits
-        .filter((e) => e.status !== 429 && e.status !== 401 && e.upstreamURL)
+        .filter((e) => e.status !== 401 && e.status !== 403 && e.status !== 429 && e.status !== 503 && e.upstreamURL)
         .map((e) => {
           try { return new URL(e.upstreamURL).origin; } catch { return e.upstreamURL; }
         }),
@@ -618,14 +625,13 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
         if (!canAccessRoute) {
           continue;
         }
-        const routeHasErrors = (routeMetrics.get(route.id)?.errors ?? 0) > 0;
         tokenEdges.push({
           id: `edge:${token.id}:${route.id}`,
           from: `token:${token.id}`,
           to: `route:${route.id}`,
           kind: "access",
           hot: !token.active ? false : hotTokenKeys.has(`token:${token.id}:${route.slug}`),
-          error: !token.active ? false : routeHasErrors,
+          error: !token.active ? false : tokenRouteErrorKeys.has(`${token.id}:${route.slug}:${route.tenantID}`),
           revoked: !token.active,
           latencyMs: routeMetrics.get(route.id)?.avgLatencyMs ?? 0,
         });
@@ -649,6 +655,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           error: routeHasErrors,
           latencyMs: routeMetrics.get(route.id)?.avgLatencyMs ?? 0,
           circuitBreakerState: routeSummary?.circuitBreakerState,
+          circuitBreakerLocked: routeSummary?.circuitBreakerLocked,
         } satisfies GraphEdge;
       })
       .filter(Boolean) as GraphEdge[];
@@ -1213,7 +1220,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                       setSelectedCBEdge((prev) =>
                         prev?.sceneX === midpoint.x && prev?.sceneY === midpoint.y
                           ? (setPendingCBAction(null), null)
-                          : { routeID, routeLabel: from!.label, tenantLabel: to!.label, state: cbState, latencyMs: edge.latencyMs ?? 0, sceneX: midpoint.x, sceneY: midpoint.y }
+                          : { routeID, routeLabel: from!.label, tenantLabel: to!.label, state: cbState, locked: edge.circuitBreakerLocked ?? false, latencyMs: edge.latencyMs ?? 0, sceneX: midpoint.x, sceneY: midpoint.y }
                       );
                       setPendingCBAction(null);
                     } else if (isAccess) {
@@ -1443,7 +1450,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                         style={{ background: isClosed ? "var(--success)" : isOpen ? "var(--danger)" : "var(--warning)" }}
                       />
                       <span className={`text-[11px] font-bold uppercase tracking-[0.14em] ${isClosed ? "text-success" : isOpen ? "text-danger" : "text-warning"}`}>
-                        {isClosed ? "Route binding" : isOpen ? "Circuit Breaker — Open" : "Circuit Breaker — Half Open"}
+                        {isClosed ? "Route binding" : isOpen ? `Circuit Breaker — Open${selectedCBEdge.locked ? " (locked)" : ""}` : "Circuit Breaker — Half Open"}
                       </span>
                     </div>
                     <button
@@ -1488,8 +1495,8 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                       <div className="space-y-1.5 leading-[1.55] text-muted-foreground">
                         {isOpen ? (
                           <>
-                            <p><span className="font-semibold text-danger">Traffic is blocked.</span> JustGate detected 5 or more consecutive upstream failures and stopped forwarding requests to protect against cascading errors.</p>
-                            <p>The breaker will automatically allow a single <span className="font-medium text-foreground">trial request</span> after ~30 seconds to probe upstream recovery.</p>
+                            <p><span className="font-semibold text-danger">Traffic is blocked.</span> {selectedCBEdge.locked ? "This breaker was manually locked open and will not recover automatically." : "JustGate detected 5 or more consecutive upstream failures and stopped forwarding requests to protect against cascading errors."}</p>
+                            {!selectedCBEdge.locked && <p>The breaker will automatically allow a single <span className="font-medium text-foreground">trial request</span> after ~30 seconds to probe upstream recovery.</p>}
                           </>
                         ) : (
                           <>
@@ -1505,8 +1512,8 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                       <div className="space-y-2.5 rounded-[10px] border border-border bg-panel p-3">
                         <p className="text-[11px] leading-[1.5] text-muted-foreground">
                           {pendingCBAction === "open"
-                            ? <>Manually <span className="font-semibold text-danger">opening the circuit breaker</span> will immediately stop all traffic to <span className="font-medium text-foreground">{selectedCBEdge.routeLabel}</span>. Requests will return 503 until the breaker is closed again.</>
-                            : <>Manually <span className="font-semibold text-success">closing the circuit breaker</span> will resume traffic to <span className="font-medium text-foreground">{selectedCBEdge.routeLabel}</span>. Failures will re-open it automatically.</>
+                            ? <>Manually <span className="font-semibold text-danger">opening the circuit breaker</span> will immediately stop all traffic to <span className="font-medium text-foreground">{selectedCBEdge.routeLabel}</span>. The breaker will be <span className="font-semibold">locked open</span> and will not recover automatically — you must close it manually.</>
+                            : <>Manually <span className="font-semibold text-success">closing the circuit breaker</span> will resume traffic to <span className="font-medium text-foreground">{selectedCBEdge.routeLabel}</span>. The lock is released and failures will re-open it automatically.</>
                           }
                         </p>
                         <div className="flex gap-2">

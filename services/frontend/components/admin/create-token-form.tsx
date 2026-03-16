@@ -148,7 +148,7 @@ export function CreateTokenForm({
       )}
       <Modal.Backdrop>
         <Modal.Container placement="center" size="lg">
-          <Modal.Dialog className="rounded-[28px] border border-border bg-overlay/96 shadow-[var(--overlay-shadow)]">
+          <Modal.Dialog className="!max-w-3xl rounded-[28px] border border-border bg-overlay/96 shadow-[var(--overlay-shadow)]">
             <Modal.CloseTrigger />
             <Modal.Header>
               <div className="flex w-full items-center justify-between gap-3">
@@ -180,11 +180,11 @@ export function CreateTokenForm({
                     </div>
                     <div className="flex items-start gap-2">
                       <div className="min-w-0 flex-1 rounded-[0.9rem] border border-border/70 bg-background/75 px-3 py-3 font-mono text-sm break-all text-foreground select-all">
-                        {issuedToken.secret}
+                        <span className="text-muted-foreground select-none">Bearer </span>{issuedToken.secret}
                       </div>
                       <Button
                         className="mt-1 h-9 w-9 min-w-9 shrink-0 rounded-xl border border-border bg-surface px-0 text-muted-foreground hover:text-foreground"
-                        onPress={() => handleCopySecret(issuedToken.secret)}
+                        onPress={() => handleCopySecret(`Bearer ${issuedToken.secret}`)}
                         size="sm"
                         variant="ghost"
                         aria-label="Copy secret"
@@ -192,7 +192,7 @@ export function CreateTokenForm({
                         {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
                       </Button>
                     </div>
-                    <div className="text-[11px] text-muted-foreground">Preview: {issuedToken.token.preview}</div>
+                    <div className="text-[11px] text-muted-foreground">Preview: {issuedToken.token.preview} &nbsp;·&nbsp; Copy button includes the <code className="font-mono">Bearer </code> prefix</div>
                     <div className="flex justify-end pt-2">
                       <Button variant="secondary" onPress={() => handleOpenChange(false)}>
                         Done &amp; close

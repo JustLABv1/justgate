@@ -253,7 +253,8 @@ export default async function Home() {
                 {circuitBreakersResult.data.map((cb) => (
                   <div key={cb.routeID ?? cb.tenantID} className="flex items-center justify-between text-sm gap-2">
                     <span className="text-muted-foreground truncate font-mono text-xs max-w-[130px]">/proxy/{cb.slug}</span>
-                    <span className={`text-xs font-medium shrink-0 ${cb.state === "closed" ? "text-success" : cb.state === "open" ? "text-danger" : "text-warning"}`}>
+                    <span className={`flex items-center gap-1 text-xs font-medium shrink-0 ${cb.state === "closed" ? "text-success" : cb.state === "open" ? "text-danger" : "text-warning"}`}>
+                      {cb.locked && <Lock size={10} />}
                       {cb.state}
                     </span>
                   </div>

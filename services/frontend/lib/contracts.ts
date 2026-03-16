@@ -47,6 +47,7 @@ export interface RouteSummary {
   allowCIDRs: string;
   denyCIDRs: string;
   circuitBreakerState?: string;
+  circuitBreakerLocked?: boolean;
 }
 
 export interface TokenSummary {
@@ -288,6 +289,7 @@ export interface CircuitBreakerStatus {
   slug: string;
   tenantID: string;
   state: string;
+  locked: boolean;
   failureCount: number;
   lastFailure: string;
   lastSuccess: string;
@@ -451,6 +453,17 @@ export interface GrantIssuance {
   tokenID: string;
   agentName: string;
   issuedAt: string;
+}
+
+// ── Data Retention ───────────────────────────────────────────────────
+
+export interface RetentionSettings {
+  retentionDays: number;
+  autoEnabled: boolean;
+}
+
+export interface PurgeResult {
+  purged: number;
 }
 
 // ── Org IP Rules ─────────────────────────────────────────────────

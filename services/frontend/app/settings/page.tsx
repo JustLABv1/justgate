@@ -1,9 +1,10 @@
+import { DataRetentionPanel } from "@/components/admin/data-retention-panel";
 import { OIDCOrgMappings } from "@/components/admin/oidc-org-mappings";
 import { OIDCProviderDocs } from "@/components/admin/oidc-provider-docs";
 import { OIDCSettingsForm } from "@/components/admin/oidc-settings-form";
 import { SectionPage } from "@/components/admin/section-page";
 import { auth } from "@/lib/auth";
-import { getOIDCConfig, getOIDCOrgMappings } from "@/lib/backend-client";
+import { getOIDCConfig, getOIDCOrgMappings, getRetentionSettings } from "@/lib/backend-client";
 import { redirect } from "next/navigation";
 
 export default async function SettingsPage() {
@@ -12,9 +13,10 @@ export default async function SettingsPage() {
     redirect("/");
   }
 
-  const [oidcResult, mappingsResult] = await Promise.all([
+  const [oidcResult, mappingsResult, retentionResult] = await Promise.all([
     getOIDCConfig(),
     getOIDCOrgMappings(),
+    getRetentionSettings(),
   ]);
 
   return (
@@ -29,6 +31,7 @@ export default async function SettingsPage() {
         <OIDCSettingsForm initial={oidcResult.data} />
         <OIDCProviderDocs />
         <OIDCOrgMappings initialMappings={mappingsResult.data} />
+        <DataRetentionPanel initial={retentionResult.data} />
       </div>
     </SectionPage>
   );
