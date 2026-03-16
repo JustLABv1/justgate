@@ -2,42 +2,90 @@
 
 import { GlobalSearch } from "@/components/admin/global-search";
 import { AdminNav } from "@/components/admin/nav";
+import { OrgSwitcher } from "@/components/admin/org-switcher";
 import { UserMenu } from "@/components/admin/user-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@heroui/react";
-import { AppWindow, ChevronDown, History, KeyRound, LayoutDashboard, Menu, Orbit, Settings, Settings2, Share2, Shield, Users2, UsersRound, X } from "lucide-react";
+import {
+  AppWindow,
+  ChevronDown,
+  History,
+  KeyRound,
+  LayoutDashboard,
+  Lock,
+  Menu,
+  Monitor,
+  Orbit,
+  Settings,
+  Settings2,
+  Share2,
+  Shield,
+  SlidersHorizontal,
+  Users2,
+  UsersRound,
+  X,
+} from "lucide-react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ElementType, type ReactNode, useEffect, useRef, useState } from "react";
 
 interface AppShellProps {
   children: ReactNode;
   signedInUser?: string | null;
 }
 
+interface NavItem {
+  href: string;
+  label: string;
+  icon: ElementType;
+}
+
 const authRoutes = new Set(["/signin"]);
 
-const primaryNav = [
+// Direct top-level links
+const directLinks: NavItem[] = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/topology", label: "Topology", icon: Orbit },
+  { href: "/apps", label: "Apps", icon: AppWindow },
+];
+
+// Grouped into dropdowns
+const proxyNav: NavItem[] = [
   { href: "/routes", label: "Routes", icon: Settings2 },
   { href: "/tenants", label: "Tenants", icon: Users2 },
   { href: "/tokens", label: "Tokens", icon: KeyRound },
   { href: "/grants", label: "Grants", icon: Share2 },
-  { href: "/apps", label: "Apps", icon: AppWindow },
-  { href: "/audit", label: "Audit", icon: History },
-  { href: "/team", label: "Team", icon: UsersRound },
 ];
 
-const adminNav = [
+const activityNav: NavItem[] = [
+  { href: "/audit", label: "Audit Log", icon: History },
+  { href: "/sessions", label: "Sessions", icon: Monitor },
+];
+
+const manageNav: NavItem[] = [
+  { href: "/team", label: "Team", icon: UsersRound },
+  { href: "/security", label: "IP Allowlist", icon: Lock },
+];
+
+const platformAdminNav: NavItem[] = [
   { href: "/platform/users", label: "All Users", icon: UsersRound },
   { href: "/platform/orgs", label: "All Orgs", icon: Users2 },
   { href: "/platform/admins", label: "Platform Admins", icon: Shield },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-function AdminDropdown({ pathname }: { pathname: string }) {
+function NavDropdown({
+  label,
+  icon: Icon,
+  items,
+  pathname,
+}: {
+  label: string;
+  icon: ElementType;
+  items: NavItem[];
+  pathname: string;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -50,7 +98,9 @@ function AdminDropdown({ pathname }: { pathname: string }) {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
 
-  const isAdminActive = adminNav.some((item) => pathname === item.href || pathname.startsWith(item.href + "/"));
+  const isActive = items.some(
+    (item) => pathname === item.href || pathname.startsWith(item.href + "/"),
+  );
 
   return (
     <div ref={ref} className="relative">
@@ -58,19 +108,19 @@ function AdminDropdown({ pathname }: { pathname: string }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
-          isAdminActive
+          isActive
             ? "bg-surface text-foreground"
             : "text-muted-foreground hover:bg-surface/60 hover:text-foreground"
         }`}
       >
-        <Shield size={13} className={isAdminActive ? "text-accent" : "text-muted-foreground/70"} />
-        Admin
+        <Icon size={13} className={isActive ? "text-accent" : "text-muted-foreground/70"} />
+        {label}
         <ChevronDown size={11} className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
       {open && (
         <div className="absolute left-0 top-full z-50 mt-1.5 w-48 rounded-xl border border-border bg-overlay py-1.5 shadow-lg backdrop-blur-sm">
-          {adminNav.map((item) => {
+          {items.map((item) => {
             const active = pathname === item.href || pathname.startsWith(item.href + "/");
             return (
               <Link
@@ -78,10 +128,15 @@ function AdminDropdown({ pathname }: { pathname: string }) {
                 href={item.href}
                 onClick={() => setOpen(false)}
                 className={`flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium transition-colors ${
-                  active ? "text-foreground" : "text-muted-foreground hover:bg-surface/60 hover:text-foreground"
+                  active
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:bg-surface/60 hover:text-foreground"
                 }`}
               >
-                <item.icon size={13} className={active ? "text-accent" : "text-muted-foreground/60"} />
+                <item.icon
+                  size={13}
+                  className={active ? "text-accent" : "text-muted-foreground/60"}
+                />
                 {item.label}
               </Link>
             );
@@ -115,21 +170,37 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur-md">
-        <div className="mx-auto flex h-14 items-center gap-4 px-4 sm:px-6 max-w-[1800px]">
+        <div className="mx-auto flex h-14 items-center gap-3 px-4 sm:px-6 max-w-[1800px]">
 
           {/* Logo */}
           <div className="flex shrink-0 items-center gap-2.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/justgate_logo.png" alt="JustGate" width={22} height={22} className="rounded-sm brightness-0 dark:brightness-100" />
+            <img
+              src="/justgate_logo.png"
+              alt="JustGate"
+              width={22}
+              height={22}
+              className="rounded-sm brightness-0 dark:brightness-100"
+            />
             <span className="text-sm font-semibold tracking-tight text-foreground">JustGate</span>
+          </div>
+
+          <div className="hidden lg:block h-5 w-px bg-border" />
+
+          {/* Org switcher */}
+          <div className="hidden lg:block w-40 shrink-0">
+            <OrgSwitcher />
           </div>
 
           <div className="hidden lg:block h-5 w-px bg-border" />
 
           {/* Primary nav — desktop */}
           <nav className="hidden lg:flex items-center gap-0.5 flex-1">
-            {primaryNav.map((item) => {
-              const active = item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(item.href + "/");
+            {directLinks.map((item) => {
+              const active =
+                item.href === "/"
+                  ? pathname === "/"
+                  : pathname === item.href || pathname.startsWith(item.href + "/");
               return (
                 <Link
                   key={item.href}
@@ -140,23 +211,33 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
                       : "text-muted-foreground hover:bg-surface/60 hover:text-foreground"
                   }`}
                 >
-                  <item.icon size={13} className={active ? "text-accent" : "text-muted-foreground/70"} />
+                  <item.icon
+                    size={13}
+                    className={active ? "text-accent" : "text-muted-foreground/70"}
+                  />
                   {item.label}
                 </Link>
               );
             })}
 
-            {isPlatformAdmin && <AdminDropdown pathname={pathname} />}
+            <NavDropdown label="Proxy" icon={Settings2} items={proxyNav} pathname={pathname} />
+            <NavDropdown label="Activity" icon={History} items={activityNav} pathname={pathname} />
+            <NavDropdown label="Manage" icon={SlidersHorizontal} items={manageNav} pathname={pathname} />
+
+            {isPlatformAdmin && (
+              <NavDropdown
+                label="Admin"
+                icon={Shield}
+                items={platformAdminNav}
+                pathname={pathname}
+              />
+            )}
           </nav>
 
           {/* Right controls */}
           <div className="ml-auto flex items-center gap-2">
             <GlobalSearch />
-            {signedInUser ? (
-              <UserMenu user={signedInUser} />
-            ) : (
-              <ThemeToggle />
-            )}
+            {signedInUser ? <UserMenu user={signedInUser} /> : <ThemeToggle />}
           </div>
 
           {/* Mobile hamburger */}

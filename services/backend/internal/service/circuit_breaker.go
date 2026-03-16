@@ -142,6 +142,32 @@ func (m *circuitBreakerManager) GetState(routeID string) string {
 	return cb.state
 }
 
+// ForceState overrides the circuit breaker state for a route.
+// Valid states are "closed", "open", and "half_open".
+func (m *circuitBreakerManager) ForceState(routeID string, state string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cb, exists := m.breakers[routeID]
+	if !exists {
+		cb = &circuitBreakerState{routeID: routeID}
+		m.breakers[routeID] = cb
+	}
+
+	now := time.Now()
+	cb.state = state
+	switch state {
+	case cbStateClosed:
+		cb.failureCount = 0
+	case cbStateOpen:
+		cb.openedAt = now
+	case cbStateHalfOpen:
+		cb.halfOpenAt = now
+	}
+
+	m.persistAsync(cb)
+}
+
 func (m *circuitBreakerManager) persistAsync(cb *circuitBreakerState) {
 	record := circuitBreakerRecord{
 		RouteID:       cb.routeID,

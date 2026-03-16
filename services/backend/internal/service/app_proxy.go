@@ -78,6 +78,20 @@ func (s *Service) handleApp(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "IP not in allowlist"})
 		return
 	}
+	// Org-level IP allowlist: if any rules are configured for the org, the
+	// client must match at least one of them.
+	if app.OrgID != "" {
+		if orgRules, err := s.store.ListOrgIPRules(request.Context(), app.OrgID); err == nil && len(orgRules) > 0 {
+			cidrs := make([]string, len(orgRules))
+			for i, r := range orgRules {
+				cidrs[i] = r.CIDR
+			}
+			if !matchesCIDRList(clientIP, strings.Join(cidrs, ",")) {
+				writeJSON(writer, http.StatusForbidden, map[string]string{"error": "IP not in organisation allowlist"})
+				return
+			}
+		}
+	}
 
 	// ── Authentication dispatch ────────────────────────────────────
 	authHeader := extractBearerToken(request.Header.Get("Authorization"))

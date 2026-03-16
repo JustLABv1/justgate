@@ -284,6 +284,8 @@ export interface AdminSession {
 // ── Circuit Breakers ────────────────────────────────────────────
 
 export interface CircuitBreakerStatus {
+  routeID: string;
+  slug: string;
   tenantID: string;
   state: string;
   failureCount: number;

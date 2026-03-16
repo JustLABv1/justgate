@@ -251,9 +251,9 @@ export default async function Home() {
               </div>
               <div className="mt-3 space-y-2">
                 {circuitBreakersResult.data.map((cb) => (
-                  <div key={cb.tenantID} className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground truncate max-w-[140px]">{cb.tenantID}</span>
-                    <span className={`text-xs font-medium ${cb.state === "closed" ? "text-success" : cb.state === "open" ? "text-danger" : "text-warning"}`}>
+                  <div key={cb.routeID ?? cb.tenantID} className="flex items-center justify-between text-sm gap-2">
+                    <span className="text-muted-foreground truncate font-mono text-xs max-w-[130px]">/proxy/{cb.slug}</span>
+                    <span className={`text-xs font-medium shrink-0 ${cb.state === "closed" ? "text-success" : cb.state === "open" ? "text-danger" : "text-warning"}`}>
                       {cb.state}
                     </span>
                   </div>

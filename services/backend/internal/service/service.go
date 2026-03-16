@@ -941,6 +941,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/sessions/", s.withAdminAuth(s.handleSessionRevoke))
 	// Circuit breakers
 	mux.HandleFunc("/api/v1/admin/circuit-breakers", s.withAdminAuth(s.withOptionalOrgContext(s.handleCircuitBreakers)))
+	mux.HandleFunc("/api/v1/admin/circuit-breakers/", s.withAdminAuth(s.handleCircuitBreakerByID))
 	// Token lifecycle
 	mux.HandleFunc("/api/v1/admin/tokens/expiring", s.withAdminAuth(s.withOrgContext(s.handleExpiringTokens)))
 	// Route tester
@@ -2132,6 +2133,21 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusForbidden, route.UpstreamURL, 0, requestPath)
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "IP address not allowed"})
 		return
+	}
+	// Org-level IP allowlist: resolve the org via the route's tenant and check
+	// any configured org-wide CIDR rules.
+	if tenant, ok, terr := s.store.GetTenantByTenantID(request.Context(), route.TenantID); terr == nil && ok && tenant.OrgID != "" {
+		if orgRules, err := s.store.ListOrgIPRules(request.Context(), tenant.OrgID); err == nil && len(orgRules) > 0 {
+			cidrs := make([]string, len(orgRules))
+			for i, r := range orgRules {
+				cidrs[i] = r.CIDR
+			}
+			if !matchesCIDRList(clientIP, strings.Join(cidrs, ",")) {
+				s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusForbidden, route.UpstreamURL, 0, requestPath)
+				writeJSON(writer, http.StatusForbidden, map[string]string{"error": "IP not in organisation allowlist"})
+				return
+			}
+		}
 	}
 
 	// ── Circuit breaker check ──────────────────────────────────────

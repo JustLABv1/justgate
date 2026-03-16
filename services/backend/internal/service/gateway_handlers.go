@@ -509,6 +509,58 @@ func (s *Service) handleCircuitBreakers(writer http.ResponseWriter, request *htt
 	writeJSON(writer, http.StatusOK, items)
 }
 
+// handleCircuitBreakerByID handles PATCH /api/v1/admin/circuit-breakers/{routeID}
+// to manually force a circuit breaker into a specific state.
+func (s *Service) handleCircuitBreakerByID(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPatch {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	routeID := strings.TrimPrefix(request.URL.Path, "/api/v1/admin/circuit-breakers/")
+	if routeID == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "route ID required"})
+		return
+	}
+
+	// Verify the route exists
+	routes, err := s.store.ListRoutes(request.Context())
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load routes"})
+		return
+	}
+	found := false
+	for _, r := range routes {
+		if r.ID == routeID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "route not found"})
+		return
+	}
+
+	var payload struct {
+		State string `json:"state"`
+	}
+	if err := decodeJSON(request, &payload); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	switch payload.State {
+	case cbStateClosed, cbStateOpen, cbStateHalfOpen:
+		// valid
+	default:
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "state must be closed, open, or half_open"})
+		return
+	}
+
+	s.circuitBreakers.ForceState(routeID, payload.State)
+	writeJSON(writer, http.StatusOK, map[string]string{"state": payload.State})
+}
+
 // ── Token expiry / lifecycle ───────────────────────────────────────────
 
 func (s *Service) handleExpiringTokens(writer http.ResponseWriter, request *http.Request) {
