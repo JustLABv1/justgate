@@ -259,16 +259,17 @@ type tenantSummary struct {
 }
 
 type routeSummary struct {
-	ID             string   `json:"id"`
-	Slug           string   `json:"slug"`
-	TargetPath     string   `json:"targetPath"`
-	TenantID       string   `json:"tenantID"`
-	RequiredScope  string   `json:"requiredScope"`
-	Methods        []string `json:"methods"`
-	RateLimitRPM   int      `json:"rateLimitRPM"`
-	RateLimitBurst int      `json:"rateLimitBurst"`
-	AllowCIDRs     string   `json:"allowCIDRs"`
-	DenyCIDRs      string   `json:"denyCIDRs"`
+	ID                  string   `json:"id"`
+	Slug                string   `json:"slug"`
+	TargetPath          string   `json:"targetPath"`
+	TenantID            string   `json:"tenantID"`
+	RequiredScope       string   `json:"requiredScope"`
+	Methods             []string `json:"methods"`
+	RateLimitRPM        int      `json:"rateLimitRPM"`
+	RateLimitBurst      int      `json:"rateLimitBurst"`
+	AllowCIDRs          string   `json:"allowCIDRs"`
+	DenyCIDRs           string   `json:"denyCIDRs"`
+	CircuitBreakerState string   `json:"circuitBreakerState,omitempty"`
 }
 
 type tokenSummary struct {
@@ -278,6 +279,7 @@ type tokenSummary struct {
 	Scopes         []string `json:"scopes"`
 	ExpiresAt      string   `json:"expiresAt"`
 	LastUsedAt     string   `json:"lastUsedAt"`
+	CreatedAt      string   `json:"createdAt"`
 	Preview        string   `json:"preview"`
 	Active         bool     `json:"active"`
 	RateLimitRPM   int      `json:"rateLimitRPM"`
@@ -437,6 +439,7 @@ type tokenRecord struct {
 	Scopes         []string
 	ExpiresAt      time.Time
 	LastUsedAt     time.Time
+	CreatedAt      time.Time
 	Preview        string
 	Active         bool
 	Hash           string
@@ -925,6 +928,7 @@ func (s *Service) Handler() http.Handler {
 	// Traffic & analytics
 	mux.HandleFunc("/api/v1/admin/traffic/stats", s.withAdminAuth(s.withOptionalOrgContext(s.handleTrafficStats)))
 	mux.HandleFunc("/api/v1/admin/traffic/overview", s.withAdminAuth(s.withOptionalOrgContext(s.handleTrafficOverview)))
+	mux.HandleFunc("/api/v1/admin/traffic/heatmap", s.withAdminAuth(s.withOptionalOrgContext(s.handleTrafficHeatmap)))
 	// Admin activity audit
 	mux.HandleFunc("/api/v1/admin/admin-audit", s.withAdminAuth(s.handleAdminAudit))
 	// Health history
@@ -1290,14 +1294,17 @@ func (s *Service) handleTokens(writer http.ResponseWriter, request *http.Request
 	items := make([]tokenSummary, 0, len(tokens))
 	for _, token := range tokens {
 		items = append(items, tokenSummary{
-			ID:         token.ID,
-			Name:       token.Name,
-			TenantID:   token.TenantID,
-			Scopes:     token.Scopes,
-			ExpiresAt:  token.ExpiresAt.Format(time.RFC3339),
-			LastUsedAt: token.LastUsedAt.Format(time.RFC3339),
-			Preview:    token.Preview,
-			Active:     token.Active,
+			ID:             token.ID,
+			Name:           token.Name,
+			TenantID:       token.TenantID,
+			Scopes:         token.Scopes,
+			ExpiresAt:      token.ExpiresAt.Format(time.RFC3339),
+			LastUsedAt:     token.LastUsedAt.Format(time.RFC3339),
+			CreatedAt:      token.CreatedAt.Format(time.RFC3339),
+			Preview:        token.Preview,
+			Active:         token.Active,
+			RateLimitRPM:   token.RateLimitRPM,
+			RateLimitBurst: token.RateLimitBurst,
 		})
 	}
 
@@ -1519,16 +1526,17 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 	routeItems := make([]routeSummary, 0, len(routes))
 	for _, route := range routes {
 		routeItems = append(routeItems, routeSummary{
-			ID:             route.ID,
-			Slug:           route.Slug,
-			TargetPath:     route.TargetPath,
-			TenantID:       route.TenantID,
-			RequiredScope:  route.RequiredScope,
-			Methods:        route.Methods,
-			RateLimitRPM:   route.RateLimitRPM,
-			RateLimitBurst: route.RateLimitBurst,
-			AllowCIDRs:     route.AllowCIDRs,
-			DenyCIDRs:      route.DenyCIDRs,
+			ID:                  route.ID,
+			Slug:                route.Slug,
+			TargetPath:          route.TargetPath,
+			TenantID:            route.TenantID,
+			RequiredScope:       route.RequiredScope,
+			Methods:             route.Methods,
+			RateLimitRPM:        route.RateLimitRPM,
+			RateLimitBurst:      route.RateLimitBurst,
+			AllowCIDRs:          route.AllowCIDRs,
+			DenyCIDRs:           route.DenyCIDRs,
+			CircuitBreakerState: s.circuitBreakers.GetState(route.ID),
 		})
 	}
 
@@ -1541,6 +1549,7 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 			Scopes:         token.Scopes,
 			ExpiresAt:      token.ExpiresAt.Format(time.RFC3339),
 			LastUsedAt:     token.LastUsedAt.Format(time.RFC3339),
+			CreatedAt:      token.CreatedAt.Format(time.RFC3339),
 			Preview:        token.Preview,
 			Active:         token.Active,
 			RateLimitRPM:   token.RateLimitRPM,
@@ -2189,9 +2198,9 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
-	// Select upstream URL: prefer primary from tenant_upstreams (ordered primary DESC, weight DESC),
-	// skipping any upstream whose last health check recorded it as "down" so that a reachable
-	// non-primary is used instead of a known-dead primary.
+	// Select upstream URL using weighted random selection across tenant_upstreams,
+	// skipping any upstream whose last health check recorded it as "down".
+	// Falls back to the route's own UpstreamURL when no tenant_upstreams are configured.
 	selectedUpstreamURL := route.UpstreamURL
 	if tenantUps, lookupErr := s.store.ListTenantUpstreams(request.Context(), route.TenantID); lookupErr == nil && len(tenantUps) > 0 {
 		// Build a map of known health statuses for this tenant's upstreams.
@@ -2203,15 +2212,34 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 				}
 			}
 		}
-		// Pick the first upstream that is not known-down; fall back to index 0 if all are down or unprobed.
-		selected := tenantUps[0]
+		// Build weighted pool excluding known-down upstreams.
+		type weightedUp struct {
+			url    string
+			weight int
+		}
+		var pool []weightedUp
+		totalWeight := 0
 		for _, up := range tenantUps {
 			if healthStatus[up.UpstreamURL] != "down" {
-				selected = up
+				pool = append(pool, weightedUp{url: up.UpstreamURL, weight: up.Weight})
+				totalWeight += up.Weight
+			}
+		}
+		if len(pool) == 0 {
+			// All marked down — use first entry to avoid hard failure.
+			pool = []weightedUp{{url: tenantUps[0].UpstreamURL, weight: 1}}
+			totalWeight = 1
+		}
+		// Weighted random selection (time-seeded, non-cryptographic — fine for LB).
+		r := int(time.Now().UnixNano() % int64(totalWeight))
+		cumulative := 0
+		for _, p := range pool {
+			cumulative += p.weight
+			if r < cumulative {
+				selectedUpstreamURL = p.url
 				break
 			}
 		}
-		selectedUpstreamURL = selected.UpstreamURL
 	}
 
 	targetURL, err := url.Parse(selectedUpstreamURL)

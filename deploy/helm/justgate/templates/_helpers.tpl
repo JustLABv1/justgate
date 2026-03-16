@@ -163,6 +163,18 @@ Shared backend environment variables (used in both monolithic and microservice d
 - name: JUSTGATE_INITIAL_ADMIN_EMAIL
   value: {{ .Values.backend.initialAdminEmail | quote }}
 {{- end }}
+- name: INSTANCE_ID
+  {{- if .Values.backend.instanceId }}
+  value: {{ .Values.backend.instanceId | quote }}
+  {{- else }}
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
+  {{- end }}
+{{- if .Values.backend.region }}
+- name: REGION
+  value: {{ .Values.backend.region | quote }}
+{{- end }}
 {{- end }}
 
 {{/*

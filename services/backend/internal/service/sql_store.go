@@ -144,9 +144,9 @@ func (store *sqlStore) ListTokens(ctx context.Context) ([]tokenRecord, error) {
 	var rows *sql.Rows
 	var err error
 	if orgID := orgIDFromContext(ctx); orgID != "" {
-		rows, err = store.queryContext(ctx, `SELECT tok.id, tok.name, tok.tenant_id, tok.scopes_json, tok.expires_at, tok.last_used_at, tok.preview, tok.active, tok.token_hash, tok.rate_limit_rpm, tok.rate_limit_burst FROM tokens tok INNER JOIN tenants tn ON tok.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY tok.created_at DESC`, orgID)
+		rows, err = store.queryContext(ctx, `SELECT tok.id, tok.name, tok.tenant_id, tok.scopes_json, tok.expires_at, tok.last_used_at, tok.preview, tok.active, tok.token_hash, tok.rate_limit_rpm, tok.rate_limit_burst, tok.created_at FROM tokens tok INNER JOIN tenants tn ON tok.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY tok.created_at DESC`, orgID)
 	} else {
-		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens ORDER BY created_at DESC`)
+		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst, created_at FROM tokens ORDER BY created_at DESC`)
 	}
 	if err != nil {
 		return nil, err
@@ -420,7 +420,7 @@ func (store *sqlStore) SetTokenActive(ctx context.Context, tokenID string, activ
 		return tokenRecord{}, fmt.Errorf("token not found")
 	}
 
-	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens WHERE id = ?`, tokenID)
+	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst, created_at FROM tokens WHERE id = ?`, tokenID)
 	return scanToken(row)
 }
 
@@ -468,7 +468,7 @@ func (store *sqlStore) ValidateToken(ctx context.Context, secret string) (tokenR
 	hashedSecret := hashToken(secret)
 	now := store.now()
 
-	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens WHERE token_hash = ? AND active = ? AND expires_at > ? LIMIT 1`, hashedSecret, true, now)
+	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst, created_at FROM tokens WHERE token_hash = ? AND active = ? AND expires_at > ? LIMIT 1`, hashedSecret, true, now)
 	token, err := scanToken(row)
 	if err == sql.ErrNoRows {
 		return tokenRecord{}, false, nil
@@ -565,7 +565,7 @@ func scanRoute(scanner interface{ Scan(dest ...any) error }) (routeRecord, error
 func scanToken(scanner interface{ Scan(dest ...any) error }) (tokenRecord, error) {
 	var token tokenRecord
 	var scopesJSON string
-	if err := scanner.Scan(&token.ID, &token.Name, &token.TenantID, &scopesJSON, &token.ExpiresAt, &token.LastUsedAt, &token.Preview, &token.Active, &token.Hash, &token.RateLimitRPM, &token.RateLimitBurst); err != nil {
+	if err := scanner.Scan(&token.ID, &token.Name, &token.TenantID, &scopesJSON, &token.ExpiresAt, &token.LastUsedAt, &token.Preview, &token.Active, &token.Hash, &token.RateLimitRPM, &token.RateLimitBurst, &token.CreatedAt); err != nil {
 		return tokenRecord{}, err
 	}
 	if err := json.Unmarshal([]byte(scopesJSON), &token.Scopes); err != nil {
@@ -1515,8 +1515,12 @@ func (store *sqlStore) UpsertInstanceHeartbeat(ctx context.Context, hb instanceH
 }
 
 func (store *sqlStore) ListInstanceHeartbeats(ctx context.Context) ([]instanceHeartbeatRecord, error) {
+	// Only return instances that have sent a heartbeat in the last 10 minutes.
+	// This prevents accumulating ghost rows from dev restarts or crashed replicas.
+	cutoff := store.now().UTC().Add(-10 * time.Minute)
 	rows, err := store.queryContext(ctx,
-		`SELECT instance_id, region, hostname, version, started_at, last_heartbeat_at, metadata FROM instance_heartbeats ORDER BY region, instance_id`)
+		`SELECT instance_id, region, hostname, version, started_at, last_heartbeat_at, metadata FROM instance_heartbeats WHERE last_heartbeat_at >= ? ORDER BY region, instance_id`,
+		cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -1537,7 +1541,7 @@ func (store *sqlStore) ListInstanceHeartbeats(ctx context.Context) ([]instanceHe
 
 func (store *sqlStore) ListExpiringTokens(ctx context.Context, before time.Time) ([]tokenRecord, error) {
 	rows, err := store.queryContext(ctx,
-		`SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens WHERE active = ? AND expires_at <= ? ORDER BY expires_at ASC`,
+		`SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst, created_at FROM tokens WHERE active = ? AND expires_at <= ? ORDER BY expires_at ASC`,
 		true, before)
 	if err != nil {
 		return nil, err
@@ -2061,7 +2065,7 @@ func (store *sqlStore) DeleteProvisioningGrant(ctx context.Context, id string) e
 
 func (store *sqlStore) GetTokenByID(ctx context.Context, tokenID string) (tokenRecord, bool, error) {
 	row := store.queryRowContext(ctx,
-		`SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens WHERE id = ? LIMIT 1`,
+		`SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst, created_at FROM tokens WHERE id = ? LIMIT 1`,
 		tokenID)
 	token, err := scanToken(row)
 	if err == sql.ErrNoRows {

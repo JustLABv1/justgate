@@ -46,6 +46,7 @@ export interface RouteSummary {
   rateLimitBurst: number;
   allowCIDRs: string;
   denyCIDRs: string;
+  circuitBreakerState?: string;
 }
 
 export interface TokenSummary {
@@ -55,6 +56,7 @@ export interface TokenSummary {
   scopes: string[];
   expiresAt: string;
   lastUsedAt: string;
+  createdAt: string;
   preview: string;
   active: boolean;
   rateLimitRPM: number;
@@ -316,7 +318,7 @@ export interface ReplicaInfo {
   region: string;
   hostname: string;
   lastHeartbeat: string;
-  isHealthy: boolean;
+  status: string;
 }
 
 // ── Global Search ───────────────────────────────────────────────
@@ -414,6 +416,14 @@ export interface IssuedGrant {
 
 export interface BulkTokenResponse {
   tokens: IssuedToken[];
+}
+
+// ── Traffic Heatmap ──────────────────────────────────────────────
+
+export interface TrafficHeatmapCell {
+  routeSlug: string;
+  hour: number;
+  requestCount: number;
 }
 
 // ── Token Usage Analytics ────────────────────────────────────────

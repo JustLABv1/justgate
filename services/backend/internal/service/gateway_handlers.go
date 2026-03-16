@@ -408,7 +408,7 @@ func (s *Service) handleReplicas(writer http.ResponseWriter, request *http.Reque
 		Hostname        string `json:"hostname"`
 		Version         string `json:"version"`
 		StartedAt       string `json:"startedAt"`
-		LastHeartbeatAt string `json:"lastHeartbeatAt"`
+		LastHeartbeatAt string `json:"lastHeartbeat"`
 		Status          string `json:"status"`
 	}
 
@@ -437,15 +437,16 @@ func (s *Service) handleReplicas(writer http.ResponseWriter, request *http.Reque
 
 // runHeartbeat periodically updates this instance's heartbeat record.
 func (s *Service) runHeartbeat() {
-	instanceID := s.config.InstanceID
-	if instanceID == "" {
-		instanceID = newResourceID("inst")
-	}
 	region := s.config.Region
 	if region == "" {
 		region = "default"
 	}
 	hostname, _ := os.Hostname()
+	instanceID := s.config.InstanceID
+	if instanceID == "" {
+		// Derive a stable ID from the hostname so dev restarts don't accumulate ghost rows.
+		instanceID = fmt.Sprintf("inst-%s", hostname)
+	}
 
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -918,4 +919,57 @@ func (s *Service) handleSearch(writer http.ResponseWriter, request *http.Request
 	}
 
 	writeJSON(writer, http.StatusOK, out)
+}
+
+// ── Traffic heatmap ────────────────────────────────────────────────────
+// handleTrafficHeatmap returns per-route request counts grouped by hour-of-day (0–23)
+// over the past N days (default 7), aggregated in Go from existing traffic_stats buckets.
+func (s *Service) handleTrafficHeatmap(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	days := parseQueryInt(request, "days", 7)
+	orgID := orgIDFromContext(request.Context())
+
+	to := time.Now().UTC()
+	from := to.Add(-time.Duration(days) * 24 * time.Hour)
+
+	stats, err := s.store.ListTrafficStats(request.Context(), from, to, orgID)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load traffic stats"})
+		return
+	}
+
+	// Aggregate by (routeSlug, hour-of-day).
+	type cellKey struct {
+		routeSlug string
+		hour      int
+	}
+	counts := make(map[cellKey]int)
+	for _, stat := range stats {
+		key := cellKey{
+			routeSlug: stat.RouteSlug,
+			hour:      stat.BucketStart.Hour(),
+		}
+		counts[key] += stat.RequestCount
+	}
+
+	type heatmapCell struct {
+		RouteSlug    string `json:"routeSlug"`
+		Hour         int    `json:"hour"`
+		RequestCount int    `json:"requestCount"`
+	}
+
+	cells := make([]heatmapCell, 0, len(counts))
+	for key, count := range counts {
+		cells = append(cells, heatmapCell{
+			RouteSlug:    key.routeSlug,
+			Hour:         key.hour,
+			RequestCount: count,
+		})
+	}
+
+	writeJSON(writer, http.StatusOK, cells)
 }

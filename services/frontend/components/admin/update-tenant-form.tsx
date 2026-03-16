@@ -4,7 +4,7 @@ import { AnimatedStep, type StepDef, StepList } from "@/components/admin/modal-s
 import { useToast } from "@/components/toast-provider";
 import type { TenantSummary } from "@/lib/contracts";
 import { Button, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
-import { ArrowLeft, ArrowRight, PenSquare } from "lucide-react";
+import { ArrowLeft, ArrowRight, Info, PenSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
@@ -165,13 +165,26 @@ export function UpdateTenantForm({
                 ) : (
                   <div className="space-y-5">
                     <div className="enterprise-panel grid gap-4 p-4">
+                      {(tenant.upstreams?.length ?? 0) > 0 && (
+                        <div className="flex items-start gap-1.5 rounded-lg bg-warning/8 px-2.5 py-2 text-[12px] text-warning/80">
+                          <Info size={12} className="mt-0.5 shrink-0" />
+                          <span>
+                            This tenant has {tenant.upstreams!.length} load-balancing upstream{tenant.upstreams!.length !== 1 ? "s" : ""} configured.
+                            The default URL below is currently bypassed — all traffic routes through the LB pool.
+                          </span>
+                        </div>
+                      )}
                       <TextField className="grid gap-2">
                         <Label>Default Upstream URL</Label>
                         <Input
                           value={formState.upstreamURL}
                           onChange={(e) => setFormState((s) => ({ ...s, upstreamURL: e.target.value }))}
                         />
-                        <div className="enterprise-note">Fallback origin. Load-balancing upstreams take precedence.</div>
+                        <div className="enterprise-note">
+                          {(tenant.upstreams?.length ?? 0) > 0
+                            ? "Currently bypassed. Only used if all load-balancing upstreams are removed."
+                            : "Used for routing when no load-balancing upstreams are configured."}
+                        </div>
                       </TextField>
                       <Select
                         className="w-full"
