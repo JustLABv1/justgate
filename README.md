@@ -111,8 +111,8 @@ Client (bearer token)
 
 ### Live Topology
 
-<video src="docs/screenshots/topology.mov" controls poster="docs/screenshots/topology.png" width="100%">
-  <a href="docs/screenshots/topology.mov">Download topology demo video</a>
+<video src="docs/screenshots/topology.mp4" controls poster="docs/screenshots/topology.png" width="100%">
+  <a href="docs/screenshots/topology.mp4">Download topology demo video</a>
 </video>
 
 ---
