@@ -130,7 +130,7 @@ jobs:
 
           helm dependency update deploy/helm/justgate
           helm package deploy/helm/justgate --version "${CHART_VERSION}" --app-version "${CHART_VERSION}"
-          helm push "justgate-${CHART_VERSION}.tgz" oci://${{ env.REGISTRY }}/${OWNER}
+          helm push "justgate-${CHART_VERSION}.tgz" oci://${{ env.REGISTRY }}/${OWNER}/charts
 
       # ── Changelog & Release ─────────────────────────────────────────────────
       - name: Generate changelog
@@ -178,7 +178,7 @@ jobs:
           BODY="${BODY}docker pull ${REGISTRY}/${REPO}-frontend:${CHART_VERSION}\n"
           BODY="${BODY}\`\`\`\n\n"
           BODY="${BODY}### Helm Chart\n\`\`\`sh\n"
-          BODY="${BODY}helm install justgate oci://${REGISTRY}/${OWNER}/justgate --version ${CHART_VERSION}\n"
+          BODY="${BODY}helm install justgate oci://${REGISTRY}/${OWNER}/charts/justgate --version ${CHART_VERSION}\n"
           BODY="${BODY}\`\`\`"
 
           if [ "$IS_PRERELEASE" = "true" ]; then
