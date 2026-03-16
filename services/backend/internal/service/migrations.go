@@ -301,6 +301,120 @@ var schemaMigrations = []migration{
 			`ALTER TABLE audits ADD COLUMN request_path TEXT NOT NULL DEFAULT ''`,
 		},
 	},
+	{
+		version: 11,
+		name:    "create_protected_apps",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS protected_apps (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				slug TEXT NOT NULL UNIQUE,
+				upstream_url TEXT NOT NULL,
+				org_id TEXT NOT NULL DEFAULT '',
+				auth_mode TEXT NOT NULL DEFAULT 'oidc',
+				inject_headers_json TEXT NOT NULL DEFAULT '[]',
+				strip_headers_json TEXT NOT NULL DEFAULT '[]',
+				extra_ca_pem TEXT NOT NULL DEFAULT '',
+				rate_limit_rpm INTEGER NOT NULL DEFAULT 0,
+				rate_limit_burst INTEGER NOT NULL DEFAULT 0,
+				rate_limit_per TEXT NOT NULL DEFAULT 'session',
+				allow_cidrs TEXT NOT NULL DEFAULT '',
+				deny_cidrs TEXT NOT NULL DEFAULT '',
+				health_check_path TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMP NOT NULL,
+				created_by TEXT NOT NULL DEFAULT ''
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_protected_apps_org ON protected_apps (org_id)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_protected_apps_slug ON protected_apps (slug)`,
+			`CREATE TABLE IF NOT EXISTS app_sessions (
+				id TEXT PRIMARY KEY,
+				app_id TEXT NOT NULL,
+				user_sub TEXT NOT NULL DEFAULT '',
+				user_email TEXT NOT NULL DEFAULT '',
+				user_name TEXT NOT NULL DEFAULT '',
+				user_groups_json TEXT NOT NULL DEFAULT '[]',
+				token_hash TEXT NOT NULL UNIQUE,
+				ip TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMP NOT NULL,
+				expires_at TIMESTAMP NOT NULL,
+				last_used_at TIMESTAMP NOT NULL,
+				revoked BOOLEAN NOT NULL DEFAULT FALSE
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_app_sessions_app ON app_sessions (app_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_app_sessions_hash ON app_sessions (token_hash)`,
+			`CREATE TABLE IF NOT EXISTS app_tokens (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				app_id TEXT NOT NULL,
+				token_hash TEXT NOT NULL UNIQUE,
+				preview TEXT NOT NULL DEFAULT '',
+				active BOOLEAN NOT NULL DEFAULT TRUE,
+				rate_limit_rpm INTEGER NOT NULL DEFAULT 0,
+				rate_limit_burst INTEGER NOT NULL DEFAULT 0,
+				expires_at TIMESTAMP NOT NULL,
+				last_used_at TIMESTAMP NOT NULL,
+				created_at TIMESTAMP NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_app_tokens_app ON app_tokens (app_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_app_tokens_hash ON app_tokens (token_hash)`,
+		},
+	},
+	{
+		version: 12,
+		name:    "create_provisioning_grants",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS provisioning_grants (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				tenant_id TEXT NOT NULL,
+				scopes_json TEXT NOT NULL DEFAULT '[]',
+				token_ttl_hours INTEGER NOT NULL DEFAULT 720,
+				max_uses INTEGER NOT NULL DEFAULT 10,
+				use_count INTEGER NOT NULL DEFAULT 0,
+				active BOOLEAN NOT NULL DEFAULT TRUE,
+				grant_hash TEXT NOT NULL UNIQUE,
+				preview TEXT NOT NULL DEFAULT '',
+				rate_limit_rpm INTEGER NOT NULL DEFAULT 0,
+				rate_limit_burst INTEGER NOT NULL DEFAULT 0,
+				org_id TEXT NOT NULL DEFAULT '',
+				expires_at TIMESTAMP NOT NULL,
+				created_at TIMESTAMP NOT NULL,
+				created_by TEXT NOT NULL DEFAULT ''
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_grants_org ON provisioning_grants (org_id)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_grants_hash ON provisioning_grants (grant_hash)`,
+		},
+	},
+	{
+		version: 13,
+		name:    "create_org_ip_rules",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS org_ip_rules (
+				id TEXT PRIMARY KEY,
+				org_id TEXT NOT NULL,
+				cidr TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMP NOT NULL,
+				created_by TEXT NOT NULL DEFAULT ''
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_org_ip_rules_org ON org_ip_rules (org_id)`,
+		},
+	},
+	{
+		version: 14,
+		name:    "create_grant_issuances",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS grant_issuances (
+				id TEXT PRIMARY KEY,
+				grant_id TEXT NOT NULL,
+				token_id TEXT NOT NULL,
+				agent_name TEXT NOT NULL DEFAULT '',
+				issued_at TIMESTAMP NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_grant_issuances_grant ON grant_issuances (grant_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_grant_issuances_issued ON grant_issuances (issued_at DESC)`,
+		},
+	},
 }
 
 func (store *sqlStore) runMigrations(ctx context.Context) error {

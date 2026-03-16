@@ -1,19 +1,21 @@
 import { ActivityFeed } from "@/components/admin/activity-feed";
 import { CollapsibleAnalytics } from "@/components/admin/collapsible-analytics";
+import { InstanceStatusPanel } from "@/components/admin/instance-status-panel";
 import { OnboardingModal } from "@/components/admin/onboarding-modal";
 import { QuickActions } from "@/components/admin/quick-actions";
 import { PageTransition } from "@/components/page-transition";
-import { getCircuitBreakers, getExpiringTokens, getTopology, getTrafficOverview, getTrafficStats } from "@/lib/backend-client";
-import { Activity, AlertTriangle, ArrowRight, Clock, Globe, Lock, Server, TimerReset } from "lucide-react";
+import { getCircuitBreakers, getExpiringTokens, getReplicas, getTopology, getTrafficOverview, getTrafficStats } from "@/lib/backend-client";
+import { Activity, AlertTriangle, ArrowRight, Clock, Globe, Lock, Server, TimerReset, TrendingDown, TrendingUp } from "lucide-react";
 import Link from "next/link";
 
 export default async function Home() {
-  const [topology, circuitBreakersResult, expiringTokensResult, statsResult, overviewResult] = await Promise.all([
+  const [topology, circuitBreakersResult, expiringTokensResult, statsResult, overviewResult, replicasResult] = await Promise.all([
     getTopology(),
     getCircuitBreakers(),
     getExpiringTokens(7),
     getTrafficStats(24),
     getTrafficOverview(),
+    getReplicas(),
   ]);
   const stats = {
     tenants: topology.data.stats.tenants,
@@ -52,6 +54,14 @@ export default async function Home() {
   const allDone = setupSteps.every((s) => s.done);
   const completedCount = setupSteps.filter((s) => s.done).length;
 
+  const auditTrend = (() => {
+    const cur = overviewResult.data.totalRequests;
+    const prior = overviewResult.data.priorRequests;
+    if (!prior) return null;
+    const pct = Math.round(((cur - prior) / prior) * 100);
+    return { pct, up: pct >= 0 };
+  })();
+
   return (
     <PageTransition>
     <div className="space-y-8">
@@ -78,10 +88,10 @@ export default async function Home() {
       {/* ── Stats strip ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          { label: "Tenants", value: stats.tenants, icon: Server, href: "/tenants" },
-          { label: "Routes", value: stats.routes, icon: Globe, href: "/routes" },
-          { label: "Active Tokens", value: stats.activeTokens, icon: Lock, href: "/tokens" },
-          { label: "Audit (24h)", value: stats.auditEvents24h, icon: TimerReset, href: "/audit" },
+          { label: "Tenants", value: stats.tenants, icon: Server, href: "/tenants", trend: null },
+          { label: "Routes", value: stats.routes, icon: Globe, href: "/routes", trend: null },
+          { label: "Active Tokens", value: stats.activeTokens, icon: Lock, href: "/tokens", trend: null },
+          { label: "Audit (24h)", value: stats.auditEvents24h, icon: TimerReset, href: "/audit", trend: auditTrend },
         ].map((item) => (
           <Link
             key={item.label}
@@ -92,7 +102,15 @@ export default async function Home() {
               <span className="text-xs font-medium text-muted-foreground">{item.label}</span>
               <item.icon size={14} className="text-muted-foreground transition-colors group-hover:text-accent" />
             </div>
-            <div className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{item.value}</div>
+            <div className="mt-2 flex items-end justify-between gap-2">
+              <div className="text-2xl font-semibold tracking-tight text-foreground">{item.value}</div>
+              {item.trend && (
+                <div className={`mb-0.5 flex items-center gap-0.5 text-[11px] font-medium ${item.trend.up ? "text-success" : "text-danger"}`}>
+                  {item.trend.up ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
+                  {item.trend.up ? "+" : ""}{item.trend.pct}%
+                </div>
+              )}
+            </div>
           </Link>
         ))}
       </div>
@@ -156,6 +174,9 @@ export default async function Home() {
             </div>
             <ActivityFeed events={topology.data.auditEvents} />
           </div>
+
+          {/* Traffic analytics — inline below recent traffic, open by default */}
+          <CollapsibleAnalytics stats={statsResult.data} overview={overviewResult.data} />
         </div>
 
         {/* Right sidebar */}
@@ -221,12 +242,18 @@ export default async function Home() {
               <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                 <AlertTriangle size={11} />
                 Circuit Breakers
+                <span
+                  className="ml-auto cursor-default text-[9px] normal-case font-normal tracking-normal text-muted-foreground/50"
+                  title="Opens after repeated 5xx errors or connection failures from the upstream. Gateway-level rejections (rate limits, auth) do not affect the circuit breaker."
+                >
+                  upstream health
+                </span>
               </div>
               <div className="mt-3 space-y-2">
                 {circuitBreakersResult.data.map((cb) => (
-                  <div key={cb.tenantID} className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground truncate max-w-[140px]">{cb.tenantID}</span>
-                    <span className={`text-xs font-medium ${cb.state === "closed" ? "text-success" : cb.state === "open" ? "text-danger" : "text-warning"}`}>
+                  <div key={cb.routeID ?? cb.tenantID} className="flex items-center justify-between text-sm gap-2">
+                    <span className="text-muted-foreground truncate font-mono text-xs max-w-[130px]">/proxy/{cb.slug}</span>
+                    <span className={`text-xs font-medium shrink-0 ${cb.state === "closed" ? "text-success" : cb.state === "open" ? "text-danger" : "text-warning"}`}>
                       {cb.state}
                     </span>
                   </div>
@@ -234,6 +261,9 @@ export default async function Home() {
               </div>
             </div>
           )}
+
+          {/* Instance status */}
+          <InstanceStatusPanel initialReplicas={replicasResult.data} />
 
           {/* Expiring tokens */}
           {expiringTokensResult.data.length > 0 && (
@@ -257,8 +287,6 @@ export default async function Home() {
         </div>
       </div>
 
-      {/* ── Traffic analytics (collapsible) ───────────────────────── */}
-      <CollapsibleAnalytics stats={statsResult.data} overview={overviewResult.data} />
     </div>
     </PageTransition>
   );

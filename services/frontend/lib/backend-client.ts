@@ -6,18 +6,27 @@ import {
     fallbackTokens,
     type AdminOverview,
     type AdminSession,
+    type AppSession,
+    type AppToken,
     type AuditEvent,
+    type BulkTokenResponse,
     type CircuitBreakerStatus,
     type ExpiringToken,
+    type GrantIssuance,
+    type GrantSummary,
     type HealthHistoryEntry,
+    type IssuedGrant,
+    type IssuedToken,
     type MemberSummary,
     type OIDCConfig,
     type OIDCOrgMapping,
     type OrgAdminSummary,
+    type OrgIPRule,
     type OrgSummary,
     type PaginatedAdminAuditResponse,
     type PaginatedAuditResponse,
     type PlatformAdminSummary,
+    type ProtectedApp,
     type QueryResult,
     type ReplicaInfo,
     type RouteSummary,
@@ -25,6 +34,7 @@ import {
     type TenantSummary,
     type TenantUpstream,
     type TokenSummary,
+    type TokenTrafficStat,
     type TopologySnapshot,
     type TrafficOverview,
     type TrafficStat,
@@ -262,6 +272,139 @@ export function getReplicas() {
 export function getSearchResults(query: string) {
   return fetchBackend<SearchResults>(
     `/api/v1/admin/search?q=${encodeURIComponent(query)}`,
-    { routes: [], tenants: [], tokens: [] },
+    { routes: [], tenants: [], tokens: [], grants: [], apps: [] },
   );
+}
+
+// ── Token Usage Analytics ────────────────────────────────────────
+
+export function getTokenTrafficStats(tokenID: string, hours = 24) {
+  return fetchBackend<TokenTrafficStat[]>(
+    `/api/v1/admin/tokens/${encodeURIComponent(tokenID)}/stats?hours=${hours}`,
+    [],
+  );
+}
+
+// ── Route Traffic Drilldown ──────────────────────────────────────
+
+export function getRouteTrafficStats(routeSlug: string, hours = 24) {
+  return fetchBackend<TrafficStat[]>(
+    `/api/v1/admin/traffic/route?routeSlug=${encodeURIComponent(routeSlug)}&hours=${hours}`,
+    [],
+  );
+}
+
+// ── Token Rotation ───────────────────────────────────────────────
+
+export async function rotateToken(tokenID: string): Promise<IssuedToken | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/tokens/${encodeURIComponent(tokenID)}/rotate`, {
+    method: "POST",
+    headers,
+    cache: "no-store",
+  });
+  return response.json() as Promise<IssuedToken | { error: string }>;
+}
+
+// ── Grant Issuances ──────────────────────────────────────────────
+
+export function getGrantIssuances(grantID: string) {
+  return fetchBackend<GrantIssuance[]>(
+    `/api/v1/admin/grants/${encodeURIComponent(grantID)}/issuances`,
+    [],
+  );
+}
+
+// ── Org IP Rules ─────────────────────────────────────────────────
+
+export function getOrgIPRules() {
+  return fetchBackend<OrgIPRule[]>("/api/v1/admin/org-ip-rules", []);
+}
+
+export async function createOrgIPRule(payload: { cidr: string; description: string }): Promise<OrgIPRule | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/org-ip-rules`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return response.json() as Promise<OrgIPRule | { error: string }>;
+}
+
+export async function deleteOrgIPRule(ruleID: string): Promise<void> {
+  const headers = await getAdminRequestHeaders();
+  await fetch(`${backendUrl}/api/v1/admin/org-ip-rules/${encodeURIComponent(ruleID)}`, {
+    method: "DELETE",
+    headers,
+    cache: "no-store",
+  });
+}
+
+// ── Protected Apps ───────────────────────────────────────────────
+
+export function getProtectedApps() {
+  return fetchBackend<ProtectedApp[]>("/api/v1/admin/apps", []);
+}
+
+export function getAppTokens(appID: string) {
+  return fetchBackend<AppToken[]>(`/api/v1/admin/apps/${encodeURIComponent(appID)}/tokens`, []);
+}
+
+export function getAppSessions(appID: string) {
+  return fetchBackend<AppSession[]>(`/api/v1/admin/apps/${encodeURIComponent(appID)}/sessions`, []);
+}
+
+// ── Provisioning Grants ─────────────────────────────────────────
+
+export function getGrants() {
+  return fetchBackend<GrantSummary[]>("/api/v1/admin/grants", []);
+}
+
+export async function createGrant(payload: {
+  name: string;
+  tenantID: string;
+  scopes: string;
+  maxUses: number;
+  expiresAt: string;
+  tokenTTLHours: number;
+  rateLimitRPM?: number;
+  rateLimitBurst?: number;
+}): Promise<IssuedGrant | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/grants`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return response.json() as Promise<IssuedGrant | { error: string }>;
+}
+
+export async function deleteGrant(grantID: string): Promise<void> {
+  const headers = await getAdminRequestHeaders();
+  await fetch(`${backendUrl}/api/v1/admin/grants/${encodeURIComponent(grantID)}`, {
+    method: "DELETE",
+    headers,
+    cache: "no-store",
+  });
+}
+
+export async function bulkCreateTokens(payload: {
+  namePrefix: string;
+  tenantID: string;
+  scopes: string;
+  expiresAt: string;
+  count: number;
+  rateLimitRPM?: number;
+  rateLimitBurst?: number;
+}): Promise<BulkTokenResponse | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/tokens/bulk`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return response.json() as Promise<BulkTokenResponse | { error: string }>;
 }

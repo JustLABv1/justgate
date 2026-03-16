@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import type { AdminSession } from "@/lib/contracts";
 import { Ban, Globe, Monitor, Smartphone } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -87,15 +88,24 @@ export function SessionsTable({ sessions }: SessionsTableProps) {
                 </td>
                 <td className="px-4 py-3 text-right">
                   {!session.isRevoked && (
-                    <button
-                      type="button"
-                      onClick={() => handleRevoke(session.id)}
-                      disabled={revoking === session.id}
-                      className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
-                    >
-                      <Ban size={12} />
-                      {revoking === session.id ? "Revoking…" : "Revoke"}
-                    </button>
+                    <ConfirmDialog
+                      trigger={(open) => (
+                        <button
+                          type="button"
+                          onClick={open}
+                          disabled={revoking === session.id}
+                          className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
+                        >
+                          <Ban size={12} />
+                          {revoking === session.id ? "Revoking…" : "Revoke"}
+                        </button>
+                      )}
+                      title="Revoke session?"
+                      description="This will immediately sign out this device. The user will need to sign in again."
+                      confirmLabel="Revoke session"
+                      onConfirm={() => handleRevoke(session.id)}
+                      variant="warning"
+                    />
                   )}
                 </td>
               </tr>

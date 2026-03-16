@@ -46,6 +46,7 @@ export interface RouteSummary {
   rateLimitBurst: number;
   allowCIDRs: string;
   denyCIDRs: string;
+  circuitBreakerState?: string;
 }
 
 export interface TokenSummary {
@@ -55,6 +56,7 @@ export interface TokenSummary {
   scopes: string[];
   expiresAt: string;
   lastUsedAt: string;
+  createdAt: string;
   preview: string;
   active: boolean;
   rateLimitRPM: number;
@@ -190,6 +192,7 @@ export interface UserAdminSummary {
   id: string;
   name: string;
   email: string;
+  source: string;
   createdAt: string;
   isPlatformAdmin: boolean;
 }
@@ -281,6 +284,8 @@ export interface AdminSession {
 // ── Circuit Breakers ────────────────────────────────────────────
 
 export interface CircuitBreakerStatus {
+  routeID: string;
+  slug: string;
   tenantID: string;
   state: string;
   failureCount: number;
@@ -315,7 +320,7 @@ export interface ReplicaInfo {
   region: string;
   hostname: string;
   lastHeartbeat: string;
-  isHealthy: boolean;
+  status: string;
 }
 
 // ── Global Search ───────────────────────────────────────────────
@@ -324,5 +329,136 @@ export interface SearchResults {
   routes: RouteSummary[];
   tenants: TenantSummary[];
   tokens: TokenSummary[];
+  grants: GrantSummary[];
+  apps: ProtectedApp[];
 }
 
+// ── Protected Apps ───────────────────────────────────────────────
+
+export interface HeaderInjectionRule {
+  name: string;
+  value: string;
+}
+
+export interface ProtectedApp {
+  id: string;
+  name: string;
+  slug: string;
+  upstreamURL: string;
+  orgID: string;
+  authMode: "oidc" | "bearer" | "any" | "none";
+  injectHeaders: HeaderInjectionRule[];
+  stripHeaders: string[];
+  extraCAPEM: string;
+  rateLimitRPM: number;
+  rateLimitBurst: number;
+  rateLimitPer: "session" | "ip" | "token";
+  allowCIDRs: string;
+  denyCIDRs: string;
+  healthCheckPath: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface AppSession {
+  id: string;
+  appID: string;
+  userSub: string;
+  userEmail: string;
+  userName: string;
+  userGroups: string[];
+  ip: string;
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string;
+  revoked: boolean;
+}
+
+export interface AppToken {
+  id: string;
+  name: string;
+  appID: string;
+  preview: string;
+  active: boolean;
+  rateLimitRPM: number;
+  rateLimitBurst: number;
+  expiresAt: string;
+  lastUsedAt: string;
+  createdAt: string;
+}
+
+export interface IssuedAppToken {
+  token: AppToken;
+  secret: string;
+}
+
+// ── Provisioning Grants ─────────────────────────────────────────
+
+export interface GrantSummary {
+  id: string;
+  name: string;
+  tenantID: string;
+  scopes: string[];
+  tokenTTLHours: number;
+  maxUses: number;
+  useCount: number;
+  active: boolean;
+  preview: string;
+  rateLimitRPM: number;
+  rateLimitBurst: number;
+  orgID: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface IssuedGrant {
+  grant: GrantSummary;
+  secret: string;
+}
+
+export interface BulkTokenResponse {
+  tokens: IssuedToken[];
+}
+
+// ── Traffic Heatmap ──────────────────────────────────────────────
+
+export interface TrafficHeatmapCell {
+  routeSlug: string;
+  hour: number;
+  requestCount: number;
+}
+
+// ── Token Usage Analytics ────────────────────────────────────────
+
+export interface TokenTrafficStat {
+  bucket: string;
+  routeSlug: string;
+  tenantID: string;
+  tokenID: string;
+  requestCount: number;
+  errorCount: number;
+  avgLatencyMs: number;
+  status2xx: number;
+  status4xx: number;
+  status5xx: number;
+}
+
+// ── Grant Issuances ──────────────────────────────────────────────
+
+export interface GrantIssuance {
+  id: string;
+  grantID: string;
+  tokenID: string;
+  agentName: string;
+  issuedAt: string;
+}
+
+// ── Org IP Rules ─────────────────────────────────────────────────
+
+export interface OrgIPRule {
+  id: string;
+  cidr: string;
+  description: string;
+  createdAt: string;
+  createdBy: string;
+}

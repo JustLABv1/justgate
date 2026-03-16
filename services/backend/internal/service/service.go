@@ -20,6 +20,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -133,6 +134,42 @@ type dataStore interface {
 	ListAuditsPaginatedFiltered(ctx context.Context, limit, offset int, filters auditFilters) ([]auditRecord, int, error)
 	// Tenant lookup for proxy header injection
 	GetTenantByTenantID(ctx context.Context, tenantID string) (tenantRecord, bool, error)
+	// Protected Apps
+	ListProtectedApps(ctx context.Context, orgID string) ([]protectedAppRecord, error)
+	GetProtectedApp(ctx context.Context, appID string) (protectedAppRecord, bool, error)
+	GetProtectedAppBySlug(ctx context.Context, slug string) (protectedAppRecord, bool, error)
+	CreateProtectedApp(ctx context.Context, payload createAppRequest, orgID, createdBy string) (protectedAppRecord, error)
+	UpdateProtectedApp(ctx context.Context, appID string, payload createAppRequest) (protectedAppRecord, error)
+	DeleteProtectedApp(ctx context.Context, appID string) error
+	// App sessions (browser OIDC)
+	CreateAppSession(ctx context.Context, session appSessionRecord) error
+	GetAppSessionByToken(ctx context.Context, secret string) (appSessionRecord, bool, error)
+	ListAppSessions(ctx context.Context, appID string) ([]appSessionRecord, error)
+	RevokeAppSession(ctx context.Context, sessionID string) error
+	TouchAppSession(ctx context.Context, sessionID string, now time.Time) error
+	// App tokens (machine-to-machine)
+	CreateAppToken(ctx context.Context, appID, name, secret string, rateLimitRPM, rateLimitBurst int, expiresAt time.Time) (appTokenRecord, error)
+	ListAppTokens(ctx context.Context, appID string) ([]appTokenRecord, error)
+	ValidateAppToken(ctx context.Context, secret string) (appTokenRecord, bool, error)
+	DeleteAppToken(ctx context.Context, tokenID string) error
+	// Provisioning grants
+	CreateProvisioningGrant(ctx context.Context, record provisioningGrantRecord) (provisioningGrantRecord, error)
+	ListProvisioningGrants(ctx context.Context) ([]provisioningGrantRecord, error)
+	GetProvisioningGrantByHash(ctx context.Context, hash string) (provisioningGrantRecord, bool, error)
+	IncrementGrantUseCount(ctx context.Context, id string, maxUses int) (bool, error)
+	DeleteProvisioningGrant(ctx context.Context, id string) error
+	// Token analytics
+	GetTokenByID(ctx context.Context, tokenID string) (tokenRecord, bool, error)
+	ListTokenTrafficStats(ctx context.Context, tokenID string, from, to time.Time) ([]trafficStatRecord, error)
+	// Route traffic drilldown
+	ListRouteTrafficStats(ctx context.Context, routeSlug string, from, to time.Time, orgID string) ([]trafficStatRecord, error)
+	// Org IP allowlist
+	ListOrgIPRules(ctx context.Context, orgID string) ([]orgIPRuleRecord, error)
+	CreateOrgIPRule(ctx context.Context, rule orgIPRuleRecord) (orgIPRuleRecord, error)
+	DeleteOrgIPRule(ctx context.Context, ruleID string) error
+	// Grant audit trail
+	RecordGrantIssuance(ctx context.Context, record grantIssuanceRecord) error
+	ListGrantIssuances(ctx context.Context, grantID string) ([]grantIssuanceRecord, error)
 }
 
 type createOrgRequest struct {
@@ -181,6 +218,10 @@ type Service struct {
 	rateLimiter      rateLimiter
 	circuitBreakers  *circuitBreakerManager
 	auditSubscribers *auditBroadcaster
+	// Cache of per-app custom-CA transports; keyed by "appID:sha256prefix" of PEM.
+	appTransports sync.Map
+	// Cache of fetched OIDC discovery documents; keyed by issuer URL.
+	oidcDiscovery sync.Map
 }
 
 type overviewResponse struct {
@@ -218,16 +259,17 @@ type tenantSummary struct {
 }
 
 type routeSummary struct {
-	ID             string   `json:"id"`
-	Slug           string   `json:"slug"`
-	TargetPath     string   `json:"targetPath"`
-	TenantID       string   `json:"tenantID"`
-	RequiredScope  string   `json:"requiredScope"`
-	Methods        []string `json:"methods"`
-	RateLimitRPM   int      `json:"rateLimitRPM"`
-	RateLimitBurst int      `json:"rateLimitBurst"`
-	AllowCIDRs     string   `json:"allowCIDRs"`
-	DenyCIDRs      string   `json:"denyCIDRs"`
+	ID                  string   `json:"id"`
+	Slug                string   `json:"slug"`
+	TargetPath          string   `json:"targetPath"`
+	TenantID            string   `json:"tenantID"`
+	RequiredScope       string   `json:"requiredScope"`
+	Methods             []string `json:"methods"`
+	RateLimitRPM        int      `json:"rateLimitRPM"`
+	RateLimitBurst      int      `json:"rateLimitBurst"`
+	AllowCIDRs          string   `json:"allowCIDRs"`
+	DenyCIDRs           string   `json:"denyCIDRs"`
+	CircuitBreakerState string   `json:"circuitBreakerState,omitempty"`
 }
 
 type tokenSummary struct {
@@ -237,6 +279,7 @@ type tokenSummary struct {
 	Scopes         []string `json:"scopes"`
 	ExpiresAt      string   `json:"expiresAt"`
 	LastUsedAt     string   `json:"lastUsedAt"`
+	CreatedAt      string   `json:"createdAt"`
 	Preview        string   `json:"preview"`
 	Active         bool     `json:"active"`
 	RateLimitRPM   int      `json:"rateLimitRPM"`
@@ -316,6 +359,54 @@ type issuedTokenResponse struct {
 	Secret string       `json:"secret"`
 }
 
+type createProvisioningGrantRequest struct {
+	Name           string          `json:"name"`
+	TenantID       string          `json:"tenantID"`
+	Scopes         json.RawMessage `json:"scopes"`
+	MaxUses        int             `json:"maxUses"`
+	ExpiresAt      string          `json:"expiresAt"`
+	TokenTTLHours  int             `json:"tokenTTLHours"`
+	RateLimitRPM   int             `json:"rateLimitRPM"`
+	RateLimitBurst int             `json:"rateLimitBurst"`
+}
+
+type grantSummary struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	TenantID       string   `json:"tenantID"`
+	Scopes         []string `json:"scopes"`
+	TokenTTLHours  int      `json:"tokenTTLHours"`
+	MaxUses        int      `json:"maxUses"`
+	UseCount       int      `json:"useCount"`
+	Active         bool     `json:"active"`
+	Preview        string   `json:"preview"`
+	RateLimitRPM   int      `json:"rateLimitRPM"`
+	RateLimitBurst int      `json:"rateLimitBurst"`
+	OrgID          string   `json:"orgID"`
+	ExpiresAt      string   `json:"expiresAt"`
+	CreatedAt      string   `json:"createdAt"`
+}
+
+type issuedGrantResponse struct {
+	Grant  grantSummary `json:"grant"`
+	Secret string       `json:"secret"`
+}
+
+type provisionRequest struct {
+	GrantSecret string `json:"grantSecret"`
+	AgentName   string `json:"agentName"`
+}
+
+type bulkCreateTokensRequest struct {
+	NamePrefix     string          `json:"namePrefix"`
+	TenantID       string          `json:"tenantID"`
+	Scopes         json.RawMessage `json:"scopes"`
+	ExpiresAt      string          `json:"expiresAt"`
+	Count          int             `json:"count"`
+	RateLimitRPM   int             `json:"rateLimitRPM"`
+	RateLimitBurst int             `json:"rateLimitBurst"`
+}
+
 type routeRecord struct {
 	ID             string
 	Slug           string
@@ -348,6 +439,7 @@ type tokenRecord struct {
 	Scopes         []string
 	ExpiresAt      time.Time
 	LastUsedAt     time.Time
+	CreatedAt      time.Time
 	Preview        string
 	Active         bool
 	Hash           string
@@ -533,6 +625,176 @@ type auditFilters struct {
 	To        time.Time
 }
 
+// ── Protected Apps data types ──────────────────────────────────────────
+
+type headerInjectionRule struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type protectedAppRecord struct {
+	ID              string
+	Name            string
+	Slug            string
+	UpstreamURL     string
+	OrgID           string
+	AuthMode        string // "oidc", "bearer", "any"
+	InjectHeaders   []headerInjectionRule
+	StripHeaders    []string
+	ExtraCAPEM      string
+	RateLimitRPM    int
+	RateLimitBurst  int
+	RateLimitPer    string // "session", "ip", "token"
+	AllowCIDRs      string
+	DenyCIDRs       string
+	HealthCheckPath string
+	CreatedAt       time.Time
+	CreatedBy       string
+}
+
+type appSessionRecord struct {
+	ID         string
+	AppID      string
+	UserSub    string
+	UserEmail  string
+	UserName   string
+	UserGroups []string
+	TokenHash  string
+	IP         string
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	LastUsedAt time.Time
+	Revoked    bool
+}
+
+type appTokenRecord struct {
+	ID             string
+	Name           string
+	AppID          string
+	TokenHash      string
+	Preview        string
+	Active         bool
+	RateLimitRPM   int
+	RateLimitBurst int
+	ExpiresAt      time.Time
+	LastUsedAt     time.Time
+	CreatedAt      time.Time
+}
+
+type provisioningGrantRecord struct {
+	ID             string
+	Name           string
+	TenantID       string
+	Scopes         []string
+	TokenTTLHours  int
+	MaxUses        int
+	UseCount       int
+	Active         bool
+	Hash           string
+	Preview        string
+	RateLimitRPM   int
+	RateLimitBurst int
+	OrgID          string
+	ExpiresAt      time.Time
+	CreatedAt      time.Time
+	CreatedBy      string
+}
+
+// ── Protected Apps API types ───────────────────────────────────────────
+
+type createAppRequest struct {
+	Name            string                `json:"name"`
+	Slug            string                `json:"slug"`
+	UpstreamURL     string                `json:"upstreamURL"`
+	AuthMode        string                `json:"authMode"`
+	InjectHeaders   []headerInjectionRule `json:"injectHeaders"`
+	StripHeaders    []string              `json:"stripHeaders"`
+	ExtraCAPEM      string                `json:"extraCAPEM"`
+	RateLimitRPM    int                   `json:"rateLimitRPM"`
+	RateLimitBurst  int                   `json:"rateLimitBurst"`
+	RateLimitPer    string                `json:"rateLimitPer"`
+	AllowCIDRs      string                `json:"allowCIDRs"`
+	DenyCIDRs       string                `json:"denyCIDRs"`
+	HealthCheckPath string                `json:"healthCheckPath"`
+}
+
+type appSummary struct {
+	ID              string                `json:"id"`
+	Name            string                `json:"name"`
+	Slug            string                `json:"slug"`
+	UpstreamURL     string                `json:"upstreamURL"`
+	AuthMode        string                `json:"authMode"`
+	InjectHeaders   []headerInjectionRule `json:"injectHeaders"`
+	StripHeaders    []string              `json:"stripHeaders"`
+	ExtraCAPEM      string                `json:"extraCAPEM"`
+	RateLimitRPM    int                   `json:"rateLimitRPM"`
+	RateLimitBurst  int                   `json:"rateLimitBurst"`
+	RateLimitPer    string                `json:"rateLimitPer"`
+	AllowCIDRs      string                `json:"allowCIDRs"`
+	DenyCIDRs       string                `json:"denyCIDRs"`
+	HealthCheckPath string                `json:"healthCheckPath"`
+	CreatedAt       string                `json:"createdAt"`
+}
+
+type appSessionSummary struct {
+	ID         string `json:"id"`
+	UserSub    string `json:"userSub"`
+	UserEmail  string `json:"userEmail"`
+	UserName   string `json:"userName"`
+	IP         string `json:"ip"`
+	CreatedAt  string `json:"createdAt"`
+	ExpiresAt  string `json:"expiresAt"`
+	LastUsedAt string `json:"lastUsedAt"`
+}
+
+type createAppTokenRequest struct {
+	Name           string `json:"name"`
+	RateLimitRPM   int    `json:"rateLimitRPM"`
+	RateLimitBurst int    `json:"rateLimitBurst"`
+	ExpiresAt      string `json:"expiresAt"`
+}
+
+type appTokenSummary struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	AppID          string `json:"appID"`
+	Preview        string `json:"preview"`
+	Active         bool   `json:"active"`
+	RateLimitRPM   int    `json:"rateLimitRPM"`
+	RateLimitBurst int    `json:"rateLimitBurst"`
+	ExpiresAt      string `json:"expiresAt"`
+	LastUsedAt     string `json:"lastUsedAt"`
+	CreatedAt      string `json:"createdAt"`
+}
+
+type issuedAppTokenResponse struct {
+	Token  appTokenSummary `json:"token"`
+	Secret string          `json:"secret"`
+}
+
+type orgIPRuleRecord struct {
+	ID          string
+	OrgID       string
+	CIDR        string
+	Description string
+	CreatedAt   time.Time
+	CreatedBy   string
+}
+
+type grantIssuanceRecord struct {
+	ID        string
+	GrantID   string
+	TokenID   string
+	AgentName string
+	IssuedAt  time.Time
+}
+
+// oidcDiscoveryDoc is the subset of the OIDC discovery document we need.
+type oidcDiscoveryDoc struct {
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+}
+
 // Route test request/response types
 type routeTestRequest struct {
 	Method      string            `json:"method"`
@@ -666,6 +928,7 @@ func (s *Service) Handler() http.Handler {
 	// Traffic & analytics
 	mux.HandleFunc("/api/v1/admin/traffic/stats", s.withAdminAuth(s.withOptionalOrgContext(s.handleTrafficStats)))
 	mux.HandleFunc("/api/v1/admin/traffic/overview", s.withAdminAuth(s.withOptionalOrgContext(s.handleTrafficOverview)))
+	mux.HandleFunc("/api/v1/admin/traffic/heatmap", s.withAdminAuth(s.withOptionalOrgContext(s.handleTrafficHeatmap)))
 	// Admin activity audit
 	mux.HandleFunc("/api/v1/admin/admin-audit", s.withAdminAuth(s.handleAdminAudit))
 	// Health history
@@ -678,6 +941,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/sessions/", s.withAdminAuth(s.handleSessionRevoke))
 	// Circuit breakers
 	mux.HandleFunc("/api/v1/admin/circuit-breakers", s.withAdminAuth(s.withOptionalOrgContext(s.handleCircuitBreakers)))
+	mux.HandleFunc("/api/v1/admin/circuit-breakers/", s.withAdminAuth(s.handleCircuitBreakerByID))
 	// Token lifecycle
 	mux.HandleFunc("/api/v1/admin/tokens/expiring", s.withAdminAuth(s.withOrgContext(s.handleExpiringTokens)))
 	// Route tester
@@ -689,7 +953,22 @@ func (s *Service) Handler() http.Handler {
 	// Global search
 	mux.HandleFunc("/api/v1/admin/search", s.withAdminAuth(s.withOptionalOrgContext(s.handleSearch)))
 	s.registerPlatformRoutes(mux)
+	// Protected Apps — admin CRUD
+	mux.HandleFunc("/api/v1/admin/apps", s.withAdminAuth(s.withOrgContext(s.handleApps)))
+	mux.HandleFunc("/api/v1/admin/apps/", s.withAdminAuth(s.withOrgContext(s.handleAppByID)))
+	// Protected Apps — user-facing proxy (no admin auth; auth handled per-app)
+	mux.HandleFunc("/app/", s.handleApp)
 	mux.HandleFunc("/proxy/", s.handleProxy)
+	// Provisioning grants (admin CRUD + public provision endpoint)
+	mux.HandleFunc("/api/v1/admin/grants", s.withAdminAuth(s.withOrgContext(s.handleGrants)))
+	mux.HandleFunc("/api/v1/admin/grants/", s.withAdminAuth(s.withOrgContext(s.handleGrantByID)))
+	mux.HandleFunc("/api/v1/admin/tokens/bulk", s.withAdminAuth(s.withOrgContext(s.handleBulkCreateTokens)))
+	mux.HandleFunc("/api/v1/provision", s.handleProvision)
+	// Route traffic drilldown
+	mux.HandleFunc("/api/v1/admin/traffic/route", s.withAdminAuth(s.withOptionalOrgContext(s.handleRouteTrafficStats)))
+	// Org IP allowlist
+	mux.HandleFunc("/api/v1/admin/org-ip-rules", s.withAdminAuth(s.withOrgContext(s.handleOrgIPRules)))
+	mux.HandleFunc("/api/v1/admin/org-ip-rules/", s.withAdminAuth(s.withOrgContext(s.handleOrgIPRuleByID)))
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		startedAt := time.Now()
@@ -721,13 +1000,36 @@ func (s *Service) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 			return
 		}
+		source := identity.Source
+		if source == "" {
+			source = "local"
+		}
 		_ = s.store.UpsertUser(request.Context(), userRecord{
 			ID:        identity.Subject,
 			Email:     identity.Email,
 			Name:      identity.Name,
-			Source:    "admin",
+			Source:    source,
 			CreatedAt: time.Now().UTC(),
 		})
+		// If a different user record with the same email already exists, merge
+		// platform admin status and org memberships into the current identity.
+		// This handles the common case where the same person first used local
+		// credentials and later signs in via OIDC (or vice-versa), ending up
+		// with two distinct IDs but the same email.
+		if identity.Email != "" {
+			if prior, ok, err := s.store.GetUserByEmail(request.Context(), identity.Email); err == nil && ok && prior.ID != identity.Subject {
+				// Inherit platform admin
+				if isAdmin, err := s.store.IsPlatformAdmin(request.Context(), prior.ID); err == nil && isAdmin {
+					_ = s.store.GrantPlatformAdmin(request.Context(), identity.Subject, "system:email-merge")
+				}
+				// Inherit org memberships
+				if priorOrgs, err := s.store.ListOrgs(request.Context(), prior.ID); err == nil {
+					for _, org := range priorOrgs {
+						_ = s.store.AddOrgMember(request.Context(), org.ID, identity.Subject, org.Role)
+					}
+				}
+			}
+		}
 		ip := clientAddress(request)
 		ua := request.Header.Get("User-Agent")
 		fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(identity.Subject+"|"+ip+"|"+ua)))
@@ -993,14 +1295,17 @@ func (s *Service) handleTokens(writer http.ResponseWriter, request *http.Request
 	items := make([]tokenSummary, 0, len(tokens))
 	for _, token := range tokens {
 		items = append(items, tokenSummary{
-			ID:         token.ID,
-			Name:       token.Name,
-			TenantID:   token.TenantID,
-			Scopes:     token.Scopes,
-			ExpiresAt:  token.ExpiresAt.Format(time.RFC3339),
-			LastUsedAt: token.LastUsedAt.Format(time.RFC3339),
-			Preview:    token.Preview,
-			Active:     token.Active,
+			ID:             token.ID,
+			Name:           token.Name,
+			TenantID:       token.TenantID,
+			Scopes:         token.Scopes,
+			ExpiresAt:      token.ExpiresAt.Format(time.RFC3339),
+			LastUsedAt:     token.LastUsedAt.Format(time.RFC3339),
+			CreatedAt:      token.CreatedAt.Format(time.RFC3339),
+			Preview:        token.Preview,
+			Active:         token.Active,
+			RateLimitRPM:   token.RateLimitRPM,
+			RateLimitBurst: token.RateLimitBurst,
 		})
 	}
 
@@ -1222,16 +1527,17 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 	routeItems := make([]routeSummary, 0, len(routes))
 	for _, route := range routes {
 		routeItems = append(routeItems, routeSummary{
-			ID:             route.ID,
-			Slug:           route.Slug,
-			TargetPath:     route.TargetPath,
-			TenantID:       route.TenantID,
-			RequiredScope:  route.RequiredScope,
-			Methods:        route.Methods,
-			RateLimitRPM:   route.RateLimitRPM,
-			RateLimitBurst: route.RateLimitBurst,
-			AllowCIDRs:     route.AllowCIDRs,
-			DenyCIDRs:      route.DenyCIDRs,
+			ID:                  route.ID,
+			Slug:                route.Slug,
+			TargetPath:          route.TargetPath,
+			TenantID:            route.TenantID,
+			RequiredScope:       route.RequiredScope,
+			Methods:             route.Methods,
+			RateLimitRPM:        route.RateLimitRPM,
+			RateLimitBurst:      route.RateLimitBurst,
+			AllowCIDRs:          route.AllowCIDRs,
+			DenyCIDRs:           route.DenyCIDRs,
+			CircuitBreakerState: s.circuitBreakers.GetState(route.ID),
 		})
 	}
 
@@ -1244,6 +1550,7 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 			Scopes:         token.Scopes,
 			ExpiresAt:      token.ExpiresAt.Format(time.RFC3339),
 			LastUsedAt:     token.LastUsedAt.Format(time.RFC3339),
+			CreatedAt:      token.CreatedAt.Format(time.RFC3339),
 			Preview:        token.Preview,
 			Active:         token.Active,
 			RateLimitRPM:   token.RateLimitRPM,
@@ -1722,8 +2029,26 @@ func (s *Service) handleRouteByID(writer http.ResponseWriter, request *http.Requ
 }
 
 func (s *Service) handleTokenByID(writer http.ResponseWriter, request *http.Request) {
-	tokenID := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tokens/"), "/")
-	if tokenID == "" || strings.Contains(tokenID, "/") {
+	path := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tokens/"), "/")
+
+	// Sub-resource routing: /api/v1/admin/tokens/{id}/stats or /rotate
+	if idx := strings.Index(path, "/"); idx != -1 {
+		tokenID := path[:idx]
+		sub := path[idx+1:]
+		switch sub {
+		case "stats":
+			s.handleTokenStats(writer, request)
+		case "rotate":
+			s.handleRotateToken(writer, request)
+		default:
+			writeJSON(writer, http.StatusNotFound, map[string]string{"error": "not found"})
+		}
+		_ = tokenID
+		return
+	}
+
+	tokenID := path
+	if tokenID == "" {
 		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "token not found"})
 		return
 	}
@@ -1809,6 +2134,21 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "IP address not allowed"})
 		return
 	}
+	// Org-level IP allowlist: resolve the org via the route's tenant and check
+	// any configured org-wide CIDR rules.
+	if tenant, ok, terr := s.store.GetTenantByTenantID(request.Context(), route.TenantID); terr == nil && ok && tenant.OrgID != "" {
+		if orgRules, err := s.store.ListOrgIPRules(request.Context(), tenant.OrgID); err == nil && len(orgRules) > 0 {
+			cidrs := make([]string, len(orgRules))
+			for i, r := range orgRules {
+				cidrs[i] = r.CIDR
+			}
+			if !matchesCIDRList(clientIP, strings.Join(cidrs, ",")) {
+				s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusForbidden, route.UpstreamURL, 0, requestPath)
+				writeJSON(writer, http.StatusForbidden, map[string]string{"error": "IP not in organisation allowlist"})
+				return
+			}
+		}
+	}
 
 	// ── Circuit breaker check ──────────────────────────────────────
 	if !s.circuitBreakers.AllowRequest(route.ID) {
@@ -1874,9 +2214,9 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
-	// Select upstream URL: prefer primary from tenant_upstreams (ordered primary DESC, weight DESC),
-	// skipping any upstream whose last health check recorded it as "down" so that a reachable
-	// non-primary is used instead of a known-dead primary.
+	// Select upstream URL using weighted random selection across tenant_upstreams,
+	// skipping any upstream whose last health check recorded it as "down".
+	// Falls back to the route's own UpstreamURL when no tenant_upstreams are configured.
 	selectedUpstreamURL := route.UpstreamURL
 	if tenantUps, lookupErr := s.store.ListTenantUpstreams(request.Context(), route.TenantID); lookupErr == nil && len(tenantUps) > 0 {
 		// Build a map of known health statuses for this tenant's upstreams.
@@ -1888,15 +2228,34 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 				}
 			}
 		}
-		// Pick the first upstream that is not known-down; fall back to index 0 if all are down or unprobed.
-		selected := tenantUps[0]
+		// Build weighted pool excluding known-down upstreams.
+		type weightedUp struct {
+			url    string
+			weight int
+		}
+		var pool []weightedUp
+		totalWeight := 0
 		for _, up := range tenantUps {
 			if healthStatus[up.UpstreamURL] != "down" {
-				selected = up
+				pool = append(pool, weightedUp{url: up.UpstreamURL, weight: up.Weight})
+				totalWeight += up.Weight
+			}
+		}
+		if len(pool) == 0 {
+			// All marked down — use first entry to avoid hard failure.
+			pool = []weightedUp{{url: tenantUps[0].UpstreamURL, weight: 1}}
+			totalWeight = 1
+		}
+		// Weighted random selection (time-seeded, non-cryptographic — fine for LB).
+		r := int(time.Now().UnixNano() % int64(totalWeight))
+		cumulative := 0
+		for _, p := range pool {
+			cumulative += p.weight
+			if r < cumulative {
+				selectedUpstreamURL = p.url
 				break
 			}
 		}
-		selectedUpstreamURL = selected.UpstreamURL
 	}
 
 	targetURL, err := url.Parse(selectedUpstreamURL)
@@ -2377,4 +2736,571 @@ func generateTokenSecret(name string) (string, error) {
 		prefix = "token"
 	}
 	return fmt.Sprintf("jpg_%s_%s", prefix, base64.RawURLEncoding.EncodeToString(bytes)), nil
+}
+
+// ── Provisioning Grants ────────────────────────────────────────────────
+
+func (s *Service) handleGrants(writer http.ResponseWriter, request *http.Request) {
+	switch request.Method {
+	case http.MethodGet:
+		grants, err := s.store.ListProvisioningGrants(request.Context())
+		if err != nil {
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load grants"})
+			return
+		}
+		items := make([]grantSummary, 0, len(grants))
+		for _, g := range grants {
+			items = append(items, grantToSummary(g))
+		}
+		writeJSON(writer, http.StatusOK, items)
+
+	case http.MethodPost:
+		s.handleCreateGrant(writer, request)
+
+	default:
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (s *Service) handleGrantByID(writer http.ResponseWriter, request *http.Request) {
+	path := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/grants/"), "/")
+	// Sub-resource: /api/v1/admin/grants/{id}/issuances
+	if idx := strings.Index(path, "/"); idx != -1 {
+		grantID := path[:idx]
+		sub := path[idx+1:]
+		if sub == "issuances" && request.Method == http.MethodGet {
+			s.handleGrantIssuances(writer, request, grantID)
+		} else {
+			writeJSON(writer, http.StatusNotFound, map[string]string{"error": "not found"})
+		}
+		return
+	}
+	grantID := path
+	if grantID == "" {
+		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "grant not found"})
+		return
+	}
+	if request.Method != http.MethodDelete {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if err := s.store.DeleteProvisioningGrant(request.Context(), grantID); err != nil {
+		status := http.StatusInternalServerError
+		if err.Error() == "grant not found" {
+			status = http.StatusNotFound
+		}
+		writeJSON(writer, status, map[string]string{"error": err.Error()})
+		return
+	}
+	s.recordAdminAction(request.Context(), "delete_grant", "provisioning_grant", grantID, "")
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleGrantIssuances(writer http.ResponseWriter, request *http.Request, grantID string) {
+	issuances, err := s.store.ListGrantIssuances(request.Context(), grantID)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load issuances"})
+		return
+	}
+	type issuanceSummary struct {
+		ID        string `json:"id"`
+		GrantID   string `json:"grantID"`
+		TokenID   string `json:"tokenID"`
+		AgentName string `json:"agentName"`
+		IssuedAt  string `json:"issuedAt"`
+	}
+	items := make([]issuanceSummary, 0, len(issuances))
+	for _, i := range issuances {
+		items = append(items, issuanceSummary{
+			ID:        i.ID,
+			GrantID:   i.GrantID,
+			TokenID:   i.TokenID,
+			AgentName: i.AgentName,
+			IssuedAt:  i.IssuedAt.Format(time.RFC3339),
+		})
+	}
+	writeJSON(writer, http.StatusOK, items)
+}
+
+// ── Token rotation ─────────────────────────────────────────────────────
+
+func (s *Service) handleRotateToken(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// Extract token ID from path: /api/v1/admin/tokens/{id}/rotate
+	path := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tokens/"), "/")
+	tokenID := strings.TrimSuffix(path, "/rotate")
+	tokenID = strings.TrimSuffix(tokenID, "/")
+	if tokenID == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "token ID required"})
+		return
+	}
+
+	existing, found, err := s.store.GetTokenByID(request.Context(), tokenID)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to look up token"})
+		return
+	}
+	if !found {
+		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "token not found"})
+		return
+	}
+
+	newName := existing.Name
+	newSecret, err := generateTokenSecret(newName)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to generate token secret"})
+		return
+	}
+
+	newPayload := createTokenRequest{
+		Name:           newName,
+		TenantID:       existing.TenantID,
+		RateLimitRPM:   existing.RateLimitRPM,
+		RateLimitBurst: existing.RateLimitBurst,
+	}
+
+	newToken, err := s.store.CreateToken(request.Context(), newPayload, existing.Scopes, existing.ExpiresAt, newSecret)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to create rotated token"})
+		return
+	}
+
+	// Revoke the old token.
+	if _, err := s.store.SetTokenActive(request.Context(), tokenID, false); err != nil {
+		s.logger.Warn("token rotation: failed to revoke old token", "old_token_id", tokenID, "error", err)
+	}
+
+	s.recordAdminAction(request.Context(), "rotate_token", "token", tokenID, "replaced by "+newToken.ID)
+
+	writeJSON(writer, http.StatusCreated, issuedTokenResponse{
+		Token: tokenSummary{
+			ID:             newToken.ID,
+			Name:           newToken.Name,
+			TenantID:       newToken.TenantID,
+			Scopes:         newToken.Scopes,
+			ExpiresAt:      newToken.ExpiresAt.Format(time.RFC3339),
+			LastUsedAt:     newToken.LastUsedAt.Format(time.RFC3339),
+			Preview:        newToken.Preview,
+			Active:         newToken.Active,
+			RateLimitRPM:   newToken.RateLimitRPM,
+			RateLimitBurst: newToken.RateLimitBurst,
+		},
+		Secret: newSecret,
+	})
+}
+
+// ── Org IP allowlist ───────────────────────────────────────────────────
+
+func (s *Service) handleOrgIPRules(writer http.ResponseWriter, request *http.Request) {
+	orgID := orgIDFromContext(request.Context())
+
+	switch request.Method {
+	case http.MethodGet:
+		rules, err := s.store.ListOrgIPRules(request.Context(), orgID)
+		if err != nil {
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load IP rules"})
+			return
+		}
+		type ipRuleSummary struct {
+			ID          string `json:"id"`
+			CIDR        string `json:"cidr"`
+			Description string `json:"description"`
+			CreatedAt   string `json:"createdAt"`
+			CreatedBy   string `json:"createdBy"`
+		}
+		items := make([]ipRuleSummary, 0, len(rules))
+		for _, r := range rules {
+			items = append(items, ipRuleSummary{
+				ID:          r.ID,
+				CIDR:        r.CIDR,
+				Description: r.Description,
+				CreatedAt:   r.CreatedAt.Format(time.RFC3339),
+				CreatedBy:   r.CreatedBy,
+			})
+		}
+		writeJSON(writer, http.StatusOK, items)
+
+	case http.MethodPost:
+		var payload struct {
+			CIDR        string `json:"cidr"`
+			Description string `json:"description"`
+		}
+		if err := decodeJSON(request, &payload); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		payload.CIDR = strings.TrimSpace(payload.CIDR)
+		if payload.CIDR == "" {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "cidr is required"})
+			return
+		}
+		// Normalise bare IPs to CIDR notation and validate.
+		cidr := payload.CIDR
+		if !strings.Contains(cidr, "/") {
+			if strings.Contains(cidr, ":") {
+				cidr += "/128"
+			} else {
+				cidr += "/32"
+			}
+		}
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "cidr is not a valid CIDR block"})
+			return
+		}
+
+		identity := adminIdentityFromContext(request.Context())
+		createdBy := ""
+		if identity != nil {
+			createdBy = identity.Subject
+		}
+		rule := orgIPRuleRecord{
+			ID:          newResourceID("iprule"),
+			OrgID:       orgID,
+			CIDR:        cidr,
+			Description: strings.TrimSpace(payload.Description),
+			CreatedAt:   time.Now().UTC(),
+			CreatedBy:   createdBy,
+		}
+		created, err := s.store.CreateOrgIPRule(request.Context(), rule)
+		if err != nil {
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to create IP rule"})
+			return
+		}
+		s.recordAdminAction(request.Context(), "create_ip_rule", "org_ip_rule", created.ID, cidr)
+		writeJSON(writer, http.StatusCreated, map[string]string{
+			"id":          created.ID,
+			"cidr":        created.CIDR,
+			"description": created.Description,
+			"createdAt":   created.CreatedAt.Format(time.RFC3339),
+		})
+
+	default:
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (s *Service) handleOrgIPRuleByID(writer http.ResponseWriter, request *http.Request) {
+	// Path: /api/v1/admin/org-ip-rules/{ruleID}
+	ruleID := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/org-ip-rules/"), "/")
+	if ruleID == "" || strings.Contains(ruleID, "/") {
+		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if request.Method != http.MethodDelete {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if err := s.store.DeleteOrgIPRule(request.Context(), ruleID); err != nil {
+		status := http.StatusInternalServerError
+		if err.Error() == "rule not found" {
+			status = http.StatusNotFound
+		}
+		writeJSON(writer, status, map[string]string{"error": err.Error()})
+		return
+	}
+	s.recordAdminAction(request.Context(), "delete_ip_rule", "org_ip_rule", ruleID, "")
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleCreateGrant(writer http.ResponseWriter, request *http.Request) {
+	var payload createProvisioningGrantRequest
+	if err := decodeJSON(request, &payload); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	payload.Name = strings.TrimSpace(payload.Name)
+	payload.TenantID = strings.TrimSpace(payload.TenantID)
+	payload.ExpiresAt = strings.TrimSpace(payload.ExpiresAt)
+
+	scopes, err := normalizeStringList(payload.Scopes)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "scopes must be a JSON array or comma-separated string"})
+		return
+	}
+	scopes = dedupeNonEmpty(scopes)
+
+	if payload.Name == "" || payload.TenantID == "" || payload.ExpiresAt == "" || len(scopes) == 0 {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "name, tenantID, scopes, and expiresAt are required"})
+		return
+	}
+	if payload.MaxUses <= 0 {
+		payload.MaxUses = 10
+	}
+	if payload.TokenTTLHours <= 0 {
+		payload.TokenTTLHours = 720 // 30 days
+	}
+
+	expiresAt, err := parseTimestamp(payload.ExpiresAt)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "expiresAt must be RFC3339 or datetime-local"})
+		return
+	}
+	if !expiresAt.After(time.Now().UTC()) {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "expiresAt must be in the future"})
+		return
+	}
+
+	secret, err := generateTokenSecret(payload.Name)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to generate grant secret"})
+		return
+	}
+
+	identity := adminIdentityFromContext(request.Context())
+	createdBy := ""
+	if identity != nil {
+		createdBy = identity.Subject
+	}
+
+	record := provisioningGrantRecord{
+		ID:             newResourceID("grant"),
+		Name:           payload.Name,
+		TenantID:       payload.TenantID,
+		Scopes:         scopes,
+		TokenTTLHours:  payload.TokenTTLHours,
+		MaxUses:        payload.MaxUses,
+		Active:         true,
+		Hash:           hashToken(secret),
+		Preview:        previewSecret(secret),
+		RateLimitRPM:   payload.RateLimitRPM,
+		RateLimitBurst: payload.RateLimitBurst,
+		OrgID:          orgIDFromContext(request.Context()),
+		ExpiresAt:      expiresAt,
+		CreatedAt:      time.Now().UTC(),
+		CreatedBy:      createdBy,
+	}
+
+	created, err := s.store.CreateProvisioningGrant(request.Context(), record)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to create grant"})
+		return
+	}
+
+	s.recordAdminAction(request.Context(), "create_grant", "provisioning_grant", created.ID, created.Name)
+	writeJSON(writer, http.StatusCreated, issuedGrantResponse{
+		Grant:  grantToSummary(created),
+		Secret: secret,
+	})
+}
+
+// handleProvision is a public endpoint — no admin auth.
+// Agents call it with a grant secret to receive a ready-to-use proxy token.
+func (s *Service) handleProvision(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	// Rate-limit per IP to slow brute-force attempts on grant secrets.
+	clientIP := clientAddress(request)
+	if !s.rateLimiter.Allow("provision:"+clientIP, 10, 5) {
+		writer.Header().Set("Retry-After", "60")
+		writeJSON(writer, http.StatusTooManyRequests, map[string]string{"error": "too many requests"})
+		return
+	}
+
+	var payload provisionRequest
+	if err := decodeJSON(request, &payload); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	payload.AgentName = strings.TrimSpace(payload.AgentName)
+	if payload.GrantSecret == "" || payload.AgentName == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "grantSecret and agentName are required"})
+		return
+	}
+
+	// Validate agentName: alphanumeric, dash, underscore — max 64 chars.
+	validName := true
+	if len(payload.AgentName) > 64 {
+		validName = false
+	} else {
+		for _, r := range payload.AgentName {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+				validName = false
+				break
+			}
+		}
+	}
+	if !validName {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "agentName must be 1-64 alphanumeric/dash/underscore characters"})
+		return
+	}
+
+	hash := hashToken(payload.GrantSecret)
+	grant, found, err := s.store.GetProvisioningGrantByHash(request.Context(), hash)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	// Use a constant-time-equivalent generic error for all validation failures
+	// to prevent attackers from enumerating grant existence/state.
+	const invalidMsg = "invalid or expired grant"
+
+	if !found || !grant.Active || !grant.ExpiresAt.After(time.Now().UTC()) {
+		writeJSON(writer, http.StatusForbidden, map[string]string{"error": invalidMsg})
+		return
+	}
+
+	// Atomically increment use count; returns false if already exhausted or expired.
+	ok, err := s.store.IncrementGrantUseCount(request.Context(), grant.ID, grant.MaxUses)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if !ok {
+		writeJSON(writer, http.StatusForbidden, map[string]string{"error": invalidMsg})
+		return
+	}
+
+	expiresAt := time.Now().UTC().Add(time.Duration(grant.TokenTTLHours) * time.Hour)
+
+	secret, err := generateTokenSecret(payload.AgentName)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	tokenPayload := createTokenRequest{
+		Name:           payload.AgentName,
+		TenantID:       grant.TenantID,
+		RateLimitRPM:   grant.RateLimitRPM,
+		RateLimitBurst: grant.RateLimitBurst,
+	}
+
+	token, err := s.store.CreateToken(request.Context(), tokenPayload, grant.Scopes, expiresAt, secret)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to issue token"})
+		return
+	}
+
+	// Record issuance in the grant audit trail (async, non-blocking).
+	go func() {
+		_ = s.store.RecordGrantIssuance(context.Background(), grantIssuanceRecord{
+			ID:        newResourceID("gi"),
+			GrantID:   grant.ID,
+			TokenID:   token.ID,
+			AgentName: payload.AgentName,
+			IssuedAt:  time.Now().UTC(),
+		})
+	}()
+
+	writeJSON(writer, http.StatusCreated, issuedTokenResponse{
+		Token: tokenSummary{
+			ID:         token.ID,
+			Name:       token.Name,
+			TenantID:   token.TenantID,
+			Scopes:     token.Scopes,
+			ExpiresAt:  token.ExpiresAt.Format(time.RFC3339),
+			LastUsedAt: token.LastUsedAt.Format(time.RFC3339),
+			Preview:    token.Preview,
+			Active:     token.Active,
+		},
+		Secret: secret,
+	})
+}
+
+func (s *Service) handleBulkCreateTokens(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var payload bulkCreateTokensRequest
+	if err := decodeJSON(request, &payload); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	payload.NamePrefix = strings.TrimSpace(payload.NamePrefix)
+	payload.TenantID = strings.TrimSpace(payload.TenantID)
+	payload.ExpiresAt = strings.TrimSpace(payload.ExpiresAt)
+
+	scopes, err := normalizeStringList(payload.Scopes)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "scopes must be a JSON array or comma-separated string"})
+		return
+	}
+	scopes = dedupeNonEmpty(scopes)
+
+	if payload.NamePrefix == "" || payload.TenantID == "" || payload.ExpiresAt == "" || len(scopes) == 0 {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "namePrefix, tenantID, scopes, and expiresAt are required"})
+		return
+	}
+	if payload.Count < 1 || payload.Count > 100 {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "count must be between 1 and 100"})
+		return
+	}
+
+	expiresAt, err := parseTimestamp(payload.ExpiresAt)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "expiresAt must be RFC3339 or datetime-local"})
+		return
+	}
+	if !expiresAt.After(time.Now().UTC()) {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "expiresAt must be in the future"})
+		return
+	}
+
+	results := make([]issuedTokenResponse, 0, payload.Count)
+	for i := range payload.Count {
+		name := fmt.Sprintf("%s-%d", payload.NamePrefix, i+1)
+		secret, err := generateTokenSecret(name)
+		if err != nil {
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to generate token secret"})
+			return
+		}
+		tokenPayload := createTokenRequest{
+			Name:           name,
+			TenantID:       payload.TenantID,
+			RateLimitRPM:   payload.RateLimitRPM,
+			RateLimitBurst: payload.RateLimitBurst,
+		}
+		token, err := s.store.CreateToken(request.Context(), tokenPayload, scopes, expiresAt, secret)
+		if err != nil {
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to create token %s: %s", name, err.Error())})
+			return
+		}
+		results = append(results, issuedTokenResponse{
+			Token: tokenSummary{
+				ID:         token.ID,
+				Name:       token.Name,
+				TenantID:   token.TenantID,
+				Scopes:     token.Scopes,
+				ExpiresAt:  token.ExpiresAt.Format(time.RFC3339),
+				LastUsedAt: token.LastUsedAt.Format(time.RFC3339),
+				Preview:    token.Preview,
+				Active:     token.Active,
+			},
+			Secret: secret,
+		})
+	}
+
+	s.recordAdminAction(request.Context(), "bulk_create_tokens", "token", payload.TenantID, fmt.Sprintf("prefix=%s count=%d", payload.NamePrefix, payload.Count))
+	writeJSON(writer, http.StatusCreated, map[string]any{"tokens": results})
+}
+
+func grantToSummary(g provisioningGrantRecord) grantSummary {
+	return grantSummary{
+		ID:             g.ID,
+		Name:           g.Name,
+		TenantID:       g.TenantID,
+		Scopes:         g.Scopes,
+		TokenTTLHours:  g.TokenTTLHours,
+		MaxUses:        g.MaxUses,
+		UseCount:       g.UseCount,
+		Active:         g.Active,
+		Preview:        g.Preview,
+		RateLimitRPM:   g.RateLimitRPM,
+		RateLimitBurst: g.RateLimitBurst,
+		OrgID:          g.OrgID,
+		ExpiresAt:      g.ExpiresAt.Format(time.RFC3339),
+		CreatedAt:      g.CreatedAt.Format(time.RFC3339),
+	}
 }

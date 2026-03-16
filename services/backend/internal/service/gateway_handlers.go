@@ -408,7 +408,7 @@ func (s *Service) handleReplicas(writer http.ResponseWriter, request *http.Reque
 		Hostname        string `json:"hostname"`
 		Version         string `json:"version"`
 		StartedAt       string `json:"startedAt"`
-		LastHeartbeatAt string `json:"lastHeartbeatAt"`
+		LastHeartbeatAt string `json:"lastHeartbeat"`
 		Status          string `json:"status"`
 	}
 
@@ -437,15 +437,16 @@ func (s *Service) handleReplicas(writer http.ResponseWriter, request *http.Reque
 
 // runHeartbeat periodically updates this instance's heartbeat record.
 func (s *Service) runHeartbeat() {
-	instanceID := s.config.InstanceID
-	if instanceID == "" {
-		instanceID = newResourceID("inst")
-	}
 	region := s.config.Region
 	if region == "" {
 		region = "default"
 	}
 	hostname, _ := os.Hostname()
+	instanceID := s.config.InstanceID
+	if instanceID == "" {
+		// Derive a stable ID from the hostname so dev restarts don't accumulate ghost rows.
+		instanceID = fmt.Sprintf("inst-%s", hostname)
+	}
 
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -506,6 +507,58 @@ func (s *Service) handleCircuitBreakers(writer http.ResponseWriter, request *htt
 	}
 
 	writeJSON(writer, http.StatusOK, items)
+}
+
+// handleCircuitBreakerByID handles PATCH /api/v1/admin/circuit-breakers/{routeID}
+// to manually force a circuit breaker into a specific state.
+func (s *Service) handleCircuitBreakerByID(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPatch {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	routeID := strings.TrimPrefix(request.URL.Path, "/api/v1/admin/circuit-breakers/")
+	if routeID == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "route ID required"})
+		return
+	}
+
+	// Verify the route exists
+	routes, err := s.store.ListRoutes(request.Context())
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load routes"})
+		return
+	}
+	found := false
+	for _, r := range routes {
+		if r.ID == routeID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "route not found"})
+		return
+	}
+
+	var payload struct {
+		State string `json:"state"`
+	}
+	if err := decodeJSON(request, &payload); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	switch payload.State {
+	case cbStateClosed, cbStateOpen, cbStateHalfOpen:
+		// valid
+	default:
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "state must be closed, open, or half_open"})
+		return
+	}
+
+	s.circuitBreakers.ForceState(routeID, payload.State)
+	writeJSON(writer, http.StatusOK, map[string]string{"state": payload.State})
 }
 
 // ── Token expiry / lifecycle ───────────────────────────────────────────
@@ -737,6 +790,64 @@ func (s *Service) handleAuditFiltered(writer http.ResponseWriter, request *http.
 	})
 }
 
+// ── Token usage analytics ──────────────────────────────────────────────
+
+func (s *Service) handleTokenStats(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	// Extract token ID from path: /api/v1/admin/tokens/{id}/stats
+	path := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tokens/"), "/")
+	tokenID := strings.TrimSuffix(path, "/stats")
+	tokenID = strings.TrimSuffix(tokenID, "/")
+	if tokenID == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "token ID required"})
+		return
+	}
+
+	hoursBack := parseQueryInt(request, "hours", 24)
+	to := time.Now().UTC()
+	from := to.Add(-time.Duration(hoursBack) * time.Hour)
+
+	stats, err := s.store.ListTokenTrafficStats(request.Context(), tokenID, from, to)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load token stats"})
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, stats)
+}
+
+// ── Route traffic drilldown ────────────────────────────────────────────
+
+func (s *Service) handleRouteTrafficStats(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	routeSlug := request.URL.Query().Get("routeSlug")
+	if routeSlug == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "routeSlug is required"})
+		return
+	}
+
+	hoursBack := parseQueryInt(request, "hours", 24)
+	orgID := orgIDFromContext(request.Context())
+	to := time.Now().UTC()
+	from := to.Add(-time.Duration(hoursBack) * time.Hour)
+
+	stats, err := s.store.ListRouteTrafficStats(request.Context(), routeSlug, from, to, orgID)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load route traffic stats"})
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, stats)
+}
+
 // ── Global search endpoint ─────────────────────────────────────────────
 
 func (s *Service) handleSearch(writer http.ResponseWriter, request *http.Request) {
@@ -758,12 +869,16 @@ func (s *Service) handleSearch(writer http.ResponseWriter, request *http.Request
 		Routes  []routeSummary  `json:"routes"`
 		Tenants []tenantSummary `json:"tenants"`
 		Tokens  []tokenSummary  `json:"tokens"`
+		Grants  []grantSummary  `json:"grants"`
+		Apps    []appSummary    `json:"apps"`
 	}
 
 	out := searchResults{
 		Routes:  []routeSummary{},
 		Tenants: []tenantSummary{},
 		Tokens:  []tokenSummary{},
+		Grants:  []grantSummary{},
+		Apps:    []appSummary{},
 	}
 
 	// Search routes
@@ -820,5 +935,93 @@ func (s *Service) handleSearch(writer http.ResponseWriter, request *http.Request
 		}
 	}
 
+	// Search grants
+	grants, _ := s.store.ListProvisioningGrants(ctx)
+	for _, g := range grants {
+		if strings.Contains(strings.ToLower(g.Name), lower) || strings.Contains(strings.ToLower(g.Preview), lower) {
+			out.Grants = append(out.Grants, grantSummary{
+				ID:            g.ID,
+				Name:          g.Name,
+				TenantID:      g.TenantID,
+				Scopes:        g.Scopes,
+				TokenTTLHours: g.TokenTTLHours,
+				MaxUses:       g.MaxUses,
+				UseCount:      g.UseCount,
+				Active:        g.Active,
+				Preview:       g.Preview,
+				ExpiresAt:     g.ExpiresAt.Format(time.RFC3339),
+			})
+		}
+	}
+
+	// Search protected apps
+	orgID := orgIDFromContext(ctx)
+	apps, _ := s.store.ListProtectedApps(ctx, orgID)
+	for _, a := range apps {
+		if strings.Contains(strings.ToLower(a.Name), lower) || strings.Contains(strings.ToLower(a.Slug), lower) {
+			out.Apps = append(out.Apps, appSummary{
+				ID:          a.ID,
+				Name:        a.Name,
+				Slug:        a.Slug,
+				UpstreamURL: a.UpstreamURL,
+				AuthMode:    a.AuthMode,
+				CreatedAt:   a.CreatedAt.Format(time.RFC3339),
+			})
+		}
+	}
+
 	writeJSON(writer, http.StatusOK, out)
+}
+
+// ── Traffic heatmap ────────────────────────────────────────────────────
+// handleTrafficHeatmap returns per-route request counts grouped by hour-of-day (0–23)
+// over the past N days (default 7), aggregated in Go from existing traffic_stats buckets.
+func (s *Service) handleTrafficHeatmap(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	days := parseQueryInt(request, "days", 7)
+	orgID := orgIDFromContext(request.Context())
+
+	to := time.Now().UTC()
+	from := to.Add(-time.Duration(days) * 24 * time.Hour)
+
+	stats, err := s.store.ListTrafficStats(request.Context(), from, to, orgID)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load traffic stats"})
+		return
+	}
+
+	// Aggregate by (routeSlug, hour-of-day).
+	type cellKey struct {
+		routeSlug string
+		hour      int
+	}
+	counts := make(map[cellKey]int)
+	for _, stat := range stats {
+		key := cellKey{
+			routeSlug: stat.RouteSlug,
+			hour:      stat.BucketStart.Hour(),
+		}
+		counts[key] += stat.RequestCount
+	}
+
+	type heatmapCell struct {
+		RouteSlug    string `json:"routeSlug"`
+		Hour         int    `json:"hour"`
+		RequestCount int    `json:"requestCount"`
+	}
+
+	cells := make([]heatmapCell, 0, len(counts))
+	for key, count := range counts {
+		cells = append(cells, heatmapCell{
+			RouteSlug:    key.routeSlug,
+			Hour:         key.hour,
+			RequestCount: count,
+		})
+	}
+
+	writeJSON(writer, http.StatusOK, cells)
 }

@@ -62,7 +62,7 @@ export function OrgSwitcher() {
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 right-0 z-50 mt-1 rounded-xl border border-border bg-overlay p-1 shadow-lg">
+        <div className="absolute left-0 z-50 mt-1 min-w-[180px] rounded-xl border border-border bg-overlay p-1 shadow-lg">
           {orgs.length === 0 && (
             <p className="px-3 py-2 text-xs text-muted-foreground">No organisations yet.</p>
           )}

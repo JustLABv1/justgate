@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*.*.*"
+      - "v*.*.*-alpha.*"
+      - "v*.*.*-beta.*"
 
 env:
   REGISTRY: ghcr.io
@@ -34,6 +36,17 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # ── Combined image (backend + frontend) ─────────────────────────────────
+      - name: Determine pre-release
+        id: prerelease
+        run: |
+          if [[ "${{ github.ref_name }}" =~ -(alpha|beta)\. ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "channel=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "channel=stable" >> $GITHUB_OUTPUT
+          fi
+
       - name: Extract metadata (combined)
         id: meta
         uses: docker/metadata-action@v5
@@ -41,8 +54,8 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
+            type=semver,pattern={{major}},enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
             type=sha,prefix=sha-
 
       - name: Build and push (combined)
@@ -64,8 +77,8 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
+            type=semver,pattern={{major}},enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
             type=sha,prefix=sha-
 
       - name: Build and push (backend)
@@ -87,8 +100,8 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
+            type=semver,pattern={{major}},enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
             type=sha,prefix=sha-
 
       - name: Build and push (frontend)
@@ -125,8 +138,15 @@ jobs:
         run: |
           CURRENT_TAG="${{ github.ref_name }}"
           CHART_VERSION="${CURRENT_TAG#v}"
+          IS_PRERELEASE="${{ steps.prerelease.outputs.is_prerelease }}"
+          CHANNEL="${{ steps.prerelease.outputs.channel }}"
 
-          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+          # For pre-releases, find the previous tag of any kind; for stable, only stable tags
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+' | sed -n '2p')
+          else
+            PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+          fi
 
           if [ -z "$PREVIOUS_TAG" ]; then
             COMMITS=$(git log --pretty=format:"- %s (%h)" HEAD)
@@ -161,6 +181,10 @@ jobs:
           BODY="${BODY}helm install justgate oci://${REGISTRY}/${OWNER}/charts/justgate --version ${CHART_VERSION}\n"
           BODY="${BODY}\`\`\`"
 
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            BODY="> **${CHANNEL^^} release** — not recommended for production use.\n\n${BODY}"
+          fi
+
           {
             echo "body<<EOF"
             printf "%b" "$BODY"
@@ -179,5 +203,6 @@ jobs:
         with:
           name: ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.body }}
-          make_latest: true
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease == 'true' }}
+          make_latest: ${{ steps.prerelease.outputs.is_prerelease == 'false' }}
           generate_release_notes: false

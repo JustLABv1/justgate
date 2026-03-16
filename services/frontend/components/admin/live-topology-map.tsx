@@ -3,11 +3,12 @@
 import { CreateRouteForm } from "@/components/admin/create-route-form";
 import { CreateTenantForm } from "@/components/admin/create-tenant-form";
 import { CreateTokenForm } from "@/components/admin/create-token-form";
+import { TokenStatsPanel } from "@/components/admin/token-stats-panel";
 import { UpdateRouteForm } from "@/components/admin/update-route-form";
 import { UpdateTenantForm } from "@/components/admin/update-tenant-form";
 import type { QueryResult, TopologySnapshot } from "@/lib/contracts";
 import { Button, Card, Chip, Surface } from "@heroui/react";
-import { Activity, ArrowRight, KeyRound, LocateFixed, Move, Plus, RefreshCw, Route, Sparkles } from "lucide-react";
+import { Activity, ArrowRight, KeyRound, LocateFixed, Maximize2, Minimize2, Move, Plus, RefreshCw, Route, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 interface LiveTopologyMapProps {
@@ -33,6 +34,7 @@ type GraphNode = {
   label: string;
   meta: string;
   stats?: string;
+  cbState?: string;
   x: number;
   y: number;
   tone: string;
@@ -46,6 +48,9 @@ type GraphEdge = {
   hot: boolean;
   error: boolean;
   reachable?: boolean;
+  revoked?: boolean;
+  latencyMs?: number;
+  circuitBreakerState?: string;
 };
 
 type CameraState = {
@@ -87,6 +92,31 @@ function pathBetween(from: GraphNode, to: GraphNode) {
 
 function edgeGlow(color: string) {
   return `0 0 0 6px color-mix(in oklab, ${color} 18%, transparent)`;
+}
+
+/** Maps avg latency (ms) to packet animation duration (s). Low latency = fast packets. */
+function latencyToDuration(ms: number): string {
+  const clamped = Math.min(Math.max(ms, 0), 2000);
+  const dur = 0.6 + (clamped / 2000) * 3.4; // 0.6s (0ms) → 4.0s (2000ms)
+  return `${dur.toFixed(2)}s`;
+}
+
+/** Returns the midpoint of a cubic bezier path for badge positioning. */
+function bezierMidpoint(from: GraphNode, to: GraphNode): { x: number; y: number } {
+  const forward = from.x <= to.x;
+  const p0x = from.x + (forward ? 120 : -120);
+  const p0y = from.y;
+  const p3x = to.x + (forward ? -120 : 120);
+  const p3y = to.y;
+  const controlOffset = Math.max(120, Math.abs(p3x - p0x) * 0.36);
+  const p1x = p0x + (forward ? controlOffset : -controlOffset);
+  const p1y = p0y;
+  const p2x = p3x - (forward ? controlOffset : -controlOffset);
+  const p2y = p3y;
+  // De Casteljau at t=0.5
+  const x = 0.125 * p0x + 0.375 * p1x + 0.375 * p2x + 0.125 * p3x;
+  const y = 0.125 * p0y + 0.375 * p1y + 0.375 * p2y + 0.125 * p3y;
+  return { x, y };
 }
 
 function clampCamera(camera: CameraState, viewportWidth: number, viewportHeight: number, sceneHeight: number): CameraState {
@@ -155,6 +185,29 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
   const [tokenDraftScopes, setTokenDraftScopes] = useState<string>();
   const [editingRouteID, setEditingRouteID] = useState<string>();
   const [editingTenantID, setEditingTenantID] = useState<string>();
+  const [selectedCBEdge, setSelectedCBEdge] = useState<{
+    routeID: string;
+    routeLabel: string;
+    tenantLabel: string;
+    state: string;
+    latencyMs: number;
+    sceneX: number;
+    sceneY: number;
+  } | null>(null);
+  const [isForcingCB, setIsForcingCB] = useState(false);
+  const [pendingCBAction, setPendingCBAction] = useState<"open" | "close" | null>(null);
+  const [selectedTokenEdge, setSelectedTokenEdge] = useState<{
+    tokenID: string;
+    routeID: string;
+    tokenLabel: string;
+    routeLabel: string;
+    sceneX: number;
+    sceneY: number;
+  } | null>(null);
+  const [pendingTokenAction, setPendingTokenAction] = useState<"revoke" | "reactivate" | null>(null);
+  const [isActingOnToken, setIsActingOnToken] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const fullscreenContainerRef = useRef<HTMLDivElement | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const connectionAttemptRef = useRef(0);
@@ -319,7 +372,6 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       socketRef.current = null;
     };
   // Re-run whenever the active org changes so the socket reconnects to the right stream
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
   const graph = useMemo(() => {
@@ -365,15 +417,20 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
     const tokenY = tokenYArr;
     const routeY = routeYArr;
     const tenantY = tenantYArr;
-    const routeMetrics = new Map<string, { throughput: number; errors: number }>();
+    const routeMetrics = new Map<string, { throughput: number; errors: number; avgLatencyMs: number }>();
 
     for (const route of routes) {
       const matchingAudits = recentAudits.filter((audit) => audit.routeSlug === route.slug && audit.tenantID === route.tenantID);
       // Only count errors within the active window so lines stop being red once errors age out
       const activeMatchingAudits = activeAudits.filter((audit) => audit.routeSlug === route.slug && audit.tenantID === route.tenantID);
+      const latencyAudits = matchingAudits.filter((a) => a.latencyMs > 0);
+      const avgLatencyMs = latencyAudits.length > 0
+        ? latencyAudits.reduce((sum, a) => sum + a.latencyMs, 0) / latencyAudits.length
+        : 0;
       routeMetrics.set(route.id, {
         throughput: matchingAudits.length,
         errors: activeMatchingAudits.filter((audit) => audit.status >= 400).length,
+        avgLatencyMs,
       });
     }
 
@@ -390,15 +447,18 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
 
     const routeNodes: GraphNode[] = routes.map((route, index) => {
       const metrics = routeMetrics.get(route.id) || { throughput: 0, errors: 0 };
+      const cbState = snapshot.data.routes.find((r) => r.id === route.id)?.circuitBreakerState;
+      const cbOpen = cbState === "open" || cbState === "half_open";
       return {
         id: `route:${route.id}`,
         kind: "route",
         label: `/proxy/${route.slug}`,
         meta: `${route.tenantID} • ${route.requiredScope} • ${route.methods.join(", ")}`,
         stats: `${metrics.throughput} req • ${metrics.errors} err`,
+        cbState,
         x: LANE_X.route,
         y: routeY[index] ?? sceneHeight / 2,
-        tone: metrics.errors > 0 ? "var(--danger)" : "var(--accent)",
+        tone: cbOpen ? (cbState === "open" ? "var(--danger)" : "var(--warning)") : metrics.errors > 0 ? "var(--danger)" : "var(--accent)",
       } satisfies GraphNode;
     });
 
@@ -408,14 +468,15 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       const extras = tenant.upstreams ?? [];
       let statusTone: string;
       if (extras.length > 0) {
-        const primary = extras.find((u) => u.isPrimary);
-        const effective = primary ?? extras[0];
-        statusTone =
-          effective.status === "up"
-            ? "var(--success)"
-            : effective.status === "down"
-              ? "var(--danger)"
-              : "var(--muted)";
+        const anyUp   = extras.some((u) => u.status === "up");
+        const anyDown = extras.some((u) => u.status === "down");
+        statusTone = anyUp && anyDown
+          ? "var(--warning)"          // partial — some up, some down
+          : anyUp
+            ? "var(--success)"        // all reachable
+            : anyDown
+              ? "var(--danger)"       // all down
+              : "var(--muted)";       // all unknown
       } else {
         statusTone =
           tenant.upstreamStatus === "up"
@@ -540,10 +601,14 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
     const routeNodeByRouteID = new Map(routes.map((route, index) => [route.id, routeNodes[index]]));
     const hotRouteKeys = new Set(activeAudits.map((event) => `route:${event.routeSlug}:${event.tenantID}`));
     const hotTokenKeys = new Set(activeAudits.map((event) => `token:${event.tokenID}:${event.routeSlug}`));
+    // Only animate the upstream edge when the request was actually forwarded.
+    // Gateway-level rejections (rate limit 429, auth 401) never reach the upstream.
     const hotUpstreamOrigins = new Set(
-      activeAudits.map((e) => {
-        try { return new URL(e.upstreamURL).origin; } catch { return e.upstreamURL; }
-      }),
+      activeAudits
+        .filter((e) => e.status !== 429 && e.status !== 401 && e.upstreamURL)
+        .map((e) => {
+          try { return new URL(e.upstreamURL).origin; } catch { return e.upstreamURL; }
+        }),
     );
 
     const tokenEdges: GraphEdge[] = [];
@@ -559,8 +624,10 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           from: `token:${token.id}`,
           to: `route:${route.id}`,
           kind: "access",
-          hot: hotTokenKeys.has(`token:${token.id}:${route.slug}`),
-          error: routeHasErrors,
+          hot: !token.active ? false : hotTokenKeys.has(`token:${token.id}:${route.slug}`),
+          error: !token.active ? false : routeHasErrors,
+          revoked: !token.active,
+          latencyMs: routeMetrics.get(route.id)?.avgLatencyMs ?? 0,
         });
       }
     }
@@ -572,6 +639,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           return null;
         }
         const routeHasErrors = (routeMetrics.get(route.id)?.errors ?? 0) > 0;
+        const routeSummary = snapshot.data.routes.find((r) => r.id === route.id);
         return {
           id: `edge:${route.id}:${tenant.id}`,
           from: `route:${route.id}`,
@@ -579,6 +647,8 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           kind: "binding",
           hot: hotRouteKeys.has(`route:${route.slug}:${route.tenantID}`),
           error: routeHasErrors,
+          latencyMs: routeMetrics.get(route.id)?.avgLatencyMs ?? 0,
+          circuitBreakerState: routeSummary?.circuitBreakerState,
         } satisfies GraphEdge;
       })
       .filter(Boolean) as GraphEdge[];
@@ -668,6 +738,23 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
   }, []); // empty — handler reads sceneHeight via ref and camera via functional updater
+
+  // Track browser fullscreen state changes
+  useEffect(() => {
+    function onFullscreenChange() {
+      setIsFullscreen(!!document.fullscreenElement);
+    }
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      fullscreenContainerRef.current?.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  }
 
   const draftGraph = useMemo(() => {
     const draftNodes: GraphNode[] = [];
@@ -769,7 +856,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       edges: activeEdges,
       nodes: activeNodes,
     };
-  }, [draftGraph.draftEdges, draftGraph.draftNodes, graph.tenantEdges, graph.tokenEdges, selectedNodeId]);
+  }, [draftGraph.draftEdges, draftGraph.draftNodes, graph.tenantEdges, graph.tokenEdges, graph.upstreamEdges, selectedNodeId]);
 
   function handleBackgroundPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) {
@@ -781,6 +868,10 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       return;
     }
 
+    setSelectedCBEdge(null);
+    setPendingCBAction(null);
+    setSelectedTokenEdge(null);
+    setPendingTokenAction(null);
     panRef.current = {
       originX: camera.x,
       originY: camera.y,
@@ -917,11 +1008,13 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           ? "Dragging the graph camera."
           : "Drag the background to pan. Use the toolbar to create and connect entities directly on the map.";
 
+  const openCircuitBreakers = snapshot.data.routes.filter((r) => r.circuitBreakerState === "open" || r.circuitBreakerState === "half_open").length;
+
   const summaryMetrics = [
-    { label: "Tenants", value: snapshot.data.tenants.length },
-    { label: "Routes", value: snapshot.data.routes.length },
-    { label: "Active tokens", value: snapshot.data.tokens.filter((token) => token.active).length },
-    { label: "Recent audits", value: graph.recentAudits.length },
+    { label: "Tenants", value: snapshot.data.tenants.length, alert: false },
+    { label: "Routes", value: snapshot.data.routes.length, alert: false },
+    { label: "Active tokens", value: snapshot.data.tokens.filter((token) => token.active).length, alert: false },
+    { label: "Open breakers", value: openCircuitBreakers, alert: openCircuitBreakers > 0 },
   ];
 
   const inspectorRows = selectedTenantForInspector
@@ -941,6 +1034,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           { label: "Tenant", value: selectedRouteForInspector.tenantID },
           { label: "Scope", value: selectedRouteForInspector.requiredScope },
           { label: "Methods", value: selectedRouteForInspector.methods.join(", ") },
+          { label: "Circuit breaker", value: selectedRouteForInspector.circuitBreakerState === "open" ? "Open — traffic blocked" : selectedRouteForInspector.circuitBreakerState === "half_open" ? "Half-open — probing" : "Closed — healthy" },
         ]
       : selectedTokenForInspector
         ? [
@@ -977,14 +1071,18 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
               <LocateFixed size={14} />
               Fit view
             </Button>
+            <Button className="h-9 rounded-full px-3" size="sm" variant="ghost" onPress={toggleFullscreen}>
+              {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            </Button>
           </div>
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {summaryMetrics.map((metric) => (
-            <div key={metric.label} className="enterprise-panel px-4 py-3">
-              <div className="enterprise-kicker">{metric.label}</div>
-              <div className="mt-1 text-[1.6rem] font-semibold tracking-[-0.05em] text-foreground">{metric.value}</div>
+            <div key={metric.label} className={`enterprise-panel px-4 py-3 ${metric.alert ? "border-danger/30 bg-danger/5" : ""}`}>
+              <div className={`enterprise-kicker ${metric.alert ? "text-danger" : ""}`}>{metric.label}</div>
+              <div className={`mt-1 text-[1.6rem] font-semibold tracking-[-0.05em] ${metric.alert ? "text-danger" : "text-foreground"}`}>{metric.value}</div>
             </div>
           ))}
         </div>
@@ -1029,10 +1127,10 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           </Button>
         </div>
 
-        <div className="topology-stage relative mt-5 overflow-hidden rounded-[24px] border border-border p-4">
+        <div ref={fullscreenContainerRef} className={`topology-stage relative mt-5 overflow-hidden rounded-[24px] border border-border p-4 ${isFullscreen ? "!mt-0 !rounded-none !border-0" : ""}`}>
           <div
             ref={viewportRef}
-            className={`relative min-h-[680px] overflow-hidden rounded-[20px] border border-border/80 bg-background/42 ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
+            className={`relative overflow-hidden rounded-[20px] border border-border/80 bg-background/42 ${isPanning ? "cursor-grabbing" : "cursor-grab"} ${isFullscreen ? "min-h-screen !rounded-none !border-0" : "min-h-[680px]"}`}
             onPointerDown={handleBackgroundPointerDown}
             onPointerMove={handleBackgroundPointerMove}
             onPointerUp={handleBackgroundPointerEnd}
@@ -1072,40 +1170,117 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
 
                   const active = emphasis.nodes.size === 0 || emphasis.edges.has(edge.id) || emphasis.nodes.has(edge.from) || emphasis.nodes.has(edge.to);
                   const d = pathBetween(from, to);
+                  const mid = bezierMidpoint(from, to);
+                  const isSelected = (selectedCBEdge?.sceneX === mid.x && selectedCBEdge?.sceneY === mid.y) ||
+                    (selectedTokenEdge?.sceneX === mid.x && selectedTokenEdge?.sceneY === mid.y);
                   const className = edge.kind === "draft"
                     ? "topology-flow-line topology-flow-line--draft"
+                    : edge.revoked
+                      ? "topology-flow-line topology-flow-line--revoked"
+                      : edge.error
+                        ? "topology-flow-line topology-flow-line--error"
+                        : edge.hot
+                          ? "topology-flow-line topology-flow-line--hot"
+                          : edge.reachable
+                            ? "topology-flow-line topology-flow-line--reachable"
+                            : "topology-flow-line";
+                  const glowClass = edge.revoked
+                    ? "topology-flow-line topology-flow-line--glow-revoked"
                     : edge.error
-                      ? "topology-flow-line topology-flow-line--error"
-                      : edge.hot
-                        ? "topology-flow-line topology-flow-line--hot"
-                        : edge.reachable
-                          ? "topology-flow-line topology-flow-line--reachable"
-                          : "topology-flow-line";
-                  const glowClass = edge.error
-                    ? "topology-flow-line topology-flow-line--glow-error"
-                    : edge.reachable
-                      ? "topology-flow-line topology-flow-line--glow-reachable"
-                      : "topology-flow-line topology-flow-line--glow";
+                      ? "topology-flow-line topology-flow-line--glow-error"
+                      : edge.reachable
+                        ? "topology-flow-line topology-flow-line--glow-reachable"
+                        : "topology-flow-line topology-flow-line--glow";
                   const packetColor = edge.error ? "var(--danger)" : (edge.kind === "binding" || edge.kind === "upstream") ? "var(--success)" : "var(--accent)";
+                  const packetDur = latencyToDuration(edge.latencyMs ?? 0);
+                  const packetBegin1 = `${(parseFloat(packetDur) / 3).toFixed(2)}s`;
+                  const packetBegin2 = `${((parseFloat(packetDur) / 3) * 2).toFixed(2)}s`;
+                  const cbState = edge.circuitBreakerState ?? "closed";
+                  // Show CB badge only when breaker is actively open/half-open
+                  const cbBadgePos = (cbState === "open" || cbState === "half_open") ? bezierMidpoint(from, to) : null;
+                  // binding edges (route→tenant) and access edges (token→route) are both interactive
+                  const isBinding = edge.kind === "binding";
+                  const isAccess = edge.kind === "access";
+                  const midpoint = (isBinding || isAccess) ? mid : null;
+
+                  function openEdgePanel(e: React.MouseEvent) {
+                    e.stopPropagation();
+                    if (!midpoint) return;
+                    if (isBinding) {
+                      const routeID = from!.id.startsWith("route:") ? from!.id.slice("route:".length) : from!.id;
+                      setSelectedTokenEdge(null);
+                      setPendingTokenAction(null);
+                      setSelectedCBEdge((prev) =>
+                        prev?.sceneX === midpoint.x && prev?.sceneY === midpoint.y
+                          ? (setPendingCBAction(null), null)
+                          : { routeID, routeLabel: from!.label, tenantLabel: to!.label, state: cbState, latencyMs: edge.latencyMs ?? 0, sceneX: midpoint.x, sceneY: midpoint.y }
+                      );
+                      setPendingCBAction(null);
+                    } else if (isAccess) {
+                      const tokenID = from!.id.startsWith("token:") ? from!.id.slice("token:".length) : from!.id;
+                      const routeID = to!.id.startsWith("route:") ? to!.id.slice("route:".length) : to!.id;
+                      setSelectedCBEdge(null);
+                      setPendingCBAction(null);
+                      setSelectedTokenEdge((prev) =>
+                        prev?.sceneX === midpoint.x && prev?.sceneY === midpoint.y
+                          ? (setPendingTokenAction(null), null)
+                          : { tokenID, routeID, tokenLabel: from!.label, routeLabel: to!.label, sceneX: midpoint.x, sceneY: midpoint.y }
+                      );
+                      setPendingTokenAction(null);
+                    }
+                  }
 
                   return (
                     <g key={edge.id} opacity={active ? 1 : 0.12}>
                       <path className={glowClass} d={d} vectorEffect="non-scaling-stroke" />
-                      <path className={className} d={d} vectorEffect="non-scaling-stroke" />
+                      <path className={className} d={d} vectorEffect="non-scaling-stroke"
+                        style={isSelected ? { stroke: "var(--accent)", opacity: 0.6 } : undefined}
+                      />
+                      {/* Wide invisible hit area for interactive edges */}
+                      {(isBinding || isAccess) && (
+                        <path
+                          d={d}
+                          stroke="transparent"
+                          strokeWidth="24"
+                          fill="none"
+                          vectorEffect="non-scaling-stroke"
+                          style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={openEdgePanel}
+                        />
+                      )}
                       {edge.hot && edge.kind !== "draft" && (
                         <>
                           <circle r="5" fill={packetColor} opacity="0.9" filter="url(#topology-packet-glow)">
-                            <animateMotion dur="1.8s" repeatCount="indefinite" path={d} />
+                            <animateMotion dur={packetDur} repeatCount="indefinite" path={d} />
                           </circle>
                           <circle r="5" fill={packetColor} opacity="0.9" filter="url(#topology-packet-glow)">
-                            <animateMotion dur="1.8s" begin="0.6s" repeatCount="indefinite" path={d} />
+                            <animateMotion dur={packetDur} begin={packetBegin1} repeatCount="indefinite" path={d} />
                           </circle>
                           <circle r="5" fill={packetColor} opacity="0.9" filter="url(#topology-packet-glow)">
-                            <animateMotion dur="1.8s" begin="1.2s" repeatCount="indefinite" path={d} />
+                            <animateMotion dur={packetDur} begin={packetBegin2} repeatCount="indefinite" path={d} />
                           </circle>
                         </>
                       )}
-
+                      {cbBadgePos && (
+                        <g
+                          transform={`translate(${cbBadgePos.x}, ${cbBadgePos.y})`}
+                          style={{ pointerEvents: "all", cursor: "pointer" }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={openEdgePanel}
+                        >
+                          {/* Enlarged invisible hit area */}
+                          <rect x="-32" y="-18" width="64" height="36" fill="transparent" />
+                          <rect x="-22" y="-10" width="44" height="20" rx="6"
+                            fill={cbState === "open" ? "var(--danger)" : "var(--warning)"}
+                            opacity="0.92"
+                            className={cbState === "open" ? "topology-cb-open-flash" : ""}
+                          />
+                          <text x="0" y="4" textAnchor="middle" fontSize="9" fontWeight="700" fill="white" letterSpacing="0.05em">
+                            {cbState === "open" ? "OPEN" : "½ OPEN"}
+                          </text>
+                        </g>
+                      )}
                     </g>
                   );
                 })}
@@ -1115,6 +1290,8 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                 const selected = selectedNodeId === node.id;
                 const active = emphasis.nodes.size === 0 || emphasis.nodes.has(node.id);
                 const badge = node.kind === "tenant" ? "Tenant" : node.kind === "route" ? "Route" : node.kind === "token" ? "Token" : node.kind === "upstream" ? "Upstream" : "Draft";
+                const showPulse = (node.kind === "tenant" || node.kind === "upstream") && node.tone !== "var(--muted)";
+                const pulseHealth = node.tone === "var(--success)" ? "up" : node.tone === "var(--danger)" ? "down" : "unknown";
 
                 return (
                   <button
@@ -1143,6 +1320,13 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => handleNodeSelect(node)}
                   >
+                    {showPulse && (
+                      <div
+                        className="topology-health-pulse pointer-events-none absolute rounded-[20px]"
+                        data-health={pulseHealth}
+                        style={{ inset: "-6px" }}
+                      />
+                    )}
                     <div className="p-3.5">
                       <div className="flex items-center justify-between gap-3">
                         <span className="rounded-full border border-border/70 bg-background/75 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{badge}</span>
@@ -1151,11 +1335,402 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                       <div className="mt-2.5 text-sm font-semibold leading-5 text-foreground">{node.label}</div>
                       <div className="mt-1 text-xs leading-5 text-muted-foreground">{node.meta}</div>
                       {node.stats ? <div className="mt-2.5 text-[11px] font-medium text-foreground/80">{node.stats}</div> : null}
+                      {node.cbState && node.cbState !== "closed" && (
+                        <div className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] ${node.cbState === "open" ? "bg-danger/12 text-danger topology-cb-open-flash" : "bg-warning/12 text-warning"}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${node.cbState === "open" ? "bg-danger" : "bg-warning"}`} />
+                          {node.cbState === "open" ? "CB Open" : "CB ½ Open"}
+                        </div>
+                      )}
                     </div>
                   </button>
                 );
               })}
             </div>
+
+            {/* Mini-map */}
+            <div
+              className="absolute bottom-[60px] right-4 overflow-hidden rounded-xl border border-border/70 bg-surface/85 backdrop-blur-sm"
+              style={{ width: 176, height: 110, pointerEvents: "none" }}
+            >
+              <svg
+                width="176"
+                height="110"
+                viewBox={`0 0 ${SCENE_WIDTH} ${graph.sceneHeight}`}
+                preserveAspectRatio="xMidYMid meet"
+              >
+                {graphEdges.map((edge) => {
+                  const from = graphNodes.find((n) => n.id === edge.from);
+                  const to = graphNodes.find((n) => n.id === edge.to);
+                  if (!from || !to) return null;
+                  const stroke = edge.error ? "var(--danger)" : edge.hot ? "var(--accent)" : edge.reachable ? "var(--success)" : "var(--border)";
+                  return <line key={edge.id} x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={stroke} strokeOpacity="0.5" strokeWidth="12" />;
+                })}
+                {graphNodes.map((node) => (
+                  <circle key={node.id} cx={node.x} cy={node.y} r="28" fill={node.tone} opacity="0.8" />
+                ))}
+                {/* Viewport indicator */}
+                <rect
+                  x={Math.max(0, -camera.x / camera.scale)}
+                  y={Math.max(0, -camera.y / camera.scale)}
+                  width={Math.min(SCENE_WIDTH, (viewportRef.current?.clientWidth ?? 800) / camera.scale)}
+                  height={Math.min(graph.sceneHeight, (viewportRef.current?.clientHeight ?? 600) / camera.scale)}
+                  fill="none"
+                  stroke="var(--accent)"
+                  strokeWidth="18"
+                  rx="20"
+                  opacity="0.7"
+                />
+              </svg>
+              <div className="absolute bottom-1 left-2 text-[8px] font-medium uppercase tracking-wider text-muted-foreground/60">Map</div>
+            </div>
+
+            {/* ── Edge popover (route → tenant) ────────────────────── */}
+            {selectedCBEdge && (() => {
+              const cbState = selectedCBEdge.state;
+              const isClosed = cbState === "closed";
+              const isOpen = cbState === "open";
+              const vpX = selectedCBEdge.sceneX * camera.scale + camera.x;
+              const vpY = selectedCBEdge.sceneY * camera.scale + camera.y;
+              const vw = viewportRef.current?.clientWidth ?? 700;
+              const vh = viewportRef.current?.clientHeight ?? 500;
+              const panelW = 312;
+              const panelH = isClosed ? 220 : 330;
+              const left = Math.min(Math.max(vpX - panelW / 2, 8), vw - panelW - 8);
+              const top = vpY - panelH - 20 < 8 ? vpY + 24 : vpY - panelH - 20;
+
+              const accentColor = isClosed ? "var(--border)" : isOpen ? "var(--danger)" : "var(--warning)";
+              const accentBg = isClosed
+                ? "color-mix(in oklab, var(--success) 6%, var(--surface))"
+                : isOpen
+                  ? "color-mix(in oklab, var(--danger) 8%, var(--surface))"
+                  : "color-mix(in oklab, var(--warning) 8%, var(--surface))";
+
+              async function execForceState(state: string) {
+                setIsForcingCB(true);
+                try {
+                  await fetch(`/api/admin/circuit-breakers/${selectedCBEdge!.routeID}`, {
+                    method: "PATCH",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ state }),
+                  });
+                  setPendingCBAction(null);
+                  setSelectedCBEdge(null);
+                  void pollTopology();
+                } finally {
+                  setIsForcingCB(false);
+                }
+              }
+
+              const selectedRouteData = snapshot.data.routes.find((r) => r.id === selectedCBEdge.routeID);
+
+              return (
+                <div
+                  className="absolute z-50 overflow-hidden rounded-[16px] border bg-surface shadow-2xl"
+                  style={{
+                    left,
+                    top: Math.min(Math.max(top, 8), vh - panelH - 8),
+                    width: panelW,
+                    borderColor: accentColor,
+                    boxShadow: `0 12px 32px -8px color-mix(in oklab, ${accentColor} 22%, transparent)`,
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-4 py-3" style={{ background: accentBg }}>
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={`h-2 w-2 shrink-0 rounded-full ${isOpen ? "topology-cb-open-flash" : ""}`}
+                        style={{ background: isClosed ? "var(--success)" : isOpen ? "var(--danger)" : "var(--warning)" }}
+                      />
+                      <span className={`text-[11px] font-bold uppercase tracking-[0.14em] ${isClosed ? "text-success" : isOpen ? "text-danger" : "text-warning"}`}>
+                        {isClosed ? "Route binding" : isOpen ? "Circuit Breaker — Open" : "Circuit Breaker — Half Open"}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-md p-0.5 text-muted-foreground hover:text-foreground"
+                      onClick={() => { setSelectedCBEdge(null); setPendingCBAction(null); }}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 px-4 py-3 text-xs">
+                    {/* Route / Tenant / Latency */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-[8px] bg-panel px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Route</div>
+                        <div className="mt-0.5 truncate font-mono text-foreground">{selectedCBEdge.routeLabel}</div>
+                      </div>
+                      <div className="rounded-[8px] bg-panel px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Tenant</div>
+                        <div className="mt-0.5 truncate font-mono text-foreground">{selectedCBEdge.tenantLabel}</div>
+                      </div>
+                    </div>
+
+                    {/* Route metadata */}
+                    {selectedRouteData && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedRouteData.methods.map((m) => (
+                          <span key={m} className="rounded-md bg-panel border border-border/60 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground">{m}</span>
+                        ))}
+                        {selectedRouteData.requiredScope && (
+                          <span className="rounded-md bg-panel border border-border/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">scope: {selectedRouteData.requiredScope}</span>
+                        )}
+                        {selectedCBEdge.latencyMs > 0 && (
+                          <span className="rounded-md bg-panel border border-border/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">~{selectedCBEdge.latencyMs}ms</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* State description — only for non-closed breakers */}
+                    {!isClosed && (
+                      <div className="space-y-1.5 leading-[1.55] text-muted-foreground">
+                        {isOpen ? (
+                          <>
+                            <p><span className="font-semibold text-danger">Traffic is blocked.</span> JustGate detected 5 or more consecutive upstream failures and stopped forwarding requests to protect against cascading errors.</p>
+                            <p>The breaker will automatically allow a single <span className="font-medium text-foreground">trial request</span> after ~30 seconds to probe upstream recovery.</p>
+                          </>
+                        ) : (
+                          <>
+                            <p><span className="font-semibold text-warning">Probing upstream.</span> One trial request is being allowed through to check if the upstream has recovered.</p>
+                            <p>A <span className="font-medium text-success">successful response</span> closes the circuit. Another <span className="font-medium text-danger">failure</span> re-opens it for 30 seconds.</p>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Actions — two-step inline confirm for destructive changes */}
+                    {pendingCBAction ? (
+                      <div className="space-y-2.5 rounded-[10px] border border-border bg-panel p-3">
+                        <p className="text-[11px] leading-[1.5] text-muted-foreground">
+                          {pendingCBAction === "open"
+                            ? <>Manually <span className="font-semibold text-danger">opening the circuit breaker</span> will immediately stop all traffic to <span className="font-medium text-foreground">{selectedCBEdge.routeLabel}</span>. Requests will return 503 until the breaker is closed again.</>
+                            : <>Manually <span className="font-semibold text-success">closing the circuit breaker</span> will resume traffic to <span className="font-medium text-foreground">{selectedCBEdge.routeLabel}</span>. Failures will re-open it automatically.</>
+                          }
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            className="flex-1 rounded-[8px] border border-border bg-background px-3 py-1.5 text-[11px] font-semibold text-muted-foreground transition-opacity hover:opacity-80"
+                            onClick={() => setPendingCBAction(null)}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isForcingCB}
+                            className={`flex-1 rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition-opacity hover:opacity-80 disabled:opacity-40 ${
+                              pendingCBAction === "open"
+                                ? "border-danger/30 bg-danger/10 text-danger"
+                                : "border-success/30 bg-success/10 text-success"
+                            }`}
+                            onClick={() => void execForceState(pendingCBAction === "open" ? "open" : "closed")}
+                          >
+                            {isForcingCB ? "Applying…" : "Confirm"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          className="flex-1 rounded-[8px] border border-border bg-panel px-3 py-1.5 text-[11px] font-semibold text-foreground transition-opacity hover:opacity-80"
+                          onClick={() => {
+                            setSelectedCBEdge(null);
+                            setEditingRouteID(selectedCBEdge.routeID);
+                          }}
+                        >
+                          Edit route
+                        </button>
+                        {!isClosed && (
+                          <button
+                            type="button"
+                            className="flex-1 rounded-[8px] border border-success/30 bg-success/10 px-3 py-1.5 text-[11px] font-semibold text-success transition-opacity hover:opacity-80"
+                            onClick={() => setPendingCBAction("close")}
+                          >
+                            Close circuit breaker
+                          </button>
+                        )}
+                        {isClosed && (
+                          <button
+                            type="button"
+                            className="flex-1 rounded-[8px] border border-danger/30 bg-danger/10 px-3 py-1.5 text-[11px] font-semibold text-danger transition-opacity hover:opacity-80"
+                            onClick={() => setPendingCBAction("open")}
+                          >
+                            Open circuit breaker
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── Token edge popover (token → route) ──────────────── */}
+            {selectedTokenEdge && (() => {
+              const tokenData = snapshot.data.tokens.find((t) => t.id === selectedTokenEdge.tokenID);
+              const isActive = tokenData?.active ?? true;
+              const vpX = selectedTokenEdge.sceneX * camera.scale + camera.x;
+              const vpY = selectedTokenEdge.sceneY * camera.scale + camera.y;
+              const vw = viewportRef.current?.clientWidth ?? 700;
+              const vh = viewportRef.current?.clientHeight ?? 500;
+              const panelW = 312;
+              const panelH = 240;
+              const left = Math.min(Math.max(vpX - panelW / 2, 8), vw - panelW - 8);
+              const top = vpY - panelH - 20 < 8 ? vpY + 24 : vpY - panelH - 20;
+
+              async function execTokenAction(action: "revoke" | "reactivate") {
+                setIsActingOnToken(true);
+                try {
+                  await fetch(`/api/admin/tokens/${selectedTokenEdge!.tokenID}`, {
+                    method: "PATCH",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ active: action === "reactivate" }),
+                  });
+                  setPendingTokenAction(null);
+                  setSelectedTokenEdge(null);
+                  void pollTopology();
+                } finally {
+                  setIsActingOnToken(false);
+                }
+              }
+
+              return (
+                <div
+                  className="absolute z-50 overflow-hidden rounded-[16px] border border-border bg-surface shadow-2xl"
+                  style={{
+                    left,
+                    top: Math.min(Math.max(top, 8), vh - panelH - 8),
+                    width: panelW,
+                    boxShadow: isActive
+                      ? "0 12px 32px -8px color-mix(in oklab, var(--accent) 16%, transparent)"
+                      : "0 12px 32px -8px color-mix(in oklab, var(--muted) 16%, transparent)",
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-4 py-3"
+                    style={{ background: isActive ? "color-mix(in oklab, var(--accent) 6%, var(--surface))" : "color-mix(in oklab, var(--muted) 6%, var(--surface))" }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-2 shrink-0 rounded-full" style={{ background: isActive ? "var(--accent)" : "var(--muted-foreground)" }} />
+                      <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-foreground">
+                        Token access
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-md p-0.5 text-muted-foreground hover:text-foreground"
+                      onClick={() => { setSelectedTokenEdge(null); setPendingTokenAction(null); }}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 px-4 py-3 text-xs">
+                    {/* Token / Route */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-[8px] bg-panel px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Token</div>
+                        <div className="mt-0.5 truncate font-semibold text-foreground">{selectedTokenEdge.tokenLabel}</div>
+                        {tokenData && (
+                          <div className="mt-0.5 font-mono text-[10px] text-muted-foreground/70">{tokenData.preview}</div>
+                        )}
+                      </div>
+                      <div className="rounded-[8px] bg-panel px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Route</div>
+                        <div className="mt-0.5 truncate font-mono text-foreground">{selectedTokenEdge.routeLabel}</div>
+                        {tokenData && (
+                          <div className="mt-0.5 text-[10px] text-muted-foreground/70">scope: {tokenData.scopes.join(", ")}</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Status pills */}
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${isActive ? "border-success/30 bg-success/10 text-success" : "border-border bg-panel text-muted-foreground line-through"}`}>
+                        {isActive ? "Active" : "Revoked"}
+                      </span>
+                      {tokenData?.expiresAt && new Date(tokenData.expiresAt).getFullYear() < 9999 && (
+                        <span className="rounded-md border border-border bg-panel px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          expires {new Date(tokenData.expiresAt).toLocaleDateString()}
+                        </span>
+                      )}
+                      {tokenData?.lastUsedAt && tokenData.lastUsedAt !== "0001-01-01T00:00:00Z" && (
+                        <span className="rounded-md border border-border bg-panel px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          last used {new Date(tokenData.lastUsedAt).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Inline confirm or action buttons */}
+                    {pendingTokenAction ? (
+                      <div className="space-y-2.5 rounded-[10px] border border-border bg-panel p-3">
+                        <p className="text-[11px] leading-[1.5] text-muted-foreground">
+                          {pendingTokenAction === "revoke"
+                            ? <><span className="font-semibold text-warning">Revoking this token</span> stops all access immediately. Any service using it will receive 401 errors. This cannot be undone.</>
+                            : <><span className="font-semibold text-success">Re-activating this token</span> restores access for <span className="font-medium text-foreground">{selectedTokenEdge.tokenLabel}</span>.</>
+                          }
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            className="flex-1 rounded-[8px] border border-border bg-background px-3 py-1.5 text-[11px] font-semibold text-muted-foreground transition-opacity hover:opacity-80"
+                            onClick={() => setPendingTokenAction(null)}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isActingOnToken}
+                            className={`flex-1 rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition-opacity hover:opacity-80 disabled:opacity-40 ${
+                              pendingTokenAction === "revoke"
+                                ? "border-warning/30 bg-warning/10 text-warning"
+                                : "border-success/30 bg-success/10 text-success"
+                            }`}
+                            onClick={() => void execTokenAction(pendingTokenAction)}
+                          >
+                            {isActingOnToken ? "Applying…" : "Confirm"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          className="flex-1 rounded-[8px] border border-border bg-panel px-3 py-1.5 text-[11px] font-semibold text-foreground transition-opacity hover:opacity-80"
+                          onClick={() => {
+                            setSelectedTokenEdge(null);
+                            setSelectedNode({ kind: "token", id: selectedTokenEdge.tokenID });
+                          }}
+                        >
+                          Inspect token
+                        </button>
+                        {isActive ? (
+                          <button
+                            type="button"
+                            className="flex-1 rounded-[8px] border border-warning/30 bg-warning/10 px-3 py-1.5 text-[11px] font-semibold text-warning transition-opacity hover:opacity-80"
+                            onClick={() => setPendingTokenAction("revoke")}
+                          >
+                            Revoke token
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="flex-1 rounded-[8px] border border-success/30 bg-success/10 px-3 py-1.5 text-[11px] font-semibold text-success transition-opacity hover:opacity-80"
+                            onClick={() => setPendingTokenAction("reactivate")}
+                          >
+                            Re-activate token
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-border bg-surface/88 px-4 py-2.5 text-[11px] text-muted-foreground backdrop-blur-sm">
               <div className="flex items-center gap-2">
@@ -1165,7 +1740,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
               <div className="flex items-center gap-2">
                 <span className="rounded-full border border-border bg-background/75 px-3 py-1">Wheel to zoom</span>
                 <span className="rounded-full border border-border bg-background/75 px-3 py-1">Current zoom {Math.round(camera.scale * 100)}%</span>
-                <span className="rounded-full border border-border bg-background/75 px-3 py-1">Fit view zooms across the full graph</span>
+                <span className="rounded-full border border-border bg-background/75 px-3 py-1">Click any line to inspect or act on it</span>
               </div>
             </div>
           </div>
@@ -1216,6 +1791,14 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
               ) : null}
               {selectedTokenForInspector ? <Chip className="bg-background text-foreground ring-1 ring-border">Preview {selectedTokenForInspector.preview}</Chip> : null}
             </div>
+            {selectedTokenForInspector && (
+              <div className="mt-4 rounded-xl border border-border bg-background/60">
+                <div className="border-b border-border/60 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Usage (24h)
+                </div>
+                <TokenStatsPanel tokenID={selectedTokenForInspector.id} />
+              </div>
+            )}
           </Surface>
 
           <Surface className="surface-card-muted rounded-[22px] border-0 p-5 shadow-none">

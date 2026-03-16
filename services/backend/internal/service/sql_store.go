@@ -144,9 +144,9 @@ func (store *sqlStore) ListTokens(ctx context.Context) ([]tokenRecord, error) {
 	var rows *sql.Rows
 	var err error
 	if orgID := orgIDFromContext(ctx); orgID != "" {
-		rows, err = store.queryContext(ctx, `SELECT tok.id, tok.name, tok.tenant_id, tok.scopes_json, tok.expires_at, tok.last_used_at, tok.preview, tok.active, tok.token_hash, tok.rate_limit_rpm, tok.rate_limit_burst FROM tokens tok INNER JOIN tenants tn ON tok.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY tok.created_at DESC`, orgID)
+		rows, err = store.queryContext(ctx, `SELECT tok.id, tok.name, tok.tenant_id, tok.scopes_json, tok.expires_at, tok.last_used_at, tok.preview, tok.active, tok.token_hash, tok.rate_limit_rpm, tok.rate_limit_burst, tok.created_at FROM tokens tok INNER JOIN tenants tn ON tok.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY tok.created_at DESC`, orgID)
 	} else {
-		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens ORDER BY created_at DESC`)
+		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst, created_at FROM tokens ORDER BY created_at DESC`)
 	}
 	if err != nil {
 		return nil, err
@@ -420,7 +420,7 @@ func (store *sqlStore) SetTokenActive(ctx context.Context, tokenID string, activ
 		return tokenRecord{}, fmt.Errorf("token not found")
 	}
 
-	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens WHERE id = ?`, tokenID)
+	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst, created_at FROM tokens WHERE id = ?`, tokenID)
 	return scanToken(row)
 }
 
@@ -468,7 +468,7 @@ func (store *sqlStore) ValidateToken(ctx context.Context, secret string) (tokenR
 	hashedSecret := hashToken(secret)
 	now := store.now()
 
-	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens WHERE token_hash = ? AND active = ? AND expires_at > ? LIMIT 1`, hashedSecret, true, now)
+	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst, created_at FROM tokens WHERE token_hash = ? AND active = ? AND expires_at > ? LIMIT 1`, hashedSecret, true, now)
 	token, err := scanToken(row)
 	if err == sql.ErrNoRows {
 		return tokenRecord{}, false, nil
@@ -565,7 +565,7 @@ func scanRoute(scanner interface{ Scan(dest ...any) error }) (routeRecord, error
 func scanToken(scanner interface{ Scan(dest ...any) error }) (tokenRecord, error) {
 	var token tokenRecord
 	var scopesJSON string
-	if err := scanner.Scan(&token.ID, &token.Name, &token.TenantID, &scopesJSON, &token.ExpiresAt, &token.LastUsedAt, &token.Preview, &token.Active, &token.Hash, &token.RateLimitRPM, &token.RateLimitBurst); err != nil {
+	if err := scanner.Scan(&token.ID, &token.Name, &token.TenantID, &scopesJSON, &token.ExpiresAt, &token.LastUsedAt, &token.Preview, &token.Active, &token.Hash, &token.RateLimitRPM, &token.RateLimitBurst, &token.CreatedAt); err != nil {
 		return tokenRecord{}, err
 	}
 	if err := json.Unmarshal([]byte(scopesJSON), &token.Scopes); err != nil {
@@ -1515,8 +1515,12 @@ func (store *sqlStore) UpsertInstanceHeartbeat(ctx context.Context, hb instanceH
 }
 
 func (store *sqlStore) ListInstanceHeartbeats(ctx context.Context) ([]instanceHeartbeatRecord, error) {
+	// Only return instances that have sent a heartbeat in the last 10 minutes.
+	// This prevents accumulating ghost rows from dev restarts or crashed replicas.
+	cutoff := store.now().UTC().Add(-10 * time.Minute)
 	rows, err := store.queryContext(ctx,
-		`SELECT instance_id, region, hostname, version, started_at, last_heartbeat_at, metadata FROM instance_heartbeats ORDER BY region, instance_id`)
+		`SELECT instance_id, region, hostname, version, started_at, last_heartbeat_at, metadata FROM instance_heartbeats WHERE last_heartbeat_at >= ? ORDER BY region, instance_id`,
+		cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -1537,7 +1541,7 @@ func (store *sqlStore) ListInstanceHeartbeats(ctx context.Context) ([]instanceHe
 
 func (store *sqlStore) ListExpiringTokens(ctx context.Context, before time.Time) ([]tokenRecord, error) {
 	rows, err := store.queryContext(ctx,
-		`SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst FROM tokens WHERE active = ? AND expires_at <= ? ORDER BY expires_at ASC`,
+		`SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst, created_at FROM tokens WHERE active = ? AND expires_at <= ? ORDER BY expires_at ASC`,
 		true, before)
 	if err != nil {
 		return nil, err
@@ -1556,6 +1560,339 @@ func (store *sqlStore) ListExpiringTokens(ctx context.Context, before time.Time)
 }
 
 // ── Filtered audit queries ─────────────────────────────────────────────
+
+// ── Protected Apps ─────────────────────────────────────────────────────
+
+func (store *sqlStore) ListProtectedApps(ctx context.Context, orgID string) ([]protectedAppRecord, error) {
+	var rows *sql.Rows
+	var err error
+	if orgID != "" {
+		rows, err = store.queryContext(ctx, `SELECT id, name, slug, upstream_url, org_id, auth_mode, inject_headers_json, strip_headers_json, extra_ca_pem, rate_limit_rpm, rate_limit_burst, rate_limit_per, allow_cidrs, deny_cidrs, health_check_path, created_at, created_by FROM protected_apps WHERE org_id = ? ORDER BY created_at DESC`, orgID)
+	} else {
+		rows, err = store.queryContext(ctx, `SELECT id, name, slug, upstream_url, org_id, auth_mode, inject_headers_json, strip_headers_json, extra_ca_pem, rate_limit_rpm, rate_limit_burst, rate_limit_per, allow_cidrs, deny_cidrs, health_check_path, created_at, created_by FROM protected_apps ORDER BY created_at DESC`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]protectedAppRecord, 0)
+	for rows.Next() {
+		app, err := scanProtectedApp(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, app)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) GetProtectedApp(ctx context.Context, appID string) (protectedAppRecord, bool, error) {
+	row := store.queryRowContext(ctx, `SELECT id, name, slug, upstream_url, org_id, auth_mode, inject_headers_json, strip_headers_json, extra_ca_pem, rate_limit_rpm, rate_limit_burst, rate_limit_per, allow_cidrs, deny_cidrs, health_check_path, created_at, created_by FROM protected_apps WHERE id = ? LIMIT 1`, appID)
+	app, err := scanProtectedApp(row)
+	if err == sql.ErrNoRows {
+		return protectedAppRecord{}, false, nil
+	}
+	if err != nil {
+		return protectedAppRecord{}, false, err
+	}
+	return app, true, nil
+}
+
+func (store *sqlStore) GetProtectedAppBySlug(ctx context.Context, slug string) (protectedAppRecord, bool, error) {
+	row := store.queryRowContext(ctx, `SELECT id, name, slug, upstream_url, org_id, auth_mode, inject_headers_json, strip_headers_json, extra_ca_pem, rate_limit_rpm, rate_limit_burst, rate_limit_per, allow_cidrs, deny_cidrs, health_check_path, created_at, created_by FROM protected_apps WHERE slug = ? LIMIT 1`, slug)
+	app, err := scanProtectedApp(row)
+	if err == sql.ErrNoRows {
+		return protectedAppRecord{}, false, nil
+	}
+	if err != nil {
+		return protectedAppRecord{}, false, err
+	}
+	return app, true, nil
+}
+
+func (store *sqlStore) CreateProtectedApp(ctx context.Context, payload createAppRequest, orgID, createdBy string) (protectedAppRecord, error) {
+	injectJSON, err := json.Marshal(payload.InjectHeaders)
+	if err != nil {
+		return protectedAppRecord{}, err
+	}
+	stripJSON, err := json.Marshal(payload.StripHeaders)
+	if err != nil {
+		return protectedAppRecord{}, err
+	}
+	app := protectedAppRecord{
+		ID:              newResourceID("app"),
+		Name:            payload.Name,
+		Slug:            payload.Slug,
+		UpstreamURL:     payload.UpstreamURL,
+		OrgID:           orgID,
+		AuthMode:        payload.AuthMode,
+		InjectHeaders:   payload.InjectHeaders,
+		StripHeaders:    payload.StripHeaders,
+		ExtraCAPEM:      payload.ExtraCAPEM,
+		RateLimitRPM:    payload.RateLimitRPM,
+		RateLimitBurst:  payload.RateLimitBurst,
+		RateLimitPer:    payload.RateLimitPer,
+		AllowCIDRs:      payload.AllowCIDRs,
+		DenyCIDRs:       payload.DenyCIDRs,
+		HealthCheckPath: payload.HealthCheckPath,
+		CreatedAt:       store.now(),
+		CreatedBy:       createdBy,
+	}
+	if app.AuthMode == "" {
+		app.AuthMode = "oidc"
+	}
+	if app.RateLimitPer == "" {
+		app.RateLimitPer = "session"
+	}
+	_, err = store.execContext(ctx,
+		`INSERT INTO protected_apps (id, name, slug, upstream_url, org_id, auth_mode, inject_headers_json, strip_headers_json, extra_ca_pem, rate_limit_rpm, rate_limit_burst, rate_limit_per, allow_cidrs, deny_cidrs, health_check_path, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		app.ID, app.Name, app.Slug, app.UpstreamURL, orgID, app.AuthMode, string(injectJSON), string(stripJSON), app.ExtraCAPEM, app.RateLimitRPM, app.RateLimitBurst, app.RateLimitPer, app.AllowCIDRs, app.DenyCIDRs, app.HealthCheckPath, app.CreatedAt, app.CreatedBy)
+	if err != nil {
+		return protectedAppRecord{}, translateDBError(err, "slug already exists")
+	}
+	return app, nil
+}
+
+func (store *sqlStore) UpdateProtectedApp(ctx context.Context, appID string, payload createAppRequest) (protectedAppRecord, error) {
+	injectJSON, err := json.Marshal(payload.InjectHeaders)
+	if err != nil {
+		return protectedAppRecord{}, err
+	}
+	stripJSON, err := json.Marshal(payload.StripHeaders)
+	if err != nil {
+		return protectedAppRecord{}, err
+	}
+	result, err := store.execContext(ctx,
+		`UPDATE protected_apps SET name = ?, slug = ?, upstream_url = ?, auth_mode = ?, inject_headers_json = ?, strip_headers_json = ?, extra_ca_pem = ?, rate_limit_rpm = ?, rate_limit_burst = ?, rate_limit_per = ?, allow_cidrs = ?, deny_cidrs = ?, health_check_path = ? WHERE id = ?`,
+		payload.Name, payload.Slug, payload.UpstreamURL, payload.AuthMode, string(injectJSON), string(stripJSON), payload.ExtraCAPEM, payload.RateLimitRPM, payload.RateLimitBurst, payload.RateLimitPer, payload.AllowCIDRs, payload.DenyCIDRs, payload.HealthCheckPath, appID)
+	if err != nil {
+		return protectedAppRecord{}, translateDBError(err, "slug already exists")
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return protectedAppRecord{}, err
+	}
+	if rowsAffected == 0 {
+		return protectedAppRecord{}, fmt.Errorf("app not found")
+	}
+	app, _, err := store.GetProtectedApp(ctx, appID)
+	return app, err
+}
+
+func (store *sqlStore) DeleteProtectedApp(ctx context.Context, appID string) error {
+	// Cascade: delete sessions and tokens first
+	if _, err := store.execContext(ctx, `DELETE FROM app_sessions WHERE app_id = ?`, appID); err != nil {
+		return err
+	}
+	if _, err := store.execContext(ctx, `DELETE FROM app_tokens WHERE app_id = ?`, appID); err != nil {
+		return err
+	}
+	result, err := store.execContext(ctx, `DELETE FROM protected_apps WHERE id = ?`, appID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("app not found")
+	}
+	return nil
+}
+
+// ── App Sessions ────────────────────────────────────────────────────────
+
+func (store *sqlStore) CreateAppSession(ctx context.Context, session appSessionRecord) error {
+	groupsJSON, err := json.Marshal(session.UserGroups)
+	if err != nil {
+		return err
+	}
+	if session.ID == "" {
+		session.ID = newResourceID("aps")
+	}
+	_, err = store.execContext(ctx,
+		`INSERT INTO app_sessions (id, app_id, user_sub, user_email, user_name, user_groups_json, token_hash, ip, created_at, expires_at, last_used_at, revoked) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false)`,
+		session.ID, session.AppID, session.UserSub, session.UserEmail, session.UserName, string(groupsJSON), session.TokenHash, session.IP, session.CreatedAt, session.ExpiresAt, session.LastUsedAt)
+	return err
+}
+
+func (store *sqlStore) GetAppSessionByToken(ctx context.Context, secret string) (appSessionRecord, bool, error) {
+	tokenHash := hashToken(secret)
+	now := store.now()
+	row := store.queryRowContext(ctx,
+		`SELECT id, app_id, user_sub, user_email, user_name, user_groups_json, token_hash, ip, created_at, expires_at, last_used_at, revoked FROM app_sessions WHERE token_hash = ? AND revoked = false AND expires_at > ? LIMIT 1`,
+		tokenHash, now)
+	session, err := scanAppSession(row)
+	if err == sql.ErrNoRows {
+		return appSessionRecord{}, false, nil
+	}
+	if err != nil {
+		return appSessionRecord{}, false, err
+	}
+	return session, true, nil
+}
+
+func (store *sqlStore) ListAppSessions(ctx context.Context, appID string) ([]appSessionRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, app_id, user_sub, user_email, user_name, user_groups_json, token_hash, ip, created_at, expires_at, last_used_at, revoked FROM app_sessions WHERE app_id = ? AND revoked = false ORDER BY created_at DESC`,
+		appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]appSessionRecord, 0)
+	for rows.Next() {
+		s, err := scanAppSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, s)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) RevokeAppSession(ctx context.Context, sessionID string) error {
+	result, err := store.execContext(ctx, `UPDATE app_sessions SET revoked = true WHERE id = ?`, sessionID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("session not found")
+	}
+	return nil
+}
+
+func (store *sqlStore) TouchAppSession(ctx context.Context, sessionID string, now time.Time) error {
+	_, err := store.execContext(ctx, `UPDATE app_sessions SET last_used_at = ? WHERE id = ?`, now, sessionID)
+	return err
+}
+
+// ── App Tokens ──────────────────────────────────────────────────────────
+
+func (store *sqlStore) CreateAppToken(ctx context.Context, appID, name, secret string, rateLimitRPM, rateLimitBurst int, expiresAt time.Time) (appTokenRecord, error) {
+	token := appTokenRecord{
+		ID:             newResourceID("atk"),
+		Name:           name,
+		AppID:          appID,
+		TokenHash:      hashToken(secret),
+		Preview:        previewSecret(secret),
+		Active:         true,
+		RateLimitRPM:   rateLimitRPM,
+		RateLimitBurst: rateLimitBurst,
+		ExpiresAt:      expiresAt,
+		LastUsedAt:     store.now(),
+		CreatedAt:      store.now(),
+	}
+	_, err := store.execContext(ctx,
+		`INSERT INTO app_tokens (id, name, app_id, token_hash, preview, active, rate_limit_rpm, rate_limit_burst, expires_at, last_used_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		token.ID, token.Name, token.AppID, token.TokenHash, token.Preview, token.Active, token.RateLimitRPM, token.RateLimitBurst, token.ExpiresAt, token.LastUsedAt, token.CreatedAt)
+	if err != nil {
+		return appTokenRecord{}, translateDBError(err, "token creation failed")
+	}
+	return token, nil
+}
+
+func (store *sqlStore) ListAppTokens(ctx context.Context, appID string) ([]appTokenRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, name, app_id, token_hash, preview, active, rate_limit_rpm, rate_limit_burst, expires_at, last_used_at, created_at FROM app_tokens WHERE app_id = ? ORDER BY created_at DESC`,
+		appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]appTokenRecord, 0)
+	for rows.Next() {
+		var t appTokenRecord
+		if err := rows.Scan(&t.ID, &t.Name, &t.AppID, &t.TokenHash, &t.Preview, &t.Active, &t.RateLimitRPM, &t.RateLimitBurst, &t.ExpiresAt, &t.LastUsedAt, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, t)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) ValidateAppToken(ctx context.Context, secret string) (appTokenRecord, bool, error) {
+	tokenHash := hashToken(secret)
+	now := store.now()
+	row := store.queryRowContext(ctx,
+		`SELECT id, name, app_id, token_hash, preview, active, rate_limit_rpm, rate_limit_burst, expires_at, last_used_at, created_at FROM app_tokens WHERE token_hash = ? AND active = true AND expires_at > ? LIMIT 1`,
+		tokenHash, now)
+	var t appTokenRecord
+	if err := row.Scan(&t.ID, &t.Name, &t.AppID, &t.TokenHash, &t.Preview, &t.Active, &t.RateLimitRPM, &t.RateLimitBurst, &t.ExpiresAt, &t.LastUsedAt, &t.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return appTokenRecord{}, false, nil
+		}
+		return appTokenRecord{}, false, err
+	}
+	t.LastUsedAt = now
+	_, _ = store.execContext(ctx, `UPDATE app_tokens SET last_used_at = ? WHERE id = ?`, now, t.ID)
+	return t, true, nil
+}
+
+func (store *sqlStore) DeleteAppToken(ctx context.Context, tokenID string) error {
+	result, err := store.execContext(ctx, `DELETE FROM app_tokens WHERE id = ?`, tokenID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("token not found")
+	}
+	return nil
+}
+
+// ── Protected App scan helpers ─────────────────────────────────────────
+
+func scanProtectedApp(scanner interface{ Scan(dest ...any) error }) (protectedAppRecord, error) {
+	var app protectedAppRecord
+	var injectJSON, stripJSON string
+	if err := scanner.Scan(
+		&app.ID, &app.Name, &app.Slug, &app.UpstreamURL, &app.OrgID,
+		&app.AuthMode, &injectJSON, &stripJSON, &app.ExtraCAPEM,
+		&app.RateLimitRPM, &app.RateLimitBurst, &app.RateLimitPer,
+		&app.AllowCIDRs, &app.DenyCIDRs, &app.HealthCheckPath,
+		&app.CreatedAt, &app.CreatedBy,
+	); err != nil {
+		return protectedAppRecord{}, err
+	}
+	_ = json.Unmarshal([]byte(injectJSON), &app.InjectHeaders)
+	_ = json.Unmarshal([]byte(stripJSON), &app.StripHeaders)
+	if app.InjectHeaders == nil {
+		app.InjectHeaders = []headerInjectionRule{}
+	}
+	if app.StripHeaders == nil {
+		app.StripHeaders = []string{}
+	}
+	return app, nil
+}
+
+func scanAppSession(scanner interface{ Scan(dest ...any) error }) (appSessionRecord, error) {
+	var s appSessionRecord
+	var groupsJSON string
+	if err := scanner.Scan(
+		&s.ID, &s.AppID, &s.UserSub, &s.UserEmail, &s.UserName,
+		&groupsJSON, &s.TokenHash, &s.IP,
+		&s.CreatedAt, &s.ExpiresAt, &s.LastUsedAt, &s.Revoked,
+	); err != nil {
+		return appSessionRecord{}, err
+	}
+	_ = json.Unmarshal([]byte(groupsJSON), &s.UserGroups)
+	if s.UserGroups == nil {
+		s.UserGroups = []string{}
+	}
+	return s, nil
+}
 
 func (store *sqlStore) ListAuditsPaginatedFiltered(ctx context.Context, limit, offset int, filters auditFilters) ([]auditRecord, int, error) {
 	orgID := orgIDFromContext(ctx)
@@ -1627,4 +1964,269 @@ func (store *sqlStore) ListAuditsPaginatedFiltered(ctx context.Context, limit, o
 		items = append(items, audit)
 	}
 	return items, total, rows.Err()
+}
+
+// ── Provisioning Grants ────────────────────────────────────────────────
+
+func (store *sqlStore) CreateProvisioningGrant(ctx context.Context, record provisioningGrantRecord) (provisioningGrantRecord, error) {
+	scopesJSON, err := json.Marshal(record.Scopes)
+	if err != nil {
+		return provisioningGrantRecord{}, err
+	}
+	_, err = store.execContext(ctx,
+		`INSERT INTO provisioning_grants (id, name, tenant_id, scopes_json, token_ttl_hours, max_uses, use_count, active, grant_hash, preview, rate_limit_rpm, rate_limit_burst, org_id, expires_at, created_at, created_by)
+		 VALUES (?, ?, ?, ?, ?, ?, 0, TRUE, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.ID, record.Name, record.TenantID, string(scopesJSON),
+		record.TokenTTLHours, record.MaxUses,
+		record.Hash, record.Preview,
+		record.RateLimitRPM, record.RateLimitBurst,
+		record.OrgID, record.ExpiresAt, record.CreatedAt, record.CreatedBy,
+	)
+	if err != nil {
+		return provisioningGrantRecord{}, err
+	}
+	return record, nil
+}
+
+func (store *sqlStore) ListProvisioningGrants(ctx context.Context) ([]provisioningGrantRecord, error) {
+	orgID := orgIDFromContext(ctx)
+	var rows *sql.Rows
+	var err error
+	if orgID != "" {
+		rows, err = store.queryContext(ctx,
+			`SELECT id, name, tenant_id, scopes_json, token_ttl_hours, max_uses, use_count, active, grant_hash, preview, rate_limit_rpm, rate_limit_burst, org_id, expires_at, created_at, created_by
+			 FROM provisioning_grants WHERE org_id = ? ORDER BY created_at DESC`, orgID)
+	} else {
+		rows, err = store.queryContext(ctx,
+			`SELECT id, name, tenant_id, scopes_json, token_ttl_hours, max_uses, use_count, active, grant_hash, preview, rate_limit_rpm, rate_limit_burst, org_id, expires_at, created_at, created_by
+			 FROM provisioning_grants ORDER BY created_at DESC`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]provisioningGrantRecord, 0)
+	for rows.Next() {
+		g, err := scanGrant(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, g)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) GetProvisioningGrantByHash(ctx context.Context, hash string) (provisioningGrantRecord, bool, error) {
+	row := store.queryRowContext(ctx,
+		`SELECT id, name, tenant_id, scopes_json, token_ttl_hours, max_uses, use_count, active, grant_hash, preview, rate_limit_rpm, rate_limit_burst, org_id, expires_at, created_at, created_by
+		 FROM provisioning_grants WHERE grant_hash = ? LIMIT 1`, hash)
+	g, err := scanGrant(row)
+	if err == sql.ErrNoRows {
+		return provisioningGrantRecord{}, false, nil
+	}
+	if err != nil {
+		return provisioningGrantRecord{}, false, err
+	}
+	return g, true, nil
+}
+
+func (store *sqlStore) IncrementGrantUseCount(ctx context.Context, id string, maxUses int) (bool, error) {
+	result, err := store.execContext(ctx,
+		`UPDATE provisioning_grants SET use_count = use_count + 1
+		 WHERE id = ? AND use_count < ? AND active = TRUE AND expires_at > ?`,
+		id, maxUses, store.now())
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
+}
+
+func (store *sqlStore) DeleteProvisioningGrant(ctx context.Context, id string) error {
+	result, err := store.execContext(ctx, `DELETE FROM provisioning_grants WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("grant not found")
+	}
+	return nil
+}
+
+// ── Token analytics ────────────────────────────────────────────────────
+
+func (store *sqlStore) GetTokenByID(ctx context.Context, tokenID string) (tokenRecord, bool, error) {
+	row := store.queryRowContext(ctx,
+		`SELECT id, name, tenant_id, scopes_json, expires_at, last_used_at, preview, active, token_hash, rate_limit_rpm, rate_limit_burst, created_at FROM tokens WHERE id = ? LIMIT 1`,
+		tokenID)
+	token, err := scanToken(row)
+	if err == sql.ErrNoRows {
+		return tokenRecord{}, false, nil
+	}
+	if err != nil {
+		return tokenRecord{}, false, err
+	}
+	return token, true, nil
+}
+
+func (store *sqlStore) ListTokenTrafficStats(ctx context.Context, tokenID string, from, to time.Time) ([]trafficStatRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id,
+		        SUM(request_count), SUM(error_count), ROUND(AVG(avg_latency_ms)),
+		        SUM(status_2xx), SUM(status_4xx), SUM(status_5xx)
+		 FROM traffic_stats
+		 WHERE token_id = ? AND bucket_start >= ? AND bucket_start <= ?
+		 GROUP BY bucket_start ORDER BY bucket_start ASC`,
+		tokenID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]trafficStatRecord, 0)
+	for rows.Next() {
+		var s trafficStatRecord
+		if err := rows.Scan(&s.ID, &s.BucketStart, &s.BucketMinutes, &s.RouteSlug, &s.TenantID, &s.TokenID, &s.OrgID,
+			&s.RequestCount, &s.ErrorCount, &s.AvgLatencyMs, &s.Status2xx, &s.Status4xx, &s.Status5xx); err != nil {
+			return nil, err
+		}
+		items = append(items, s)
+	}
+	return items, rows.Err()
+}
+
+// ── Route traffic drilldown ────────────────────────────────────────────
+
+func (store *sqlStore) ListRouteTrafficStats(ctx context.Context, routeSlug string, from, to time.Time, orgID string) ([]trafficStatRecord, error) {
+	var rows *sql.Rows
+	var err error
+	if orgID != "" {
+		rows, err = store.queryContext(ctx,
+			`SELECT id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id,
+			        request_count, error_count, avg_latency_ms, status_2xx, status_4xx, status_5xx
+			 FROM traffic_stats
+			 WHERE route_slug = ? AND org_id = ? AND bucket_start >= ? AND bucket_start <= ?
+			 ORDER BY bucket_start ASC`,
+			routeSlug, orgID, from, to)
+	} else {
+		rows, err = store.queryContext(ctx,
+			`SELECT id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id,
+			        request_count, error_count, avg_latency_ms, status_2xx, status_4xx, status_5xx
+			 FROM traffic_stats
+			 WHERE route_slug = ? AND bucket_start >= ? AND bucket_start <= ?
+			 ORDER BY bucket_start ASC`,
+			routeSlug, from, to)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]trafficStatRecord, 0)
+	for rows.Next() {
+		var s trafficStatRecord
+		if err := rows.Scan(&s.ID, &s.BucketStart, &s.BucketMinutes, &s.RouteSlug, &s.TenantID, &s.TokenID, &s.OrgID,
+			&s.RequestCount, &s.ErrorCount, &s.AvgLatencyMs, &s.Status2xx, &s.Status4xx, &s.Status5xx); err != nil {
+			return nil, err
+		}
+		items = append(items, s)
+	}
+	return items, rows.Err()
+}
+
+// ── Org IP allowlist ───────────────────────────────────────────────────
+
+func (store *sqlStore) ListOrgIPRules(ctx context.Context, orgID string) ([]orgIPRuleRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, org_id, cidr, description, created_at, created_by FROM org_ip_rules WHERE org_id = ? ORDER BY created_at ASC`,
+		orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]orgIPRuleRecord, 0)
+	for rows.Next() {
+		var r orgIPRuleRecord
+		if err := rows.Scan(&r.ID, &r.OrgID, &r.CIDR, &r.Description, &r.CreatedAt, &r.CreatedBy); err != nil {
+			return nil, err
+		}
+		items = append(items, r)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) CreateOrgIPRule(ctx context.Context, rule orgIPRuleRecord) (orgIPRuleRecord, error) {
+	_, err := store.execContext(ctx,
+		`INSERT INTO org_ip_rules (id, org_id, cidr, description, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
+		rule.ID, rule.OrgID, rule.CIDR, rule.Description, rule.CreatedAt, rule.CreatedBy)
+	if err != nil {
+		return orgIPRuleRecord{}, err
+	}
+	return rule, nil
+}
+
+func (store *sqlStore) DeleteOrgIPRule(ctx context.Context, ruleID string) error {
+	result, err := store.execContext(ctx, `DELETE FROM org_ip_rules WHERE id = ?`, ruleID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("rule not found")
+	}
+	return nil
+}
+
+// ── Grant audit trail ──────────────────────────────────────────────────
+
+func (store *sqlStore) RecordGrantIssuance(ctx context.Context, record grantIssuanceRecord) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO grant_issuances (id, grant_id, token_id, agent_name, issued_at) VALUES (?, ?, ?, ?, ?)`,
+		record.ID, record.GrantID, record.TokenID, record.AgentName, record.IssuedAt)
+	return err
+}
+
+func (store *sqlStore) ListGrantIssuances(ctx context.Context, grantID string) ([]grantIssuanceRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, grant_id, token_id, agent_name, issued_at FROM grant_issuances WHERE grant_id = ? ORDER BY issued_at DESC`,
+		grantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]grantIssuanceRecord, 0)
+	for rows.Next() {
+		var r grantIssuanceRecord
+		if err := rows.Scan(&r.ID, &r.GrantID, &r.TokenID, &r.AgentName, &r.IssuedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, r)
+	}
+	return items, rows.Err()
+}
+
+func scanGrant(scanner interface{ Scan(dest ...any) error }) (provisioningGrantRecord, error) {
+	var g provisioningGrantRecord
+	var scopesJSON string
+	if err := scanner.Scan(
+		&g.ID, &g.Name, &g.TenantID, &scopesJSON,
+		&g.TokenTTLHours, &g.MaxUses, &g.UseCount, &g.Active,
+		&g.Hash, &g.Preview, &g.RateLimitRPM, &g.RateLimitBurst,
+		&g.OrgID, &g.ExpiresAt, &g.CreatedAt, &g.CreatedBy,
+	); err != nil {
+		return provisioningGrantRecord{}, err
+	}
+	if err := json.Unmarshal([]byte(scopesJSON), &g.Scopes); err != nil {
+		g.Scopes = []string{}
+	}
+	return g, nil
 }

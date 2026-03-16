@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import type { UserAdminSummary } from "@/lib/contracts";
 import { Shield, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -37,6 +38,7 @@ export function PlatformUsersTable({ users }: PlatformUsersTableProps) {
           <tr className="border-b border-border bg-muted/40">
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Name</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Email</th>
+            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Auth</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Created</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Role</th>
             <th className="px-4 py-3 w-12" />
@@ -47,6 +49,15 @@ export function PlatformUsersTable({ users }: PlatformUsersTableProps) {
             <tr key={u.id} className={i < users.length - 1 ? "border-b border-border/60" : ""}>
               <td className="px-4 py-3 font-medium text-foreground">{u.name || "—"}</td>
               <td className="px-4 py-3 text-muted-foreground">{u.email}</td>
+              <td className="px-4 py-3">
+                {u.source === "local" || u.source === "local-admin" ? (
+                  <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">Local</span>
+                ) : u.source === "oidc" ? (
+                  <span className="inline-flex items-center rounded-full bg-blue-500/10 px-2 py-0.5 text-[11px] font-semibold text-blue-600 dark:text-blue-400">OIDC</span>
+                ) : (
+                  <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">{u.source || "—"}</span>
+                )}
+              </td>
               <td className="px-4 py-3 text-muted-foreground">
                 {new Date(u.createdAt).toLocaleDateString()}
               </td>
@@ -63,15 +74,23 @@ export function PlatformUsersTable({ users }: PlatformUsersTableProps) {
                 )}
               </td>
               <td className="px-4 py-3 text-right">
-                <button
-                  type="button"
-                  disabled={isPending}
-                  onClick={() => handleDelete(u.id)}
-                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
-                  title="Delete user"
-                >
-                  <Trash2 size={14} />
-                </button>
+                <ConfirmDialog
+                  trigger={(open) => (
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={open}
+                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
+                      title="Delete user"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                  title="Delete user?"
+                  description={`Permanently delete ${u.name || u.email}? Their account and all associated data will be removed. This cannot be undone.`}
+                  confirmLabel="Delete user"
+                  onConfirm={() => handleDelete(u.id)}
+                />
               </td>
             </tr>
           ))}

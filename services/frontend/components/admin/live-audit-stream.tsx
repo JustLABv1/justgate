@@ -1,15 +1,28 @@
 "use client";
 
 import type { AuditEvent } from "@/lib/contracts";
-import { Radio, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Filter, Radio, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export function LiveAuditStream() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [open, setOpen] = useState(false);
+  const [filterRoute, setFilterRoute] = useState("");
+  const [filterMethod, setFilterMethod] = useState("");
+  const [filterStatus, setFilterStatus] = useState<"all" | "success" | "error">("all");
   const esRef = useRef<EventSource | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    return events.filter((e) => {
+      if (filterRoute && !e.routeSlug.toLowerCase().includes(filterRoute.toLowerCase())) return false;
+      if (filterMethod && e.method.toUpperCase() !== filterMethod.toUpperCase()) return false;
+      if (filterStatus === "success" && e.status >= 400) return false;
+      if (filterStatus === "error" && e.status < 400) return false;
+      return true;
+    });
+  }, [events, filterRoute, filterMethod, filterStatus]);
 
   const connect = useCallback(async () => {
     if (esRef.current) return;
@@ -76,7 +89,7 @@ export function LiveAuditStream() {
           />
           <h3 className="text-sm font-semibold text-foreground">Live Audit Stream</h3>
           <span className="text-[11px] text-muted-foreground">
-            {connected ? `${events.length} events` : "Disconnected"}
+            {connected ? `${filtered.length} / ${events.length}` : "Disconnected"}
           </span>
         </div>
         <button
@@ -96,16 +109,56 @@ export function LiveAuditStream() {
         </button>
       </div>
 
+      {/* Filter bar */}
+      <div className="flex items-center gap-2 border-b border-border/60 px-4 py-2">
+        <Filter size={11} className="shrink-0 text-muted-foreground/50" />
+        <input
+          type="text"
+          value={filterRoute}
+          onChange={(e) => setFilterRoute(e.target.value)}
+          placeholder="Route…"
+          className="h-6 w-28 rounded border border-border bg-panel px-2 text-[11px] text-foreground placeholder:text-muted-foreground/50 outline-none"
+        />
+        <select
+          value={filterMethod}
+          onChange={(e) => setFilterMethod(e.target.value)}
+          className="h-6 rounded border border-border bg-panel px-1 text-[11px] text-foreground outline-none"
+        >
+          <option value="">Method</option>
+          {["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+        <select
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value as "all" | "success" | "error")}
+          className="h-6 rounded border border-border bg-panel px-1 text-[11px] text-foreground outline-none"
+        >
+          <option value="all">All</option>
+          <option value="success">2xx / 3xx</option>
+          <option value="error">4xx / 5xx</option>
+        </select>
+        {(filterRoute || filterMethod || filterStatus !== "all") && (
+          <button
+            type="button"
+            onClick={() => { setFilterRoute(""); setFilterMethod(""); setFilterStatus("all"); }}
+            className="ml-auto text-[10px] text-muted-foreground hover:text-foreground"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
       <div
         ref={containerRef}
         className="max-h-[400px] divide-y divide-border/60 overflow-y-auto"
       >
-        {events.length === 0 ? (
+        {filtered.length === 0 ? (
           <div className="flex items-center justify-center px-4 py-12 text-xs text-muted-foreground">
-            Waiting for events…
+            {events.length === 0 ? "Waiting for events…" : "No events match filters"}
           </div>
         ) : (
-          events.map((event) => (
+          filtered.map((event) => (
             <div
               key={event.id}
               className="flex items-center gap-3 px-4 py-2.5 text-xs animate-in slide-in-from-top duration-200"

@@ -1,19 +1,46 @@
 "use client";
 
 import { OrgSwitcher } from "@/components/admin/org-switcher";
-import { History, KeyRound, LayoutDashboard, Monitor, Orbit, Settings, Settings2, Shield, Users2, UsersRound } from "lucide-react";
+import { AppWindow, History, KeyRound, LayoutDashboard, Lock, Monitor, Orbit, Settings, Settings2, Share2, Shield, Users2, UsersRound } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
 
-const links = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
-  { href: "/topology", label: "Topology", icon: Orbit },
-  { href: "/routes", label: "Routes", icon: Settings2 },
-  { href: "/tenants", label: "Tenants", icon: Users2 },
-  { href: "/tokens", label: "Tokens", icon: KeyRound },
-  { href: "/audit", label: "Audit Log", icon: History },
-  { href: "/sessions", label: "Sessions", icon: Monitor },
-  { href: "/team", label: "Team", icon: UsersRound },
+const sections = [
+  {
+    links: [
+      { href: "/", label: "Overview", icon: LayoutDashboard },
+      { href: "/topology", label: "Topology", icon: Orbit },
+    ],
+  },
+  {
+    label: "Tenant proxy",
+    links: [
+      { href: "/routes", label: "Routes", icon: Settings2 },
+      { href: "/tenants", label: "Tenants", icon: Users2 },
+      { href: "/tokens", label: "Tokens", icon: KeyRound },
+      { href: "/grants", label: "Grants", icon: Share2 },
+    ],
+  },
+  {
+    label: "Protected apps",
+    links: [
+      { href: "/apps", label: "Apps", icon: AppWindow },
+    ],
+  },
+  {
+    label: "Activity",
+    links: [
+      { href: "/audit", label: "Audit Log", icon: History },
+      { href: "/sessions", label: "Sessions", icon: Monitor },
+    ],
+  },
+  {
+    label: "Manage",
+    links: [
+      { href: "/team", label: "Team", icon: UsersRound },
+      { href: "/security", label: "IP Allowlist", icon: Lock },
+    ],
+  },
 ];
 
 const platformLinks = [
@@ -61,7 +88,19 @@ export function AdminNav({ onNavigate }: AdminNavProps) {
       <div className="mb-2">
         <OrgSwitcher />
       </div>
-      {links.map((link) => navButton(link.href, link.label, link.icon))}
+
+      {sections.map((section, i) => (
+        <div key={i} className={i > 0 ? "mt-3" : ""}>
+          {section.label && (
+            <div className="mb-1 px-3">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                {section.label}
+              </span>
+            </div>
+          )}
+          {section.links.map((link) => navButton(link.href, link.label, link.icon))}
+        </div>
+      ))}
 
       {isPlatformAdmin && (
         <>
