@@ -109,11 +109,11 @@ Client (bearer token)
 |--------|-----------|----------------|
 | ![Routes](docs/screenshots/routes.png) | ![Audit](docs/screenshots/audit.png) | ![Platform Admin](docs/screenshots/platform-admin.png) |
 
-### Live Topology
+### Live Topology Demo
 
-<video src="docs/screenshots/topology.mp4" controls poster="docs/screenshots/topology.png" width="100%">
-  <a href="docs/screenshots/topology.mp4">Download topology demo video</a>
-</video>
+> Click the image below to watch the topology demo video.
+
+[![Live Topology Demo](docs/screenshots/topology.png)](docs/screenshots/topology.mp4)
 
 ---
 
