@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -10,6 +11,9 @@ type migration struct {
 	version    int
 	name       string
 	statements []string
+	// fn is an optional programmatic step that runs inside the migration transaction.
+	// Use it when SQL alone cannot express the logic (e.g. conditional DDL).
+	fn func(ctx context.Context, tx *sql.Tx) error
 }
 
 var schemaMigrations = []migration{
@@ -415,6 +419,55 @@ var schemaMigrations = []migration{
 			`CREATE INDEX IF NOT EXISTS idx_grant_issuances_issued ON grant_issuances (issued_at DESC)`,
 		},
 	},
+	{
+		version: 15,
+		name:    "add_circuit_breaker_locked",
+		statements: []string{
+			`ALTER TABLE circuit_breakers ADD COLUMN locked BOOLEAN NOT NULL DEFAULT 0`,
+		},
+	},
+	{
+		version: 16,
+		name:    "create_system_settings",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS system_settings (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+		},
+	},
+	{
+		version: 17,
+		name:    "ensure_circuit_breaker_locked_column",
+		// Migration 15 added this column but may have been recorded as applied on a
+		// different DB file. This migration repairs any DB where the column is missing.
+		fn: func(ctx context.Context, tx *sql.Tx) error {
+			rows, err := tx.QueryContext(ctx, `PRAGMA table_info(circuit_breakers)`)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var cid int
+				var name, colType string
+				var notNull int
+				var dflt sql.NullString
+				var pk int
+				if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+					return err
+				}
+				if name == "locked" {
+					return nil // column already present — nothing to do
+				}
+			}
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			_, err = tx.ExecContext(ctx, `ALTER TABLE circuit_breakers ADD COLUMN locked BOOLEAN NOT NULL DEFAULT 0`)
+			return err
+		},
+	},
 }
 
 func (store *sqlStore) runMigrations(ctx context.Context) error {
@@ -456,6 +509,13 @@ func (store *sqlStore) runMigrations(ctx context.Context) error {
 
 		for _, statement := range migration.statements {
 			if _, err := transaction.ExecContext(ctx, store.rebind(statement)); err != nil {
+				_ = transaction.Rollback()
+				return fmt.Errorf("apply migration %d (%s): %w", migration.version, migration.name, err)
+			}
+		}
+
+		if migration.fn != nil {
+			if err := migration.fn(ctx, transaction); err != nil {
 				_ = transaction.Rollback()
 				return fmt.Errorf("apply migration %d (%s): %w", migration.version, migration.name, err)
 			}

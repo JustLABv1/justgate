@@ -108,6 +108,7 @@ type dataStore interface {
 	UpdateTenantUpstream(ctx context.Context, id, upstreamURL string, weight int, isPrimary bool) error
 	// Circuit breaker
 	GetCircuitBreaker(ctx context.Context, routeID string) (circuitBreakerRecord, bool, error)
+	ListCircuitBreakers(ctx context.Context) ([]circuitBreakerRecord, error)
 	UpsertCircuitBreaker(ctx context.Context, cb circuitBreakerRecord) error
 	// Upstream health history
 	RecordHealthHistory(ctx context.Context, record healthHistoryRecord) error
@@ -170,6 +171,11 @@ type dataStore interface {
 	// Grant audit trail
 	RecordGrantIssuance(ctx context.Context, record grantIssuanceRecord) error
 	ListGrantIssuances(ctx context.Context, grantID string) ([]grantIssuanceRecord, error)
+	// System settings (key-value store)
+	GetSystemSetting(ctx context.Context, key string) (string, bool, error)
+	SetSystemSetting(ctx context.Context, key, value string) error
+	// Data retention
+	PurgeTrafficStats(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 type createOrgRequest struct {
@@ -269,7 +275,8 @@ type routeSummary struct {
 	RateLimitBurst      int      `json:"rateLimitBurst"`
 	AllowCIDRs          string   `json:"allowCIDRs"`
 	DenyCIDRs           string   `json:"denyCIDRs"`
-	CircuitBreakerState string   `json:"circuitBreakerState,omitempty"`
+	CircuitBreakerState  string `json:"circuitBreakerState,omitempty"`
+	CircuitBreakerLocked bool   `json:"circuitBreakerLocked,omitempty"`
 }
 
 type tokenSummary struct {
@@ -548,6 +555,7 @@ type circuitBreakerRecord struct {
 	LastSuccessAt time.Time
 	OpenedAt      time.Time
 	HalfOpenAt    time.Time
+	Locked        bool
 }
 
 type healthHistoryRecord struct {
@@ -897,8 +905,11 @@ func New(config Config) (*Service, error) {
 		go service.seedInitialPlatformAdmin(email)
 	}
 
+	service.circuitBreakers.LoadFromStore(context.Background())
+
 	go service.runHealthChecker()
 	go service.runHeartbeat()
+	go service.runRetentionPurge()
 
 	return service, nil
 }
@@ -914,7 +925,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/tenants", s.withAdminAuth(s.withOrgContext(s.handleTenants)))
 	mux.HandleFunc("/api/v1/admin/tenants/", s.withAdminAuth(s.withOrgContext(s.handleTenantByID)))
 	mux.HandleFunc("/api/v1/admin/tokens", s.withAdminAuth(s.withOrgContext(s.handleTokens)))
-	mux.HandleFunc("/api/v1/admin/tokens/", s.withAdminAuth(s.withOrgContext(s.handleTokenByID)))
+	mux.HandleFunc("/api/v1/admin/tokens/", s.withAdminAuth(s.withOptionalOrgContext(s.handleTokenByID)))
 	mux.HandleFunc("/api/v1/admin/audit", s.withAdminAuth(s.withOrgContext(s.handleAudit)))
 	mux.HandleFunc("/api/v1/admin/topology", s.withAdminAuth(s.withOrgContext(s.handleTopology)))
 	mux.HandleFunc("/api/v1/admin/topology/stream", s.handleTopologySSE) // legacy alias
@@ -924,6 +935,8 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/settings/oidc", s.withAdminAuth(s.handleOIDCSettings))
 	mux.HandleFunc("/api/v1/admin/settings/oidc/mappings", s.withAdminAuth(s.handleOIDCMappings))
 	mux.HandleFunc("/api/v1/admin/settings/oidc/mappings/", s.withAdminAuth(s.handleOIDCMappings))
+	mux.HandleFunc("/api/v1/admin/settings/retention", s.withAdminAuth(s.handleRetentionSettings))
+	mux.HandleFunc("/api/v1/admin/settings/retention/purge", s.withAdminAuth(s.handleRetentionSettings))
 	mux.HandleFunc("/api/v1/internal/oidc-provider-config", s.withAdminAuth(s.handleInternalOIDCProviderConfig))
 	// Traffic & analytics
 	mux.HandleFunc("/api/v1/admin/traffic/stats", s.withAdminAuth(s.withOptionalOrgContext(s.handleTrafficStats)))
@@ -1537,7 +1550,8 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 			RateLimitBurst:      route.RateLimitBurst,
 			AllowCIDRs:          route.AllowCIDRs,
 			DenyCIDRs:           route.DenyCIDRs,
-			CircuitBreakerState: s.circuitBreakers.GetState(route.ID),
+			CircuitBreakerState:  s.circuitBreakers.GetState(route.ID),
+			CircuitBreakerLocked: s.circuitBreakers.GetLocked(route.ID),
 		})
 	}
 
@@ -2150,19 +2164,16 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		}
 	}
 
-	// ── Circuit breaker check ──────────────────────────────────────
-	if !s.circuitBreakers.AllowRequest(route.ID) {
-		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusServiceUnavailable, route.UpstreamURL, 0, requestPath)
-		writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"error": "circuit breaker is open; upstream is unhealthy"})
-		return
-	}
-
 	if !slices.Contains(route.Methods, request.Method) {
 		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusMethodNotAllowed, route.UpstreamURL, 0, requestPath)
 		writeJSON(writer, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed for route"})
 		return
 	}
 
+	// ── Token authentication ────────────────────────────────────────
+	// Validate the token before the circuit-breaker check so the audit event
+	// recorded for a CB-blocked request carries the real token ID (visible in
+	// the topology map hot-path highlight).
 	tokenValue := extractBearerToken(request.Header.Get("Authorization"))
 	if tokenValue == "" {
 		s.recordAudit(request.Context(), parts[0], route.TenantID, "unknown", request.Method, http.StatusUnauthorized, route.UpstreamURL, 0, requestPath)
@@ -2193,6 +2204,16 @@ func (s *Service) handleProxy(writer http.ResponseWriter, request *http.Request)
 		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusForbidden, route.UpstreamURL, 0, requestPath)
 		s.recordTrafficStat(route, token, http.StatusForbidden, 0)
 		writeJSON(writer, http.StatusForbidden, map[string]string{"error": "token is missing the required scope"})
+		return
+	}
+
+	// ── Circuit breaker check ──────────────────────────────────────
+	// Checked after auth so the audit event carries the real token ID,
+	// making the blocking token visible on the topology map.
+	if !s.circuitBreakers.AllowRequest(route.ID) {
+		s.recordAudit(request.Context(), parts[0], token.TenantID, token.ID, request.Method, http.StatusServiceUnavailable, route.UpstreamURL, 0, requestPath)
+		s.recordTrafficStat(route, token, http.StatusServiceUnavailable, 0)
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"error": "circuit breaker is open; upstream is unhealthy"})
 		return
 	}
 

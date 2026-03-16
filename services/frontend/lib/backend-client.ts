@@ -38,7 +38,8 @@ import {
     type TopologySnapshot,
     type TrafficOverview,
     type TrafficStat,
-    type UserAdminSummary
+    type UserAdminSummary,
+    type RetentionSettings
 } from "@/lib/contracts";
 
 const backendUrl = getBackendBaseUrl();
@@ -193,6 +194,13 @@ const fallbackOIDCConfig: OIDCConfig = {
 
 export function getOIDCConfig() {
   return fetchBackend<OIDCConfig>("/api/v1/admin/settings/oidc", fallbackOIDCConfig);
+}
+
+export function getRetentionSettings() {
+  return fetchBackend<RetentionSettings>("/api/v1/admin/settings/retention", {
+    retentionDays: 30,
+    autoEnabled: false,
+  });
 }
 
 export function getOIDCOrgMappings() {

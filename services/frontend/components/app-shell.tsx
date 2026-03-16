@@ -263,6 +263,17 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
       <main className="mx-auto w-full max-w-[1800px] px-6 py-6 lg:px-10 lg:py-8">
         {children}
       </main>
+
+      <footer className="border-t border-border bg-background/80">
+        <div className="mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-2 px-6 py-3 lg:px-10">
+          <span className="text-[11px] text-muted-foreground">
+            &copy; {new Date().getFullYear()} JustLAB. All rights reserved.
+          </span>
+          <span className="text-[11px] text-muted-foreground">
+            JustGate {process.env.NEXT_PUBLIC_APP_VERSION ? `v${process.env.NEXT_PUBLIC_APP_VERSION}` : ""}
+          </span>
+        </div>
+      </footer>
     </div>
   );
 }

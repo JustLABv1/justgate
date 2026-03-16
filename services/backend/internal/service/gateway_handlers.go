@@ -494,6 +494,7 @@ func (s *Service) handleCircuitBreakers(writer http.ResponseWriter, request *htt
 		Slug     string `json:"slug"`
 		TenantID string `json:"tenantID"`
 		State    string `json:"state"`
+		Locked   bool   `json:"locked"`
 	}
 
 	items := make([]cbStatus, 0, len(routes))
@@ -503,6 +504,7 @@ func (s *Service) handleCircuitBreakers(writer http.ResponseWriter, request *htt
 			Slug:     r.Slug,
 			TenantID: r.TenantID,
 			State:    s.circuitBreakers.GetState(r.ID),
+			Locked:   s.circuitBreakers.GetLocked(r.ID),
 		})
 	}
 
@@ -557,8 +559,14 @@ func (s *Service) handleCircuitBreakerByID(writer http.ResponseWriter, request *
 		return
 	}
 
-	s.circuitBreakers.ForceState(routeID, payload.State)
-	writeJSON(writer, http.StatusOK, map[string]string{"state": payload.State})
+	if err := s.circuitBreakers.ForceState(request.Context(), routeID, payload.State); err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to persist circuit breaker state"})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"state":  payload.State,
+		"locked": payload.State == cbStateOpen,
+	})
 }
 
 // ── Token expiry / lifecycle ───────────────────────────────────────────
