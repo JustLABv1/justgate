@@ -26,7 +26,15 @@ Stats are scoped to the active organisation — multi-org deployments always see
 
 ### Retention
 
-Stats are stored as 5-minute buckets in the database. Older buckets are retained indefinitely unless you prune them manually.
+Stats are stored as 5-minute buckets in the database. You can configure automatic pruning — or trigger a manual purge — from **Settings → Traffic Stats Retention**.
+
+| Setting | Description |
+|---|---|
+| **Retention period** | How many days of traffic stat buckets to keep (default: 30 days) |
+| **Auto-purge** | When enabled, the backend automatically prunes buckets older than the retention period every 6 hours |
+| **Purge now** | Immediately deletes all buckets older than the configured retention period and reports how many rows were removed |
+
+Auto-purge only removes `traffic_stats` rows — audit events, health history, and all configuration data are unaffected.
 
 ---
 
