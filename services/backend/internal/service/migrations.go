@@ -13,7 +13,8 @@ type migration struct {
 	statements []string
 	// fn is an optional programmatic step that runs inside the migration transaction.
 	// Use it when SQL alone cannot express the logic (e.g. conditional DDL).
-	fn func(ctx context.Context, tx *sql.Tx) error
+	// dialect is "sqlite" or "postgres".
+	fn func(ctx context.Context, tx *sql.Tx, dialect string) error
 }
 
 var schemaMigrations = []migration{
@@ -423,7 +424,7 @@ var schemaMigrations = []migration{
 		version: 15,
 		name:    "add_circuit_breaker_locked",
 		statements: []string{
-			`ALTER TABLE circuit_breakers ADD COLUMN locked BOOLEAN NOT NULL DEFAULT 0`,
+			`ALTER TABLE circuit_breakers ADD COLUMN locked BOOLEAN NOT NULL DEFAULT FALSE`,
 		},
 	},
 	{
@@ -442,7 +443,13 @@ var schemaMigrations = []migration{
 		name:    "ensure_circuit_breaker_locked_column",
 		// Migration 15 added this column but may have been recorded as applied on a
 		// different DB file. This migration repairs any DB where the column is missing.
-		fn: func(ctx context.Context, tx *sql.Tx) error {
+		fn: func(ctx context.Context, tx *sql.Tx, dialect string) error {
+			if dialect == "postgres" {
+				// Postgres supports ADD COLUMN IF NOT EXISTS directly.
+				_, err := tx.ExecContext(ctx, `ALTER TABLE circuit_breakers ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT FALSE`)
+				return err
+			}
+			// SQLite: check via PRAGMA before attempting ALTER TABLE.
 			rows, err := tx.QueryContext(ctx, `PRAGMA table_info(circuit_breakers)`)
 			if err != nil {
 				return err
@@ -464,7 +471,7 @@ var schemaMigrations = []migration{
 			if err := rows.Err(); err != nil {
 				return err
 			}
-			_, err = tx.ExecContext(ctx, `ALTER TABLE circuit_breakers ADD COLUMN locked BOOLEAN NOT NULL DEFAULT 0`)
+			_, err = tx.ExecContext(ctx, `ALTER TABLE circuit_breakers ADD COLUMN locked BOOLEAN NOT NULL DEFAULT FALSE`)
 			return err
 		},
 	},
@@ -515,7 +522,7 @@ func (store *sqlStore) runMigrations(ctx context.Context) error {
 		}
 
 		if migration.fn != nil {
-			if err := migration.fn(ctx, transaction); err != nil {
+			if err := migration.fn(ctx, transaction, store.dialect); err != nil {
 				_ = transaction.Rollback()
 				return fmt.Errorf("apply migration %d (%s): %w", migration.version, migration.name, err)
 			}
