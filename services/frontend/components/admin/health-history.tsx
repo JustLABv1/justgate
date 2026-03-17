@@ -5,10 +5,10 @@ import { Activity } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 interface HealthHistoryProps {
-  tenantID: string; // external tenant ID string, e.g. "acme-prod"
+  routeID: string; // internal route UUID
 }
 
-export function HealthHistory({ tenantID }: HealthHistoryProps) {
+export function HealthHistory({ routeID }: HealthHistoryProps) {
   const [entries, setEntries] = useState<HealthHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -17,7 +17,7 @@ export function HealthHistory({ tenantID }: HealthHistoryProps) {
     setLoading(true);
     setError(undefined);
     try {
-      const res = await fetch(`/api/admin/health-history?tenantID=${encodeURIComponent(tenantID)}`);
+      const res = await fetch(`/api/admin/health-history?routeID=${encodeURIComponent(routeID)}`);
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error || `Error ${res.status}`);
@@ -28,7 +28,7 @@ export function HealthHistory({ tenantID }: HealthHistoryProps) {
     } finally {
       setLoading(false);
     }
-  }, [tenantID]);
+  }, [routeID]);
 
   useEffect(() => { void load(); }, [load]);
 

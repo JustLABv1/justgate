@@ -2,7 +2,7 @@
 
 import { AnimatedStep, type StepDef, StepList } from "@/components/admin/modal-stepper";
 import { useToast } from "@/components/toast-provider";
-import type { RouteSummary } from "@/lib/contracts";
+import type { RouteSummary, TenantSummary } from "@/lib/contracts";
 import { Button, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
 import { motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, ArrowUpRight, PenSquare } from "lucide-react";
@@ -12,7 +12,7 @@ import { useState, useTransition } from "react";
 
 interface UpdateRouteFormProps {
   route: RouteSummary;
-  tenantIDs: string[];
+  tenants: TenantSummary[];
   label?: string;
   disabled?: boolean;
   isOpen?: boolean;
@@ -24,6 +24,8 @@ function toFormState(route: RouteSummary | undefined) {
   return {
     slug: route?.slug || "",
     tenantID: route?.tenantID || "",
+    upstreamURL: route?.upstreamURL || "",
+    healthCheckPath: route?.healthCheckPath || "",
     targetPath: route?.targetPath || "/",
     requiredScope: route?.requiredScope || "",
     methods: route?.methods.join(", ") || "",
@@ -42,7 +44,7 @@ const STEPS: StepDef[] = [
 
 export function UpdateRouteForm({
   route,
-  tenantIDs,
+  tenants,
   label = "Edit",
   disabled = false,
   isOpen: controlledIsOpen,
@@ -94,6 +96,8 @@ export function UpdateRouteForm({
         body: JSON.stringify({
           slug: formState.slug,
           tenantID: formState.tenantID,
+          upstreamURL: formState.upstreamURL,
+          healthCheckPath: formState.healthCheckPath || undefined,
           targetPath: formState.targetPath,
           requiredScope: formState.requiredScope,
           methods: formState.methods,
@@ -117,6 +121,7 @@ export function UpdateRouteForm({
     });
   }
 
+  const selectedTenant = tenants.find((t) => t.tenantID === formState.tenantID);
   const showPreview = Boolean(formState.slug || formState.tenantID);
 
   return (
@@ -146,8 +151,8 @@ export function UpdateRouteForm({
                 >
                   <span className="text-muted-foreground">{(formState.methods.split(",")[0] ?? "GET").trim()} </span>
                   <span className="text-accent">/proxy/{formState.slug || "…"}</span>
-                  {formState.tenantID && (
-                    <span className="text-muted-foreground"> → {formState.tenantID}</span>
+                  {selectedTenant && (
+                    <span className="text-muted-foreground"> → {selectedTenant.name} ({selectedTenant.tenantID})</span>
                   )}
                   {formState.targetPath && formState.targetPath !== "/" && (
                     <span className="text-muted-foreground">{formState.targetPath}</span>
@@ -188,16 +193,17 @@ export function UpdateRouteForm({
                         </Select.Trigger>
                         <Select.Popover>
                           <ListBox>
-                            {tenantIDs.map((tid) => (
-                              <ListBox.Item key={tid} id={tid} textValue={tid}>
-                                {tid}
+                            {tenants.map((tenant) => (
+                              <ListBox.Item key={tenant.tenantID} id={tenant.tenantID} textValue={tenant.name}>
+                                <span>{tenant.name}</span>
+                                <span className="ml-1 text-muted-foreground text-xs">({tenant.tenantID})</span>
                                 <ListBox.ItemIndicator />
                               </ListBox.Item>
                             ))}
                           </ListBox>
                         </Select.Popover>
                       </Select>
-                      <div className="enterprise-note md:col-span-2">Changing tenant reassociates the route with a different upstream boundary.</div>
+                      <div className="enterprise-note md:col-span-2">Changing tenant reassociates the route with a different auth boundary.</div>
                     </div>
                     <div className="flex justify-end">
                       <Button className="bg-foreground text-background" onPress={goNext}>
@@ -210,14 +216,33 @@ export function UpdateRouteForm({
                 {currentStep === 1 && (
                   <div className="space-y-5">
                     <div className="enterprise-panel grid gap-4 p-4">
-                      <TextField className="grid gap-2">
-                        <Label>Target path</Label>
-                        <Input
-                          value={formState.targetPath}
-                          onChange={(e) => setFormState((s) => ({ ...s, targetPath: e.target.value }))}
-                        />
-                        <div className="enterprise-note">Relative path appended to the tenant upstream URL.</div>
-                      </TextField>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <TextField className="grid gap-2 md:col-span-2">
+                          <Label>Upstream URL</Label>
+                          <Input
+                            value={formState.upstreamURL}
+                            onChange={(e) => setFormState((s) => ({ ...s, upstreamURL: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Base URL of the upstream service for this route.</div>
+                        </TextField>
+                        <TextField className="grid gap-2">
+                          <Label>Target path</Label>
+                          <Input
+                            value={formState.targetPath}
+                            onChange={(e) => setFormState((s) => ({ ...s, targetPath: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Path appended to the upstream URL.</div>
+                        </TextField>
+                        <TextField className="grid gap-2">
+                          <Label>Health check path</Label>
+                          <Input
+                            placeholder="/ready"
+                            value={formState.healthCheckPath}
+                            onChange={(e) => setFormState((s) => ({ ...s, healthCheckPath: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Optional probe path for upstream health checks.</div>
+                        </TextField>
+                      </div>
                       <div className="grid gap-4 md:grid-cols-2">
                         <TextField className="grid gap-2">
                           <Label>Required scope</Label>

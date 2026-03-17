@@ -3,12 +3,13 @@
 import { CreateRouteForm } from "@/components/admin/create-route-form";
 import { CreateTenantForm } from "@/components/admin/create-tenant-form";
 import { CreateTokenForm } from "@/components/admin/create-token-form";
+import type { TenantSummary } from "@/lib/contracts";
 import { Globe, Key, LayoutDashboard, Server } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
 interface QuickActionsProps {
-  tenantIDs: string[];
+  tenants: TenantSummary[];
   tenantCount: number;
   routeCount: number;
   tokenCount: number;
@@ -17,7 +18,7 @@ interface QuickActionsProps {
 const ACTION_BASE =
   "flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-panel hover:border-accent/20 whitespace-nowrap";
 
-export function QuickActions({ tenantIDs, tenantCount, routeCount, tokenCount }: QuickActionsProps) {
+export function QuickActions({ tenants, tenantCount, routeCount, tokenCount }: QuickActionsProps) {
   const [openModal, setOpenModal] = useState<"tenant" | "route" | "token" | null>(null);
 
   return (
@@ -31,14 +32,14 @@ export function QuickActions({ tenantIDs, tenantCount, routeCount, tokenCount }:
       />
       <CreateRouteForm
         existingCount={routeCount}
-        tenantIDs={tenantIDs}
+        tenants={tenants}
         isOpen={openModal === "route"}
         onOpenChange={(open) => setOpenModal(open ? "route" : null)}
         trigger={<></>}
       />
       <CreateTokenForm
         existingCount={tokenCount}
-        tenantIDs={tenantIDs}
+        tenantIDs={tenants.map((t) => t.tenantID)}
         isOpen={openModal === "token"}
         onOpenChange={(open) => setOpenModal(open ? "token" : null)}
         trigger={<></>}
