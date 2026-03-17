@@ -22,6 +22,7 @@ type oidcConfigRequest struct {
 	ClientSecret string `json:"clientSecret"`
 	DisplayName  string `json:"displayName"`
 	GroupsClaim  string `json:"groupsClaim"`
+	AdminGroup   string `json:"adminGroup"`
 	Enabled      bool   `json:"enabled"`
 }
 
@@ -31,6 +32,7 @@ type oidcConfigResponse struct {
 	HasSecret   bool   `json:"hasSecret"`
 	DisplayName string `json:"displayName"`
 	GroupsClaim string `json:"groupsClaim"`
+	AdminGroup  string `json:"adminGroup"`
 	Enabled     bool   `json:"enabled"`
 	UpdatedAt   string `json:"updatedAt"`
 	FromEnv     bool   `json:"fromEnv,omitempty"`
@@ -86,6 +88,7 @@ func (s *Service) handleOIDCSettings(writer http.ResponseWriter, request *http.R
 			HasSecret:   cfg.ClientSecretEncrypted != "",
 			DisplayName: cfg.DisplayName,
 			GroupsClaim: cfg.GroupsClaim,
+			AdminGroup:  cfg.AdminGroup,
 			Enabled:     cfg.Enabled,
 			UpdatedAt:   cfg.UpdatedAt.Format(time.RFC3339),
 		})
@@ -101,6 +104,7 @@ func (s *Service) handleOIDCSettings(writer http.ResponseWriter, request *http.R
 		payload.ClientSecret = strings.TrimSpace(payload.ClientSecret)
 		payload.DisplayName = strings.TrimSpace(payload.DisplayName)
 		payload.GroupsClaim = strings.TrimSpace(payload.GroupsClaim)
+		payload.AdminGroup = strings.TrimSpace(payload.AdminGroup)
 
 		if payload.DisplayName == "" {
 			payload.DisplayName = "Single Sign-On"
@@ -114,6 +118,14 @@ func (s *Service) handleOIDCSettings(writer http.ResponseWriter, request *http.R
 			if _, err := url.ParseRequestURI(payload.Issuer); err != nil {
 				writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "issuer must be a valid URL"})
 				return
+			}
+			// Require a client secret when enabling for the first time (no existing record has one).
+			if payload.ClientSecret == "" {
+				existing, ok, err := s.store.GetOIDCConfig(request.Context())
+				if err != nil || !ok || existing.ClientSecretEncrypted == "" {
+					writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "clientSecret is required when enabling OIDC"})
+					return
+				}
 			}
 		}
 
@@ -152,6 +164,7 @@ func (s *Service) handleOIDCSettings(writer http.ResponseWriter, request *http.R
 			ClientSecretEncrypted: encryptedSecret,
 			DisplayName:           payload.DisplayName,
 			GroupsClaim:           payload.GroupsClaim,
+			AdminGroup:            payload.AdminGroup,
 			Enabled:               payload.Enabled,
 			UpdatedAt:             now,
 		}); err != nil {
@@ -175,6 +188,7 @@ func (s *Service) handleOIDCSettings(writer http.ResponseWriter, request *http.R
 			HasSecret:   encryptedSecret != "",
 			DisplayName: payload.DisplayName,
 			GroupsClaim: payload.GroupsClaim,
+			AdminGroup:  payload.AdminGroup,
 			Enabled:     payload.Enabled,
 			UpdatedAt:   now.Format(time.RFC3339),
 		})
@@ -281,6 +295,22 @@ func (s *Service) handleInternalOIDCProviderConfig(writer http.ResponseWriter, r
 		return
 	}
 	if !ok || !cfg.Enabled {
+		// Fall back to environment variable config so the sign-in button works
+		// when OIDC is configured via backend env vars (no DB record yet).
+		if s.config.OIDCIssuer != "" && s.config.OIDCClientID != "" && s.config.OIDCClientSecret != "" {
+			displayName := s.config.OIDCDisplayName
+			if displayName == "" {
+				displayName = "Single Sign-On"
+			}
+			writeJSON(writer, http.StatusOK, oidcProviderConfigResponse{
+				Issuer:       s.config.OIDCIssuer,
+				ClientID:     s.config.OIDCClientID,
+				ClientSecret: s.config.OIDCClientSecret,
+				DisplayName:  displayName,
+				Enabled:      true,
+			})
+			return
+		}
 		writeJSON(writer, http.StatusOK, oidcProviderConfigResponse{})
 		return
 	}

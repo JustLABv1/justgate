@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -80,6 +81,11 @@ func (store *sqlStore) CreateLocalAdmin(ctx context.Context, account localAdminR
 	return account, nil
 }
 
+func (store *sqlStore) CountLocalAdmins(ctx context.Context) (int, error) {
+	var count int
+	return count, store.queryRowContext(ctx, `SELECT COUNT(*) FROM local_admin_users`).Scan(&count)
+}
+
 func (store *sqlStore) GetLocalAdminByEmail(ctx context.Context, email string) (localAdminRecord, bool, error) {
 	row := store.queryRowContext(ctx, `SELECT id, email, name, password_hash, created_at FROM local_admin_users WHERE email = ? LIMIT 1`, email)
 	var account localAdminRecord
@@ -96,9 +102,9 @@ func (store *sqlStore) ListTenants(ctx context.Context) ([]tenantRecord, error) 
 	var rows *sql.Rows
 	var err error
 	if orgID := orgIDFromContext(ctx); orgID != "" {
-		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, upstream_url, auth_mode, header_name, org_id, health_check_path FROM tenants WHERE org_id = ? ORDER BY created_at DESC`, orgID)
+		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, auth_mode, header_name, org_id FROM tenants WHERE org_id = ? ORDER BY created_at DESC`, orgID)
 	} else {
-		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, upstream_url, auth_mode, header_name, org_id, health_check_path FROM tenants ORDER BY created_at DESC`)
+		rows, err = store.queryContext(ctx, `SELECT id, name, tenant_id, auth_mode, header_name, org_id FROM tenants ORDER BY created_at DESC`)
 	}
 	if err != nil {
 		return nil, err
@@ -108,7 +114,7 @@ func (store *sqlStore) ListTenants(ctx context.Context) ([]tenantRecord, error) 
 	items := make([]tenantRecord, 0)
 	for rows.Next() {
 		var tenant tenantRecord
-		if err := rows.Scan(&tenant.ID, &tenant.Name, &tenant.TenantID, &tenant.Upstream, &tenant.AuthMode, &tenant.HeaderName, &tenant.OrgID, &tenant.HealthCheckPath); err != nil {
+		if err := rows.Scan(&tenant.ID, &tenant.Name, &tenant.TenantID, &tenant.AuthMode, &tenant.HeaderName, &tenant.OrgID); err != nil {
 			return nil, err
 		}
 		items = append(items, tenant)
@@ -120,9 +126,9 @@ func (store *sqlStore) ListRoutes(ctx context.Context) ([]routeRecord, error) {
 	var rows *sql.Rows
 	var err error
 	if orgID := orgIDFromContext(ctx); orgID != "" {
-		rows, err = store.queryContext(ctx, `SELECT r.id, r.slug, r.target_path, r.tenant_id, r.required_scope, r.methods_json, r.upstream_url, r.rate_limit_rpm, r.rate_limit_burst, r.allow_cidrs, r.deny_cidrs FROM routes r INNER JOIN tenants tn ON r.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY r.created_at DESC`, orgID)
+		rows, err = store.queryContext(ctx, `SELECT r.id, r.slug, r.target_path, r.tenant_id, r.required_scope, r.methods_json, r.upstream_url, r.rate_limit_rpm, r.rate_limit_burst, r.allow_cidrs, r.deny_cidrs, r.health_check_path FROM routes r INNER JOIN tenants tn ON r.tenant_id = tn.tenant_id WHERE tn.org_id = ? ORDER BY r.created_at DESC`, orgID)
 	} else {
-		rows, err = store.queryContext(ctx, `SELECT id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, rate_limit_rpm, rate_limit_burst, allow_cidrs, deny_cidrs FROM routes ORDER BY created_at DESC`)
+		rows, err = store.queryContext(ctx, `SELECT id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, rate_limit_rpm, rate_limit_burst, allow_cidrs, deny_cidrs, health_check_path FROM routes ORDER BY created_at DESC`)
 	}
 	if err != nil {
 		return nil, err
@@ -191,17 +197,15 @@ func (store *sqlStore) ListAudits(ctx context.Context) ([]auditRecord, error) {
 func (store *sqlStore) CreateTenant(ctx context.Context, payload createTenantRequest) (tenantRecord, error) {
 	orgID := orgIDFromContext(ctx)
 	tenant := tenantRecord{
-		ID:              newResourceID("tenant"),
-		Name:            payload.Name,
-		TenantID:        payload.TenantID,
-		Upstream:        payload.Upstream,
-		AuthMode:        payload.AuthMode,
-		HeaderName:      payload.HeaderName,
-		OrgID:           orgID,
-		HealthCheckPath: payload.HealthCheckPath,
+		ID:         newResourceID("tenant"),
+		Name:       payload.Name,
+		TenantID:   payload.TenantID,
+		AuthMode:   payload.AuthMode,
+		HeaderName: payload.HeaderName,
+		OrgID:      orgID,
 	}
 
-	_, err := store.execContext(ctx, `INSERT INTO tenants (id, name, tenant_id, upstream_url, auth_mode, header_name, org_id, health_check_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, tenant.ID, tenant.Name, tenant.TenantID, tenant.Upstream, tenant.AuthMode, tenant.HeaderName, orgID, tenant.HealthCheckPath, store.now())
+	_, err := store.execContext(ctx, `INSERT INTO tenants (id, name, tenant_id, auth_mode, header_name, org_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, tenant.ID, tenant.Name, tenant.TenantID, tenant.AuthMode, tenant.HeaderName, orgID, store.now())
 	if err != nil {
 		return tenantRecord{}, translateDBError(err, "tenantID already exists")
 	}
@@ -218,7 +222,7 @@ func (store *sqlStore) UpdateTenant(ctx context.Context, tenantID string, payloa
 		return tenantRecord{}, err
 	}
 
-	result, err := store.execContext(ctx, `UPDATE tenants SET name = ?, tenant_id = ?, upstream_url = ?, auth_mode = ?, header_name = ?, health_check_path = ? WHERE id = ?`, payload.Name, payload.TenantID, payload.Upstream, payload.AuthMode, payload.HeaderName, payload.HealthCheckPath, tenantID)
+	result, err := store.execContext(ctx, `UPDATE tenants SET name = ?, tenant_id = ?, auth_mode = ?, header_name = ? WHERE id = ?`, payload.Name, payload.TenantID, payload.AuthMode, payload.HeaderName, tenantID)
 	if err != nil {
 		return tenantRecord{}, translateDBError(err, "tenantID already exists")
 	}
@@ -230,7 +234,8 @@ func (store *sqlStore) UpdateTenant(ctx context.Context, tenantID string, payloa
 		return tenantRecord{}, fmt.Errorf("tenant not found")
 	}
 
-	if _, err := store.execContext(ctx, `UPDATE routes SET tenant_id = ?, upstream_url = ? WHERE tenant_id = ?`, payload.TenantID, payload.Upstream, currentTenantID); err != nil {
+	// Cascade tenant_id string change to routes and tokens.
+	if _, err := store.execContext(ctx, `UPDATE routes SET tenant_id = ? WHERE tenant_id = ?`, payload.TenantID, currentTenantID); err != nil {
 		return tenantRecord{}, err
 	}
 	if _, err := store.execContext(ctx, `UPDATE tokens SET tenant_id = ? WHERE tenant_id = ?`, payload.TenantID, currentTenantID); err != nil {
@@ -238,13 +243,11 @@ func (store *sqlStore) UpdateTenant(ctx context.Context, tenantID string, payloa
 	}
 
 	return tenantRecord{
-		ID:              tenantID,
-		Name:            payload.Name,
-		TenantID:        payload.TenantID,
-		Upstream:        payload.Upstream,
-		AuthMode:        payload.AuthMode,
-		HeaderName:      payload.HeaderName,
-		HealthCheckPath: payload.HealthCheckPath,
+		ID:         tenantID,
+		Name:       payload.Name,
+		TenantID:   payload.TenantID,
+		AuthMode:   payload.AuthMode,
+		HeaderName: payload.HeaderName,
 	}, nil
 }
 
@@ -289,9 +292,12 @@ func (store *sqlStore) DeleteTenant(ctx context.Context, tenantID string) error 
 }
 
 func (store *sqlStore) CreateRoute(ctx context.Context, payload createRouteRequest, methods []string) (routeRecord, error) {
-	upstreamURL, err := store.lookupTenantUpstream(ctx, payload.TenantID)
-	if err != nil {
-		return routeRecord{}, err
+	// Verify the tenant exists.
+	if _, ok, err := store.GetTenantByTenantID(ctx, payload.TenantID); err != nil || !ok {
+		if err != nil {
+			return routeRecord{}, err
+		}
+		return routeRecord{}, fmt.Errorf("tenantID does not exist")
 	}
 
 	methodsJSON, err := json.Marshal(methods)
@@ -300,20 +306,21 @@ func (store *sqlStore) CreateRoute(ctx context.Context, payload createRouteReque
 	}
 
 	route := routeRecord{
-		ID:             newResourceID("route"),
-		Slug:           payload.Slug,
-		TargetPath:     payload.TargetPath,
-		TenantID:       payload.TenantID,
-		RequiredScope:  payload.RequiredScope,
-		Methods:        methods,
-		UpstreamURL:    upstreamURL,
-		RateLimitRPM:   payload.RateLimitRPM,
-		RateLimitBurst: payload.RateLimitBurst,
-		AllowCIDRs:     payload.AllowCIDRs,
-		DenyCIDRs:      payload.DenyCIDRs,
+		ID:              newResourceID("route"),
+		Slug:            payload.Slug,
+		TargetPath:      payload.TargetPath,
+		TenantID:        payload.TenantID,
+		RequiredScope:   payload.RequiredScope,
+		Methods:         methods,
+		UpstreamURL:     payload.UpstreamURL,
+		HealthCheckPath: payload.HealthCheckPath,
+		RateLimitRPM:    payload.RateLimitRPM,
+		RateLimitBurst:  payload.RateLimitBurst,
+		AllowCIDRs:      payload.AllowCIDRs,
+		DenyCIDRs:       payload.DenyCIDRs,
 	}
 
-	_, err = store.execContext(ctx, `INSERT INTO routes (id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, rate_limit_rpm, rate_limit_burst, allow_cidrs, deny_cidrs, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, route.ID, route.Slug, route.TargetPath, route.TenantID, route.RequiredScope, string(methodsJSON), route.UpstreamURL, route.RateLimitRPM, route.RateLimitBurst, route.AllowCIDRs, route.DenyCIDRs, store.now())
+	_, err = store.execContext(ctx, `INSERT INTO routes (id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, health_check_path, rate_limit_rpm, rate_limit_burst, allow_cidrs, deny_cidrs, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, route.ID, route.Slug, route.TargetPath, route.TenantID, route.RequiredScope, string(methodsJSON), route.UpstreamURL, route.HealthCheckPath, route.RateLimitRPM, route.RateLimitBurst, route.AllowCIDRs, route.DenyCIDRs, store.now())
 	if err != nil {
 		return routeRecord{}, translateDBError(err, "slug already exists")
 	}
@@ -322,9 +329,12 @@ func (store *sqlStore) CreateRoute(ctx context.Context, payload createRouteReque
 }
 
 func (store *sqlStore) UpdateRoute(ctx context.Context, routeID string, payload createRouteRequest, methods []string) (routeRecord, error) {
-	upstreamURL, err := store.lookupTenantUpstream(ctx, payload.TenantID)
-	if err != nil {
-		return routeRecord{}, err
+	// Verify the tenant exists.
+	if _, ok, err := store.GetTenantByTenantID(ctx, payload.TenantID); err != nil || !ok {
+		if err != nil {
+			return routeRecord{}, err
+		}
+		return routeRecord{}, fmt.Errorf("tenantID does not exist")
 	}
 
 	methodsJSON, err := json.Marshal(methods)
@@ -332,7 +342,7 @@ func (store *sqlStore) UpdateRoute(ctx context.Context, routeID string, payload 
 		return routeRecord{}, err
 	}
 
-	result, err := store.execContext(ctx, `UPDATE routes SET slug = ?, target_path = ?, tenant_id = ?, required_scope = ?, methods_json = ?, upstream_url = ?, rate_limit_rpm = ?, rate_limit_burst = ?, allow_cidrs = ?, deny_cidrs = ? WHERE id = ?`, payload.Slug, payload.TargetPath, payload.TenantID, payload.RequiredScope, string(methodsJSON), upstreamURL, payload.RateLimitRPM, payload.RateLimitBurst, payload.AllowCIDRs, payload.DenyCIDRs, routeID)
+	result, err := store.execContext(ctx, `UPDATE routes SET slug = ?, target_path = ?, tenant_id = ?, required_scope = ?, methods_json = ?, upstream_url = ?, health_check_path = ?, rate_limit_rpm = ?, rate_limit_burst = ?, allow_cidrs = ?, deny_cidrs = ? WHERE id = ?`, payload.Slug, payload.TargetPath, payload.TenantID, payload.RequiredScope, string(methodsJSON), payload.UpstreamURL, payload.HealthCheckPath, payload.RateLimitRPM, payload.RateLimitBurst, payload.AllowCIDRs, payload.DenyCIDRs, routeID)
 	if err != nil {
 		return routeRecord{}, translateDBError(err, "slug already exists")
 	}
@@ -345,17 +355,18 @@ func (store *sqlStore) UpdateRoute(ctx context.Context, routeID string, payload 
 	}
 
 	return routeRecord{
-		ID:             routeID,
-		Slug:           payload.Slug,
-		TargetPath:     payload.TargetPath,
-		TenantID:       payload.TenantID,
-		RequiredScope:  payload.RequiredScope,
-		Methods:        methods,
-		UpstreamURL:    upstreamURL,
-		RateLimitRPM:   payload.RateLimitRPM,
-		RateLimitBurst: payload.RateLimitBurst,
-		AllowCIDRs:     payload.AllowCIDRs,
-		DenyCIDRs:      payload.DenyCIDRs,
+		ID:              routeID,
+		Slug:            payload.Slug,
+		TargetPath:      payload.TargetPath,
+		TenantID:        payload.TenantID,
+		RequiredScope:   payload.RequiredScope,
+		Methods:         methods,
+		UpstreamURL:     payload.UpstreamURL,
+		HealthCheckPath: payload.HealthCheckPath,
+		RateLimitRPM:    payload.RateLimitRPM,
+		RateLimitBurst:  payload.RateLimitBurst,
+		AllowCIDRs:      payload.AllowCIDRs,
+		DenyCIDRs:       payload.DenyCIDRs,
 	}, nil
 }
 
@@ -376,8 +387,11 @@ func (store *sqlStore) DeleteRoute(ctx context.Context, routeID string) error {
 }
 
 func (store *sqlStore) CreateToken(ctx context.Context, payload createTokenRequest, scopes []string, expiresAt time.Time, secret string) (tokenRecord, error) {
-	if _, err := store.lookupTenantUpstream(ctx, payload.TenantID); err != nil {
-		return tokenRecord{}, err
+	if _, ok, err := store.GetTenantByTenantID(ctx, payload.TenantID); err != nil || !ok {
+		if err != nil {
+			return tokenRecord{}, err
+		}
+		return tokenRecord{}, fmt.Errorf("tenantID does not exist")
 	}
 
 	scopesJSON, err := json.Marshal(scopes)
@@ -441,7 +455,7 @@ func (store *sqlStore) DeleteToken(ctx context.Context, tokenID string) error {
 }
 
 func (store *sqlStore) RouteBySlug(ctx context.Context, slug string) (routeRecord, bool, error) {
-	row := store.queryRowContext(ctx, `SELECT id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, rate_limit_rpm, rate_limit_burst, allow_cidrs, deny_cidrs FROM routes WHERE slug = ? LIMIT 1`, slug)
+	row := store.queryRowContext(ctx, `SELECT id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, rate_limit_rpm, rate_limit_burst, allow_cidrs, deny_cidrs, health_check_path FROM routes WHERE slug = ? LIMIT 1`, slug)
 	route, err := scanRoute(row)
 	if err == sql.ErrNoRows {
 		return routeRecord{}, false, nil
@@ -453,9 +467,9 @@ func (store *sqlStore) RouteBySlug(ctx context.Context, slug string) (routeRecor
 }
 
 func (store *sqlStore) GetTenantByTenantID(ctx context.Context, tenantID string) (tenantRecord, bool, error) {
-	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, upstream_url, auth_mode, header_name, org_id, health_check_path FROM tenants WHERE tenant_id = ? LIMIT 1`, tenantID)
+	row := store.queryRowContext(ctx, `SELECT id, name, tenant_id, auth_mode, header_name, org_id FROM tenants WHERE tenant_id = ? LIMIT 1`, tenantID)
 	var t tenantRecord
-	if err := row.Scan(&t.ID, &t.Name, &t.TenantID, &t.Upstream, &t.AuthMode, &t.HeaderName, &t.OrgID, &t.HealthCheckPath); err != nil {
+	if err := row.Scan(&t.ID, &t.Name, &t.TenantID, &t.AuthMode, &t.HeaderName, &t.OrgID); err != nil {
 		if err == sql.ErrNoRows {
 			return tenantRecord{}, false, nil
 		}
@@ -502,23 +516,6 @@ func (store *sqlStore) RecordAudit(ctx context.Context, audit auditRecord) error
 	return err
 }
 
-func (store *sqlStore) lookupTenantUpstream(ctx context.Context, tenantID string) (string, error) {
-	var upstreamURL string
-	var err error
-	if orgID := orgIDFromContext(ctx); orgID != "" {
-		err = store.queryRowContext(ctx, `SELECT upstream_url FROM tenants WHERE tenant_id = ? AND org_id = ? LIMIT 1`, tenantID, orgID).Scan(&upstreamURL)
-	} else {
-		err = store.queryRowContext(ctx, `SELECT upstream_url FROM tenants WHERE tenant_id = ? LIMIT 1`, tenantID).Scan(&upstreamURL)
-	}
-	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("tenantID does not exist")
-	}
-	if err != nil {
-		return "", err
-	}
-	return upstreamURL, nil
-}
-
 func (store *sqlStore) execContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	return store.db.ExecContext(ctx, store.rebind(query), args...)
 }
@@ -553,7 +550,7 @@ func (store *sqlStore) rebind(query string) string {
 func scanRoute(scanner interface{ Scan(dest ...any) error }) (routeRecord, error) {
 	var route routeRecord
 	var methodsJSON string
-	if err := scanner.Scan(&route.ID, &route.Slug, &route.TargetPath, &route.TenantID, &route.RequiredScope, &methodsJSON, &route.UpstreamURL, &route.RateLimitRPM, &route.RateLimitBurst, &route.AllowCIDRs, &route.DenyCIDRs); err != nil {
+	if err := scanner.Scan(&route.ID, &route.Slug, &route.TargetPath, &route.TenantID, &route.RequiredScope, &methodsJSON, &route.UpstreamURL, &route.RateLimitRPM, &route.RateLimitBurst, &route.AllowCIDRs, &route.DenyCIDRs, &route.HealthCheckPath); err != nil {
 		return routeRecord{}, err
 	}
 	if err := json.Unmarshal([]byte(methodsJSON), &route.Methods); err != nil {
@@ -829,8 +826,8 @@ func generateInviteCode() (string, error) {
 
 func (store *sqlStore) GetOIDCConfig(ctx context.Context) (oidcConfigRecord, bool, error) {
 	var cfg oidcConfigRecord
-	err := store.queryRowContext(ctx, `SELECT id, issuer, client_id, client_secret_encrypted, display_name, groups_claim, enabled, updated_at FROM oidc_config WHERE id = 'global' LIMIT 1`).Scan(
-		&cfg.ID, &cfg.Issuer, &cfg.ClientID, &cfg.ClientSecretEncrypted, &cfg.DisplayName, &cfg.GroupsClaim, &cfg.Enabled, &cfg.UpdatedAt,
+	err := store.queryRowContext(ctx, `SELECT id, issuer, client_id, client_secret_encrypted, display_name, groups_claim, admin_group, enabled, updated_at FROM oidc_config WHERE id = 'global' LIMIT 1`).Scan(
+		&cfg.ID, &cfg.Issuer, &cfg.ClientID, &cfg.ClientSecretEncrypted, &cfg.DisplayName, &cfg.GroupsClaim, &cfg.AdminGroup, &cfg.Enabled, &cfg.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -843,11 +840,11 @@ func (store *sqlStore) GetOIDCConfig(ctx context.Context) (oidcConfigRecord, boo
 
 func (store *sqlStore) UpsertOIDCConfig(ctx context.Context, cfg oidcConfigRecord) error {
 	_, err := store.execContext(ctx,
-		`INSERT INTO oidc_config (id, issuer, client_id, client_secret_encrypted, display_name, groups_claim, enabled, updated_at)
-		 VALUES ('global', ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET issuer=?, client_id=?, client_secret_encrypted=?, display_name=?, groups_claim=?, enabled=?, updated_at=?`,
-		cfg.Issuer, cfg.ClientID, cfg.ClientSecretEncrypted, cfg.DisplayName, cfg.GroupsClaim, cfg.Enabled, cfg.UpdatedAt,
-		cfg.Issuer, cfg.ClientID, cfg.ClientSecretEncrypted, cfg.DisplayName, cfg.GroupsClaim, cfg.Enabled, cfg.UpdatedAt,
+		`INSERT INTO oidc_config (id, issuer, client_id, client_secret_encrypted, display_name, groups_claim, admin_group, enabled, updated_at)
+		 VALUES ('global', ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET issuer=?, client_id=?, client_secret_encrypted=?, display_name=?, groups_claim=?, admin_group=?, enabled=?, updated_at=?`,
+		cfg.Issuer, cfg.ClientID, cfg.ClientSecretEncrypted, cfg.DisplayName, cfg.GroupsClaim, cfg.AdminGroup, cfg.Enabled, cfg.UpdatedAt,
+		cfg.Issuer, cfg.ClientID, cfg.ClientSecretEncrypted, cfg.DisplayName, cfg.GroupsClaim, cfg.AdminGroup, cfg.Enabled, cfg.UpdatedAt,
 	)
 	return err
 }
@@ -1140,17 +1137,17 @@ func (store *sqlStore) ListAuditsPaginated(ctx context.Context, limit, offset in
 
 func (store *sqlStore) UpsertUpstreamHealth(ctx context.Context, health upstreamHealthRecord) error {
 	_, err := store.execContext(ctx,
-		`INSERT INTO upstream_health (tenant_id, upstream_url, status, last_checked_at, latency_ms, error)
+		`INSERT INTO upstream_health (route_id, upstream_url, status, last_checked_at, latency_ms, error)
 		 VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(tenant_id, upstream_url) DO UPDATE SET status=?, last_checked_at=?, latency_ms=?, error=?`,
-		health.TenantID, health.UpstreamURL, health.Status, health.LastCheckedAt, health.LatencyMs, health.Error,
+		 ON CONFLICT(route_id, upstream_url) DO UPDATE SET status=?, last_checked_at=?, latency_ms=?, error=?`,
+		health.RouteID, health.UpstreamURL, health.Status, health.LastCheckedAt, health.LatencyMs, health.Error,
 		health.Status, health.LastCheckedAt, health.LatencyMs, health.Error,
 	)
 	return err
 }
 
 func (store *sqlStore) ListUpstreamHealth(ctx context.Context) ([]upstreamHealthRecord, error) {
-	rows, err := store.queryContext(ctx, `SELECT tenant_id, upstream_url, status, last_checked_at, latency_ms, error FROM upstream_health`)
+	rows, err := store.queryContext(ctx, `SELECT route_id, upstream_url, status, last_checked_at, latency_ms, error FROM upstream_health`)
 	if err != nil {
 		return nil, err
 	}
@@ -1159,7 +1156,7 @@ func (store *sqlStore) ListUpstreamHealth(ctx context.Context) ([]upstreamHealth
 	items := make([]upstreamHealthRecord, 0)
 	for rows.Next() {
 		var h upstreamHealthRecord
-		if err := rows.Scan(&h.TenantID, &h.UpstreamURL, &h.Status, &h.LastCheckedAt, &h.LatencyMs, &h.Error); err != nil {
+		if err := rows.Scan(&h.RouteID, &h.UpstreamURL, &h.Status, &h.LastCheckedAt, &h.LatencyMs, &h.Error); err != nil {
 			return nil, err
 		}
 		items = append(items, h)
@@ -1167,20 +1164,20 @@ func (store *sqlStore) ListUpstreamHealth(ctx context.Context) ([]upstreamHealth
 	return items, rows.Err()
 }
 
-// ── Tenant upstreams (load balancing) ──────────────────────────────────
+// ── Route upstreams (load balancing) ──────────────────────────────────
 
-func (store *sqlStore) ListTenantUpstreams(ctx context.Context, tenantID string) ([]tenantUpstreamRecord, error) {
+func (store *sqlStore) ListRouteUpstreams(ctx context.Context, routeID string) ([]routeUpstreamRecord, error) {
 	rows, err := store.queryContext(ctx,
-		`SELECT id, tenant_id, upstream_url, weight, is_primary, created_at FROM tenant_upstreams WHERE tenant_id = ? ORDER BY is_primary DESC, weight DESC`, tenantID)
+		`SELECT id, route_id, upstream_url, weight, is_primary, created_at FROM route_upstreams WHERE route_id = ? ORDER BY is_primary DESC, weight DESC`, routeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	items := make([]tenantUpstreamRecord, 0)
+	items := make([]routeUpstreamRecord, 0)
 	for rows.Next() {
-		var u tenantUpstreamRecord
-		if err := rows.Scan(&u.ID, &u.TenantID, &u.UpstreamURL, &u.Weight, &u.IsPrimary, &u.CreatedAt); err != nil {
+		var u routeUpstreamRecord
+		if err := rows.Scan(&u.ID, &u.RouteID, &u.UpstreamURL, &u.Weight, &u.IsPrimary, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, u)
@@ -1188,7 +1185,26 @@ func (store *sqlStore) ListTenantUpstreams(ctx context.Context, tenantID string)
 	return items, rows.Err()
 }
 
-func (store *sqlStore) CreateTenantUpstream(ctx context.Context, upstream tenantUpstreamRecord) error {
+func (store *sqlStore) ListAllRouteUpstreams(ctx context.Context) ([]routeUpstreamRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, route_id, upstream_url, weight, is_primary, created_at FROM route_upstreams ORDER BY route_id, is_primary DESC, weight DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]routeUpstreamRecord, 0)
+	for rows.Next() {
+		var u routeUpstreamRecord
+		if err := rows.Scan(&u.ID, &u.RouteID, &u.UpstreamURL, &u.Weight, &u.IsPrimary, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, u)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) CreateRouteUpstream(ctx context.Context, upstream routeUpstreamRecord) error {
 	if upstream.ID == "" {
 		upstream.ID = newResourceID("ups")
 	}
@@ -1196,13 +1212,13 @@ func (store *sqlStore) CreateTenantUpstream(ctx context.Context, upstream tenant
 		upstream.CreatedAt = store.now()
 	}
 	_, err := store.execContext(ctx,
-		`INSERT INTO tenant_upstreams (id, tenant_id, upstream_url, weight, is_primary, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		upstream.ID, upstream.TenantID, upstream.UpstreamURL, upstream.Weight, upstream.IsPrimary, upstream.CreatedAt)
+		`INSERT INTO route_upstreams (id, route_id, upstream_url, weight, is_primary, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		upstream.ID, upstream.RouteID, upstream.UpstreamURL, upstream.Weight, upstream.IsPrimary, upstream.CreatedAt)
 	return err
 }
 
-func (store *sqlStore) DeleteTenantUpstream(ctx context.Context, id string) error {
-	result, err := store.execContext(ctx, `DELETE FROM tenant_upstreams WHERE id = ?`, id)
+func (store *sqlStore) DeleteRouteUpstream(ctx context.Context, id string) error {
+	result, err := store.execContext(ctx, `DELETE FROM route_upstreams WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -1216,9 +1232,9 @@ func (store *sqlStore) DeleteTenantUpstream(ctx context.Context, id string) erro
 	return nil
 }
 
-func (store *sqlStore) UpdateTenantUpstream(ctx context.Context, id, upstreamURL string, weight int, isPrimary bool) error {
+func (store *sqlStore) UpdateRouteUpstream(ctx context.Context, id, upstreamURL string, weight int, isPrimary bool) error {
 	result, err := store.execContext(ctx,
-		`UPDATE tenant_upstreams SET upstream_url = ?, weight = ?, is_primary = ? WHERE id = ?`,
+		`UPDATE route_upstreams SET upstream_url = ?, weight = ?, is_primary = ? WHERE id = ?`,
 		upstreamURL, weight, isPrimary, id)
 	if err != nil {
 		return err
@@ -1237,24 +1253,52 @@ func (store *sqlStore) UpdateTenantUpstream(ctx context.Context, id, upstreamURL
 
 func (store *sqlStore) GetCircuitBreaker(ctx context.Context, routeID string) (circuitBreakerRecord, bool, error) {
 	row := store.queryRowContext(ctx,
-		`SELECT route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at FROM circuit_breakers WHERE route_id = ? LIMIT 1`, routeID)
+		`SELECT route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at, locked FROM circuit_breakers WHERE route_id = ? LIMIT 1`, routeID)
 	var cb circuitBreakerRecord
-	if err := row.Scan(&cb.RouteID, &cb.State, &cb.FailureCount, &cb.LastFailureAt, &cb.LastSuccessAt, &cb.OpenedAt, &cb.HalfOpenAt); err != nil {
+	var lastFailure, lastSuccess, openedAt, halfOpenAt sql.NullTime
+	if err := row.Scan(&cb.RouteID, &cb.State, &cb.FailureCount, &lastFailure, &lastSuccess, &openedAt, &halfOpenAt, &cb.Locked); err != nil {
 		if err == sql.ErrNoRows {
 			return circuitBreakerRecord{}, false, nil
 		}
 		return circuitBreakerRecord{}, false, err
 	}
+	cb.LastFailureAt = lastFailure.Time
+	cb.LastSuccessAt = lastSuccess.Time
+	cb.OpenedAt = openedAt.Time
+	cb.HalfOpenAt = halfOpenAt.Time
 	return cb, true, nil
+}
+
+func (store *sqlStore) ListCircuitBreakers(ctx context.Context) ([]circuitBreakerRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at, locked FROM circuit_breakers`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []circuitBreakerRecord
+	for rows.Next() {
+		var cb circuitBreakerRecord
+		var lastFailure, lastSuccess, openedAt, halfOpenAt sql.NullTime
+		if err := rows.Scan(&cb.RouteID, &cb.State, &cb.FailureCount, &lastFailure, &lastSuccess, &openedAt, &halfOpenAt, &cb.Locked); err != nil {
+			return nil, err
+		}
+		cb.LastFailureAt = lastFailure.Time
+		cb.LastSuccessAt = lastSuccess.Time
+		cb.OpenedAt = openedAt.Time
+		cb.HalfOpenAt = halfOpenAt.Time
+		out = append(out, cb)
+	}
+	return out, rows.Err()
 }
 
 func (store *sqlStore) UpsertCircuitBreaker(ctx context.Context, cb circuitBreakerRecord) error {
 	_, err := store.execContext(ctx,
-		`INSERT INTO circuit_breakers (route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(route_id) DO UPDATE SET state=?, failure_count=?, last_failure_at=?, last_success_at=?, opened_at=?, half_open_at=?`,
-		cb.RouteID, cb.State, cb.FailureCount, cb.LastFailureAt, cb.LastSuccessAt, cb.OpenedAt, cb.HalfOpenAt,
-		cb.State, cb.FailureCount, cb.LastFailureAt, cb.LastSuccessAt, cb.OpenedAt, cb.HalfOpenAt)
+		`INSERT INTO circuit_breakers (route_id, state, failure_count, last_failure_at, last_success_at, opened_at, half_open_at, locked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(route_id) DO UPDATE SET state=?, failure_count=?, last_failure_at=?, last_success_at=?, opened_at=?, half_open_at=?, locked=?`,
+		cb.RouteID, cb.State, cb.FailureCount, cb.LastFailureAt, cb.LastSuccessAt, cb.OpenedAt, cb.HalfOpenAt, cb.Locked,
+		cb.State, cb.FailureCount, cb.LastFailureAt, cb.LastSuccessAt, cb.OpenedAt, cb.HalfOpenAt, cb.Locked)
 	return err
 }
 
@@ -1268,15 +1312,15 @@ func (store *sqlStore) RecordHealthHistory(ctx context.Context, record healthHis
 		record.CheckedAt = store.now()
 	}
 	_, err := store.execContext(ctx,
-		`INSERT INTO upstream_health_history (id, tenant_id, status, latency_ms, error, checked_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		record.ID, record.TenantID, record.Status, record.LatencyMs, record.Error, record.CheckedAt)
+		`INSERT INTO upstream_health_history (id, route_id, status, latency_ms, error, checked_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		record.ID, record.RouteID, record.Status, record.LatencyMs, record.Error, record.CheckedAt)
 	return err
 }
 
-func (store *sqlStore) ListHealthHistory(ctx context.Context, tenantID string, limit int) ([]healthHistoryRecord, error) {
+func (store *sqlStore) ListHealthHistory(ctx context.Context, routeID string, limit int) ([]healthHistoryRecord, error) {
 	rows, err := store.queryContext(ctx,
-		`SELECT id, tenant_id, status, latency_ms, error, checked_at FROM upstream_health_history WHERE tenant_id = ? ORDER BY checked_at DESC LIMIT ?`,
-		tenantID, limit)
+		`SELECT id, route_id, status, latency_ms, error, checked_at FROM upstream_health_history WHERE route_id = ? ORDER BY checked_at DESC LIMIT ?`,
+		routeID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1285,7 +1329,7 @@ func (store *sqlStore) ListHealthHistory(ctx context.Context, tenantID string, l
 	items := make([]healthHistoryRecord, 0, limit)
 	for rows.Next() {
 		var h healthHistoryRecord
-		if err := rows.Scan(&h.ID, &h.TenantID, &h.Status, &h.LatencyMs, &h.Error, &h.CheckedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.RouteID, &h.Status, &h.LatencyMs, &h.Error, &h.CheckedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, h)
@@ -1475,8 +1519,8 @@ func (store *sqlStore) UpdateAdminSessionLastSeen(ctx context.Context, sessionID
 	return err
 }
 
-func (store *sqlStore) RevokeAdminSession(ctx context.Context, sessionID string) error {
-	result, err := store.execContext(ctx, `UPDATE admin_sessions SET revoked = ? WHERE id = ?`, true, sessionID)
+func (store *sqlStore) RevokeAdminSession(ctx context.Context, userID string, sessionID string) error {
+	result, err := store.execContext(ctx, `UPDATE admin_sessions SET revoked = TRUE WHERE id = ? AND user_id = ?`, sessionID, userID)
 	if err != nil {
 		return err
 	}
@@ -2079,12 +2123,13 @@ func (store *sqlStore) GetTokenByID(ctx context.Context, tokenID string) (tokenR
 
 func (store *sqlStore) ListTokenTrafficStats(ctx context.Context, tokenID string, from, to time.Time) ([]trafficStatRecord, error) {
 	rows, err := store.queryContext(ctx,
-		`SELECT id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id,
-		        SUM(request_count), SUM(error_count), ROUND(AVG(avg_latency_ms)),
+		`SELECT MIN(id), bucket_start, MIN(bucket_minutes), '' AS route_slug, MIN(tenant_id), token_id, MIN(org_id),
+		        SUM(request_count), SUM(error_count),
+		        CAST(COALESCE(ROUND(AVG(avg_latency_ms)), 0) AS INTEGER),
 		        SUM(status_2xx), SUM(status_4xx), SUM(status_5xx)
 		 FROM traffic_stats
 		 WHERE token_id = ? AND bucket_start >= ? AND bucket_start <= ?
-		 GROUP BY bucket_start ORDER BY bucket_start ASC`,
+		 GROUP BY token_id, bucket_start ORDER BY bucket_start ASC`,
 		tokenID, from, to)
 	if err != nil {
 		return nil, err
@@ -2212,6 +2257,36 @@ func (store *sqlStore) ListGrantIssuances(ctx context.Context, grantID string) (
 		items = append(items, r)
 	}
 	return items, rows.Err()
+}
+
+// ── System settings ────────────────────────────────────────────────────
+
+func (store *sqlStore) GetSystemSetting(ctx context.Context, key string) (string, bool, error) {
+	var value string
+	err := store.queryRowContext(ctx, `SELECT value FROM system_settings WHERE key = ?`, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return value, true, nil
+}
+
+func (store *sqlStore) SetSystemSetting(ctx context.Context, key, value string) error {
+	_, err := store.execContext(ctx,
+		`INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		key, value, time.Now().UTC())
+	return err
+}
+
+func (store *sqlStore) PurgeTrafficStats(ctx context.Context, olderThan time.Time) (int64, error) {
+	result, err := store.execContext(ctx, `DELETE FROM traffic_stats WHERE bucket_start < ?`, olderThan)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func scanGrant(scanner interface{ Scan(dest ...any) error }) (provisioningGrantRecord, error) {

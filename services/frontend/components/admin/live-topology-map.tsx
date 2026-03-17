@@ -51,6 +51,8 @@ type GraphEdge = {
   revoked?: boolean;
   latencyMs?: number;
   circuitBreakerState?: string;
+  circuitBreakerLocked?: boolean;
+  label?: string;
 };
 
 type CameraState = {
@@ -190,6 +192,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
     routeLabel: string;
     tenantLabel: string;
     state: string;
+    locked: boolean;
     latencyMs: number;
     sceneX: number;
     sceneY: number;
@@ -215,6 +218,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
   const panRef = useRef<{ originX: number; originY: number; startX: number; startY: number } | null>(null);
   const sceneHeightRef = useRef(980);
 
+  const routeTenants = snapshot.data.tenants;
   const routeTenantIDs = useMemo(() => snapshot.data.tenants.map((tenant) => tenant.tenantID), [snapshot.data.tenants]);
 
   const selectedRoute = useMemo(
@@ -462,124 +466,110 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       } satisfies GraphNode;
     });
 
-    const tenantNodes: GraphNode[] = tenants.map((tenant, index) => {
-      // Tenant dot colour reflects the primary upstream when one is designated,
-      // falling back to "any reachable" logic so a dead secondary doesn't turn the tenant red.
-      const extras = tenant.upstreams ?? [];
-      let statusTone: string;
-      if (extras.length > 0) {
-        const anyUp   = extras.some((u) => u.status === "up");
-        const anyDown = extras.some((u) => u.status === "down");
-        statusTone = anyUp && anyDown
-          ? "var(--warning)"          // partial — some up, some down
-          : anyUp
-            ? "var(--success)"        // all reachable
-            : anyDown
-              ? "var(--danger)"       // all down
-              : "var(--muted)";       // all unknown
-      } else {
-        statusTone =
-          tenant.upstreamStatus === "up"
-            ? "var(--success)"
-            : tenant.upstreamStatus === "down"
-              ? "var(--danger)"
-              : "var(--muted)";
-      }
-      return {
-        id: `tenant:${tenant.id}`,
-        kind: "tenant",
-        label: tenant.name,
-        meta: `${tenant.tenantID} • ${tenant.upstreamURL}`,
-        stats:
-          tenant.upstreamStatus === "up"
-            ? `${tenant.headerName} • ↑ ${tenant.upstreamLatencyMs ?? 0}ms`
-            : tenant.upstreamStatus === "down"
-              ? `${tenant.headerName} • ↓ unreachable`
-              : tenant.headerName,
-        x: LANE_X.tenant,
-        y: tenantY[index] ?? sceneHeight / 2,
-        tone: statusTone,
-      };
-    });
+    const tenantNodes: GraphNode[] = tenants.map((tenant, index) => ({
+      id: `tenant:${tenant.id}`,
+      kind: "tenant" as const,
+      label: tenant.name,
+      meta: `${tenant.tenantID} • ${tenant.authMode}`,
+      stats: tenant.headerName,
+      x: LANE_X.tenant,
+      y: tenantY[index] ?? sceneHeight / 2,
+      tone: "var(--accent)",
+    }));
 
-    // Build a flat list of upstream entries: one per tenant_upstreams record when configured,
-    // otherwise one per tenant (using the main upstreamURL + health fields).
+    // Build upstream entries. Edge goes Tenant → Upstream to show
+    // that the tenant is the processing step that injects the header before forwarding.
+    // When a route has LB upstreams configured, expand into one node per pool member (with weight).
+    // Otherwise show a single node for the primary upstreamURL.
     type UpstreamEntry = {
       nodeId: string;
       label: string;
       meta: string;
+      routeSlug: string;
       statsText: string | undefined;
       tone: string;
-      fromTenantNodeId: string;
+      fromNodeId: string;
       isDown: boolean;
       isReachable: boolean;
       upstreamURL: string;
     };
+    const healthIndex = new Map<string, string>();
+    for (const h of snapshot.data.upstreamHealth ?? []) {
+      healthIndex.set(`${h.routeID}::${h.upstreamURL}`, h.status);
+    }
+
+    // Group LB upstreams by routeID
+    const lbByRoute = new Map<string, typeof snapshot.data.routeUpstreams>();
+    for (const u of snapshot.data.routeUpstreams ?? []) {
+      const arr = lbByRoute.get(u.routeID) ?? [];
+      arr.push(u);
+      lbByRoute.set(u.routeID, arr);
+    }
+
+    function upstreamTone(routeID: string, upstreamURL: string, cbOpen: boolean) {
+      const healthStatus = healthIndex.get(`${routeID}::${upstreamURL}`);
+      const isDown = cbOpen || healthStatus === "down";
+      const isUp = healthStatus === "up" && !cbOpen;
+      return { tone: isDown ? "var(--danger)" : isUp ? "var(--success)" : "var(--muted)", isDown, healthStatus };
+    }
+
+    function upstreamStatsText(cbOpen: boolean, cbState: string | undefined, healthStatus: string | undefined, healthCheckPath: string | undefined, weightLabel?: string) {
+      let s = "";
+      if (cbOpen) s = `CB: ${cbState}`;
+      else if (healthStatus === "up") s = "healthy";
+      else if (healthStatus === "down") s = "unreachable";
+      else if (healthCheckPath) s = `healthz ${healthCheckPath}`;
+      if (weightLabel) s = s ? `${weightLabel} · ${s}` : weightLabel;
+      return s || undefined;
+    }
+
     const upstreamEntries: UpstreamEntry[] = [];
-    for (const tenant of tenants) {
-      const extras = tenant.upstreams ?? [];
-      const fromTenantNodeId = `tenant:${tenant.id}`;
-      if (extras.length > 0) {
-        for (const up of extras) {
-          const tone =
-            up.status === "up" ? "var(--success)" : up.status === "down" ? "var(--danger)" : "var(--muted)";
-          let urlLabel = up.upstreamURL;
-          try {
-            urlLabel = new URL(up.upstreamURL).host;
-          } catch {
-            /* keep full URL */
-          }
+    for (const route of routes) {
+      if (!route.upstreamURL) continue;
+      const cbState = snapshot.data.routes.find((r) => r.id === route.id)?.circuitBreakerState;
+      const cbOpen = cbState === "open" || cbState === "half_open";
+      const owningTenant = tenants.find((t) => t.tenantID === route.tenantID);
+      const fromNodeId = owningTenant ? `tenant:${owningTenant.id}` : `route:${route.id}`;
+      const lbPool = lbByRoute.get(route.id);
+
+      if (lbPool && lbPool.length > 0) {
+        // Expand into one node per LB pool member
+        const totalWeight = lbPool.reduce((s, u) => s + u.weight, 0) || 1;
+        lbPool.forEach((u, _) => {
+          const pct = Math.round((u.weight / totalWeight) * 100);
+          const weightLabel = `${pct}% · w${u.weight}`;
+          const { tone, isDown, healthStatus } = upstreamTone(route.id, u.upstreamURL, cbOpen);
+          let urlLabel = u.upstreamURL;
+          try { urlLabel = new URL(u.upstreamURL).host; } catch { /* keep full URL */ }
           upstreamEntries.push({
-            nodeId: `upstream:${up.id}`,
-            label: up.isPrimary ? `★ ${urlLabel}` : urlLabel,
-            meta:
-              up.status === "up"
-                ? `↑ Reachable · ${up.latencyMs ?? 0}ms`
-                : up.status === "down"
-                  ? `↓ ${up.error || "Unreachable"}`
-                  : "No health data",
-            statsText: up.lastChecked
-              ? `Checked ${new Date(up.lastChecked).toLocaleTimeString()}`
-              : "Awaiting first check",
+            nodeId: `upstream:${u.id}`,
+            label: urlLabel,
+            meta: `/proxy/${route.slug}`,
+            routeSlug: route.slug,
+            statsText: upstreamStatsText(cbOpen, cbState, healthStatus, route.healthCheckPath, weightLabel),
             tone,
-            fromTenantNodeId,
-            isDown: up.status === "down",
-            isReachable: up.status === "up",
-            upstreamURL: up.upstreamURL,
+            fromNodeId,
+            isDown,
+            isReachable: !isDown,
+            upstreamURL: u.upstreamURL,
           });
-        }
+        });
       } else {
-        const tone =
-          tenant.upstreamStatus === "up"
-            ? "var(--success)"
-            : tenant.upstreamStatus === "down"
-              ? "var(--danger)"
-              : "var(--muted)";
-        let urlLabel = tenant.upstreamURL;
-        try {
-          urlLabel = new URL(tenant.upstreamURL).host;
-        } catch {
-          /* keep full URL */
-        }
+        // Single primary upstream node
+        const { tone, isDown, healthStatus } = upstreamTone(route.id, route.upstreamURL, cbOpen);
+        let urlLabel = route.upstreamURL;
+        try { urlLabel = new URL(route.upstreamURL).host; } catch { /* keep full URL */ }
         upstreamEntries.push({
-          nodeId: `upstream:${tenant.id}`,
+          nodeId: `upstream:${route.id}`,
           label: urlLabel,
-          meta:
-            tenant.upstreamStatus === "up"
-              ? `↑ Reachable · ${tenant.upstreamLatencyMs ?? 0}ms`
-              : tenant.upstreamStatus === "down"
-                ? `↓ ${tenant.upstreamError || "Unreachable"}`
-                : "No health data",
-          statsText: tenant.upstreamLastChecked
-            ? `Checked ${new Date(tenant.upstreamLastChecked).toLocaleTimeString()}`
-            : tenant.healthCheckPath
-              ? "Awaiting first check"
-              : undefined,
+          meta: `/proxy/${route.slug}`,
+          routeSlug: route.slug,
+          statsText: upstreamStatsText(cbOpen, cbState, healthStatus, route.healthCheckPath),
           tone,
-          fromTenantNodeId,
-          isDown: tenant.upstreamStatus === "down",
-          isReachable: tenant.upstreamStatus === "up",
-          upstreamURL: tenant.upstreamURL,
+          fromNodeId,
+          isDown,
+          isReachable: !isDown,
+          upstreamURL: route.upstreamURL,
         });
       }
     }
@@ -601,13 +591,22 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
     const routeNodeByRouteID = new Map(routes.map((route, index) => [route.id, routeNodes[index]]));
     const hotRouteKeys = new Set(activeAudits.map((event) => `route:${event.routeSlug}:${event.tenantID}`));
     const hotTokenKeys = new Set(activeAudits.map((event) => `token:${event.tokenID}:${event.routeSlug}`));
-    // Only animate the upstream edge when the request was actually forwarded.
-    // Gateway-level rejections (rate limit 429, auth 401) never reach the upstream.
-    const hotUpstreamOrigins = new Set(
+    const tokenRouteErrorKeys = new Set(
       activeAudits
-        .filter((e) => e.status !== 429 && e.status !== 401 && e.upstreamURL)
+        .filter((a) => a.status >= 400)
+        .map((a) => `${a.tokenID}:${a.routeSlug}:${a.tenantID}`),
+    );
+    // Only animate the upstream edge when the request was actually forwarded.
+    // Gateway-level rejections (auth 401, IP/scope 403, CB-blocked 503, rate limit 429) never reach the upstream.
+    // Key on routeSlug::origin so two upstreams sharing the same hostname (e.g. loki-get vs loki-write)
+    // don't cross-animate each other.
+    const hotUpstreamKeys = new Set(
+      activeAudits
+        .filter((e) => e.status !== 401 && e.status !== 403 && e.status !== 429 && e.status !== 503 && e.upstreamURL)
         .map((e) => {
-          try { return new URL(e.upstreamURL).origin; } catch { return e.upstreamURL; }
+          let origin = e.upstreamURL;
+          try { origin = new URL(e.upstreamURL).origin; } catch { /* keep full URL */ }
+          return `${e.routeSlug}::${origin}`;
         }),
     );
 
@@ -618,14 +617,13 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
         if (!canAccessRoute) {
           continue;
         }
-        const routeHasErrors = (routeMetrics.get(route.id)?.errors ?? 0) > 0;
         tokenEdges.push({
           id: `edge:${token.id}:${route.id}`,
           from: `token:${token.id}`,
           to: `route:${route.id}`,
           kind: "access",
           hot: !token.active ? false : hotTokenKeys.has(`token:${token.id}:${route.slug}`),
-          error: !token.active ? false : routeHasErrors,
+          error: !token.active ? false : tokenRouteErrorKeys.has(`${token.id}:${route.slug}:${route.tenantID}`),
           revoked: !token.active,
           latencyMs: routeMetrics.get(route.id)?.avgLatencyMs ?? 0,
         });
@@ -649,6 +647,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           error: routeHasErrors,
           latencyMs: routeMetrics.get(route.id)?.avgLatencyMs ?? 0,
           circuitBreakerState: routeSummary?.circuitBreakerState,
+          circuitBreakerLocked: routeSummary?.circuitBreakerLocked,
         } satisfies GraphEdge;
       })
       .filter(Boolean) as GraphEdge[];
@@ -657,13 +656,14 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       let upstreamOrigin = entry.upstreamURL;
       try { upstreamOrigin = new URL(entry.upstreamURL).origin; } catch { /* keep as-is */ }
       return {
-        id: `edge:${entry.fromTenantNodeId}:${entry.nodeId}`,
-        from: entry.fromTenantNodeId,
+        id: `edge:${entry.fromNodeId}:${entry.nodeId}`,
+        from: entry.fromNodeId,
         to: entry.nodeId,
         kind: "upstream" as const,
-        hot: hotUpstreamOrigins.has(upstreamOrigin),
+        hot: hotUpstreamKeys.has(`${entry.routeSlug}::${upstreamOrigin}`),
         error: entry.isDown,
         reachable: entry.isReachable,
+        label: entry.routeSlug,
       };
     });
 
@@ -993,7 +993,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
   const inspectorMeta = selectedRouteForInspector
     ? `${selectedRouteForInspector.tenantID} • ${selectedRouteForInspector.requiredScope}`
     : selectedTenantForInspector
-      ? selectedTenantForInspector.upstreamURL
+      ? `${selectedTenantForInspector.tenantID} • ${selectedTenantForInspector.authMode}`
       : selectedTokenForInspector
         ? `${selectedTokenForInspector.tenantID} • ${selectedTokenForInspector.scopes.join(", ")}`
         : "Select a tenant, route, or token node to inspect its available actions and live links.";
@@ -1020,18 +1020,13 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
   const inspectorRows = selectedTenantForInspector
     ? [
         { label: "Tenant ID", value: selectedTenantForInspector.tenantID },
+        { label: "Auth mode", value: selectedTenantForInspector.authMode },
         { label: "Header", value: selectedTenantForInspector.headerName },
-        { label: "Upstream", value: selectedTenantForInspector.upstreamURL },
-        ...(selectedTenantForInspector.upstreamStatus
-          ? [
-              { label: "Status", value: selectedTenantForInspector.upstreamStatus === "up" ? `Up (${selectedTenantForInspector.upstreamLatencyMs ?? 0}ms)` : selectedTenantForInspector.upstreamStatus === "down" ? `Down — ${selectedTenantForInspector.upstreamError || "unreachable"}` : "Unknown" },
-              ...(selectedTenantForInspector.upstreamLastChecked ? [{ label: "Last checked", value: new Date(selectedTenantForInspector.upstreamLastChecked).toLocaleTimeString() }] : []),
-            ]
-          : []),
       ]
     : selectedRouteForInspector
       ? [
           { label: "Tenant", value: selectedRouteForInspector.tenantID },
+          { label: "Upstream", value: selectedRouteForInspector.upstreamURL },
           { label: "Scope", value: selectedRouteForInspector.requiredScope },
           { label: "Methods", value: selectedRouteForInspector.methods.join(", ") },
           { label: "Circuit breaker", value: selectedRouteForInspector.circuitBreakerState === "open" ? "Open — traffic blocked" : selectedRouteForInspector.circuitBreakerState === "half_open" ? "Half-open — probing" : "Closed — healthy" },
@@ -1213,7 +1208,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                       setSelectedCBEdge((prev) =>
                         prev?.sceneX === midpoint.x && prev?.sceneY === midpoint.y
                           ? (setPendingCBAction(null), null)
-                          : { routeID, routeLabel: from!.label, tenantLabel: to!.label, state: cbState, latencyMs: edge.latencyMs ?? 0, sceneX: midpoint.x, sceneY: midpoint.y }
+                          : { routeID, routeLabel: from!.label, tenantLabel: to!.label, state: cbState, locked: edge.circuitBreakerLocked ?? false, latencyMs: edge.latencyMs ?? 0, sceneX: midpoint.x, sceneY: midpoint.y }
                       );
                       setPendingCBAction(null);
                     } else if (isAccess) {
@@ -1262,6 +1257,20 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                           </circle>
                         </>
                       )}
+                      {edge.kind === "upstream" && edge.label && (() => {
+                        const labelMid = bezierMidpoint(from, to);
+                        const textW = Math.min(edge.label.length * 6.5 + 14, 140);
+                        return (
+                          <g transform={`translate(${labelMid.x}, ${labelMid.y - 14})`} opacity={0.82}>
+                            <rect x={-textW / 2} y="-9" width={textW} height="16" rx="5"
+                              fill="var(--overlay)" stroke="var(--border)" strokeWidth="0.8" />
+                            <text x="0" y="4" textAnchor="middle" fontSize="8.5"
+                              fontFamily="monospace" fontWeight="500" fill="var(--muted-foreground)">
+                              {edge.label.length > 18 ? `${edge.label.slice(0, 17)}…` : edge.label}
+                            </text>
+                          </g>
+                        );
+                      })()}
                       {cbBadgePos && (
                         <g
                           transform={`translate(${cbBadgePos.x}, ${cbBadgePos.y})`}
@@ -1443,7 +1452,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                         style={{ background: isClosed ? "var(--success)" : isOpen ? "var(--danger)" : "var(--warning)" }}
                       />
                       <span className={`text-[11px] font-bold uppercase tracking-[0.14em] ${isClosed ? "text-success" : isOpen ? "text-danger" : "text-warning"}`}>
-                        {isClosed ? "Route binding" : isOpen ? "Circuit Breaker — Open" : "Circuit Breaker — Half Open"}
+                        {isClosed ? "Route binding" : isOpen ? `Circuit Breaker — Open${selectedCBEdge.locked ? " (locked)" : ""}` : "Circuit Breaker — Half Open"}
                       </span>
                     </div>
                     <button
@@ -1488,8 +1497,8 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                       <div className="space-y-1.5 leading-[1.55] text-muted-foreground">
                         {isOpen ? (
                           <>
-                            <p><span className="font-semibold text-danger">Traffic is blocked.</span> JustGate detected 5 or more consecutive upstream failures and stopped forwarding requests to protect against cascading errors.</p>
-                            <p>The breaker will automatically allow a single <span className="font-medium text-foreground">trial request</span> after ~30 seconds to probe upstream recovery.</p>
+                            <p><span className="font-semibold text-danger">Traffic is blocked.</span> {selectedCBEdge.locked ? "This breaker was manually locked open and will not recover automatically." : "JustGate detected 5 or more consecutive upstream failures and stopped forwarding requests to protect against cascading errors."}</p>
+                            {!selectedCBEdge.locked && <p>The breaker will automatically allow a single <span className="font-medium text-foreground">trial request</span> after ~30 seconds to probe upstream recovery.</p>}
                           </>
                         ) : (
                           <>
@@ -1505,8 +1514,8 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                       <div className="space-y-2.5 rounded-[10px] border border-border bg-panel p-3">
                         <p className="text-[11px] leading-[1.5] text-muted-foreground">
                           {pendingCBAction === "open"
-                            ? <>Manually <span className="font-semibold text-danger">opening the circuit breaker</span> will immediately stop all traffic to <span className="font-medium text-foreground">{selectedCBEdge.routeLabel}</span>. Requests will return 503 until the breaker is closed again.</>
-                            : <>Manually <span className="font-semibold text-success">closing the circuit breaker</span> will resume traffic to <span className="font-medium text-foreground">{selectedCBEdge.routeLabel}</span>. Failures will re-open it automatically.</>
+                            ? <>Manually <span className="font-semibold text-danger">opening the circuit breaker</span> will immediately stop all traffic to <span className="font-medium text-foreground">{selectedCBEdge.routeLabel}</span>. The breaker will be <span className="font-semibold">locked open</span> and will not recover automatically — you must close it manually.</>
+                            : <>Manually <span className="font-semibold text-success">closing the circuit breaker</span> will resume traffic to <span className="font-medium text-foreground">{selectedCBEdge.routeLabel}</span>. The lock is released and failures will re-open it automatically.</>
                           }
                         </p>
                         <div className="flex gap-2">
@@ -1893,7 +1902,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
             clearConnectionMode();
           }
         }}
-        tenantIDs={routeTenantIDs}
+        tenants={routeTenants}
         trigger={modalTrigger}
       />
 
@@ -1929,14 +1938,14 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
             }
           }}
           route={selectedRoute}
-          tenantIDs={routeTenantIDs}
+          tenants={routeTenants}
           trigger={modalTrigger}
         />
       ) : null}
 
       {selectedTenant ? (
         <UpdateTenantForm
-          key={`${selectedTenant.id}:${selectedTenant.tenantID}:${selectedTenant.upstreamURL}:${selectedTenant.headerName}:${selectedTenant.name}`}
+          key={`${selectedTenant.id}:${selectedTenant.tenantID}:${selectedTenant.headerName}:${selectedTenant.name}`}
           disabled={snapshot.source !== "backend"}
           isOpen={Boolean(selectedTenant)}
           label="Edit"

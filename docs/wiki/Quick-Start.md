@@ -48,7 +48,7 @@ pnpm dev
 # → http://localhost:3000
 ```
 
-Open `http://localhost:3000`, register the first admin account, and you're ready.
+Open `http://localhost:3000`. On the first run you are redirected to the **setup wizard** at `/setup`, where you create the first admin account and optionally configure OIDC. No additional env vars are needed for those steps.
 
 > For the full list of environment variables, see [Configuration](Configuration).
 

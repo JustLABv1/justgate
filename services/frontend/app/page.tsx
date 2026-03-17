@@ -25,7 +25,8 @@ export default async function Home() {
   };
 
   const isOnline = topology.data.runtime.status === "online";
-  const tenantIDs = topology.data.tenants.map((t) => t.tenantID);
+  const tenants = topology.data.tenants;
+  const tenantIDs = tenants.map((t) => t.tenantID);
 
   const setupSteps = [
     {
@@ -151,7 +152,7 @@ export default async function Home() {
           {/* Quick Actions */}
           <div className="rounded-lg border border-border bg-surface px-5 py-3.5">
             <QuickActions
-                tenantIDs={tenantIDs}
+                tenants={tenants}
                 tenantCount={stats.tenants}
                 routeCount={stats.routes}
                 tokenCount={stats.activeTokens}
@@ -253,7 +254,8 @@ export default async function Home() {
                 {circuitBreakersResult.data.map((cb) => (
                   <div key={cb.routeID ?? cb.tenantID} className="flex items-center justify-between text-sm gap-2">
                     <span className="text-muted-foreground truncate font-mono text-xs max-w-[130px]">/proxy/{cb.slug}</span>
-                    <span className={`text-xs font-medium shrink-0 ${cb.state === "closed" ? "text-success" : cb.state === "open" ? "text-danger" : "text-warning"}`}>
+                    <span className={`flex items-center gap-1 text-xs font-medium shrink-0 ${cb.state === "closed" ? "text-success" : cb.state === "open" ? "text-danger" : "text-warning"}`}>
+                      {cb.locked && <Lock size={10} />}
                       {cb.state}
                     </span>
                   </div>

@@ -60,7 +60,6 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
   // Tenant
   const [tenantName, setTenantName] = useState("");
   const [tenantID, setTenantID] = useState("");
-  const [upstreamURL, setUpstreamURL] = useState("");
   const [headerName, setHeaderName] = useState("X-Scope-OrgID");
   const [tenantError, setTenantError] = useState<string>();
   const [createdTenant, setCreatedTenant] = useState<TenantSummary>();
@@ -68,6 +67,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
   // Route
   const [routeSlug, setRouteSlug] = useState("");
   const [routeTenantID, setRouteTenantID] = useState("");
+  const [routeUpstreamURL, setRouteUpstreamURL] = useState("");
   const [targetPath, setTargetPath] = useState("/");
   const [requiredScope, setRequiredScope] = useState("");
   const [routeMethods, setRouteMethods] = useState("POST");
@@ -106,9 +106,9 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
     setActiveStepIndex(0);
     setDirection(1);
     setOrgName(""); setOrgError(undefined); setCreatedOrg(undefined);
-    setTenantName(""); setTenantID(""); setUpstreamURL(""); setHeaderName("X-Scope-OrgID");
+    setTenantName(""); setTenantID(""); setHeaderName("X-Scope-OrgID");
     setTenantError(undefined); setCreatedTenant(undefined);
-    setRouteSlug(""); setRouteTenantID(tenantIDs[0] ?? "");
+    setRouteSlug(""); setRouteTenantID(tenantIDs[0] ?? ""); setRouteUpstreamURL("");
     setTargetPath("/"); setRequiredScope(""); setRouteMethods("POST");
     setRouteError(undefined); setRouteCreated(false);
     setTokenName(""); setTokenTenantID(tenantIDs[0] ?? "");
@@ -138,7 +138,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
     const response = await fetch("/api/admin/tenants", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: tenantName, tenantID, upstreamURL, headerName, authMode: "header" }),
+      body: JSON.stringify({ name: tenantName, tenantID, headerName, authMode: "header" }),
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) { setTenantError(result?.error || "Tenant creation failed"); return; }
@@ -155,7 +155,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
     const response = await fetch("/api/admin/routes", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ slug: routeSlug, tenantID: routeTenantID, targetPath, requiredScope, methods: routeMethods }),
+      body: JSON.stringify({ slug: routeSlug, tenantID: routeTenantID, upstreamURL: routeUpstreamURL, targetPath, requiredScope, methods: routeMethods }),
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) { setRouteError(result?.error || "Failed to create route."); return; }
@@ -275,28 +275,12 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                             <Input placeholder="acme-prod" required value={tenantID} onChange={(e) => setTenantID(e.target.value)} />
                             <div className="enterprise-note">Stable machine identifier injected upstream.</div>
                           </TextField>
-                          <TextField className="grid gap-2">
-                            <Label>Upstream URL</Label>
-                            <Input placeholder="https://mimir.internal.example" required type="url" value={upstreamURL} onChange={(e) => setUpstreamURL(e.target.value)} />
-                            <div className="enterprise-note">Backend that receives this tenant&apos;s traffic.</div>
-                          </TextField>
-                          <TextField className="grid gap-2">
+                          <TextField className="grid gap-2 md:col-span-2">
                             <Label>Injected header</Label>
                             <Input required value={headerName} onChange={(e) => setHeaderName(e.target.value)} />
                             <div className="enterprise-note">Usually X-Scope-OrgID for Grafana backends.</div>
                           </TextField>
                         </div>
-                        {upstreamURL && tenantID && (
-                          <motion.div
-                            initial={{ opacity: 0, y: -4 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="rounded-xl border border-accent/20 bg-accent/5 px-4 py-2.5 font-mono text-[12px]"
-                          >
-                            <span className="text-muted-foreground">{headerName || "X-Scope-OrgID"}: </span>
-                            <span className="text-accent">{tenantID}</span>
-                            <span className="ml-2 text-muted-foreground/60 truncate">&rarr; {upstreamURL}</span>
-                          </motion.div>
-                        )}
                         {tenantError && <div className="enterprise-feedback enterprise-feedback--error">{tenantError}</div>}
                         <div className="flex items-center justify-between gap-3">
                           {!hasOrg ? (
@@ -304,7 +288,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                           ) : <div />}
                           <Button
                             className="bg-foreground text-background"
-                            isDisabled={!tenantName.trim() || !tenantID.trim() || !upstreamURL.trim() || isPending}
+                            isDisabled={!tenantName.trim() || !tenantID.trim() || isPending}
                             onPress={submitTenant}
                           >
                             {isPending ? "Creating…" : "Save Tenant"}
@@ -352,6 +336,11 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                               </ListBox>
                             </Select.Popover>
                           </Select>
+                          <TextField className="grid gap-2 md:col-span-2">
+                            <Label>Upstream URL</Label>
+                            <Input placeholder="https://mimir.internal.example" required type="url" value={routeUpstreamURL} onChange={(e) => setRouteUpstreamURL(e.target.value)} />
+                            <div className="enterprise-note">Backend that receives traffic for this route.</div>
+                          </TextField>
                           <TextField className="grid gap-2">
                             <Label>Target path</Label>
                             <Input placeholder="/api/v1/push" required value={targetPath} onChange={(e) => setTargetPath(e.target.value)} />
@@ -383,7 +372,7 @@ export function OnboardingModal({ tenantIDs, disabled = false }: OnboardingModal
                           <Button variant="ghost" onPress={goBack}><ArrowLeft size={15} />Back</Button>
                           <Button
                             className="bg-foreground text-background"
-                            isDisabled={!routeSlug.trim() || !routeTenantID || !requiredScope.trim() || isPending}
+                            isDisabled={!routeSlug.trim() || !routeTenantID || !routeUpstreamURL.trim() || !requiredScope.trim() || isPending}
                             onPress={submitRoute}
                           >
                             {isPending ? "Saving…" : "Save Route"}

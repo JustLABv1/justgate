@@ -6,7 +6,7 @@ Welcome to the JustGate documentation wiki. Use the sidebar or the links below t
 
 ## Getting Started
 
-- [Quick Start](Quick-Start) — Run JustGate locally, via Docker, or Docker Compose
+- [Quick Start](Quick-Start) — Run JustGate locally, via Docker, or Docker Compose; the setup wizard walks you through creating the first admin account and configuring OIDC on first run
 - [Configuration](Configuration) — Full reference for all backend and frontend environment variables
 - [Deployment](Deployment) — Kubernetes / Helm guide, deployment modes, and values reference
 
@@ -31,6 +31,8 @@ Welcome to the JustGate documentation wiki. Use the sidebar or the links below t
 ## Overview
 
 JustGate sits in front of any HTTP upstream and enforces multi-tenant access control via scoped bearer tokens. An organisation admin manages tenants, routes, and tokens through a web UI; remote clients authenticate with those tokens and JustGate proxies their requests to the correct upstream — injecting configured tenant identity headers, enforcing rate limits, filtering by IP, and tripping circuit breakers when the upstream is unhealthy.
+
+Each **route** defines its own upstream URL, target path, and required token scope. **Tenants** group related routes and provide a shared identity header; they do not own an upstream URL.
 
 ```
 Client (bearer token)

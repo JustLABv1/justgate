@@ -25,11 +25,11 @@ export default async function RoutesPage() {
             <div className="text-sm text-muted-foreground">{result.data.length} route{result.data.length !== 1 ? "s" : ""}</div>
             <RouteTester routes={result.data} tokens={tokens.data} backendBaseUrl={backendBaseUrl} />
           </div>
-          <CreateRouteForm disabled={result.source !== "backend"} existingCount={result.data.length} tenantIDs={tenants.data.map((tenant) => tenant.tenantID)} />
+          <CreateRouteForm disabled={result.source !== "backend"} existingCount={result.data.length} existingSlugs={result.data.map((r) => r.slug)} tenants={tenants.data} />
         </div>
 
         <div className="rounded-lg border border-border bg-surface">
-          <RoutesTable actionsDisabled={result.source !== "backend"} routes={result.data} tenantIDs={tenants.data.map((tenant) => tenant.tenantID)} backendBaseUrl={backendBaseUrl} />
+          <RoutesTable actionsDisabled={result.source !== "backend"} routes={result.data} tenants={tenants.data} backendBaseUrl={backendBaseUrl} />
         </div>
 
         {result.source !== "backend" && (

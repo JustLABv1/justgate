@@ -1,6 +1,6 @@
 # Route & Token Configuration
 
-This page covers the configuration options for routes and tokens: rate limiting, IP filtering, and tenant auth modes.
+This page covers the configuration options for routes, tokens, and tenants: upstream targeting, rate limiting, IP filtering, tenant auth modes, and load balancing.
 
 ---
 
@@ -19,27 +19,52 @@ Routes are created under **Routes** in the admin UI or via the [API](API-Referen
 
 | Field | Description |
 |---|---|
-| **Slug** | URL-safe identifier used in the proxy path (`/proxy/{slug}/…`). Immutable after creation. |
-| **Tenant** | The tenant this route forwards traffic to. Determines the upstream URL and identity header value. |
+| **Slug** | URL-safe identifier used in the proxy path (`/proxy/{slug}/…`). Supports a two-segment format `tenantID/route-name` for grouping. Immutable after creation. |
+| **Upstream URL** | The base URL of the upstream service this route forwards traffic to (e.g. `http://mimir:9009`). Each route has its own upstream — routes within the same tenant can target different services. |
+| **Target Path** | The path on the upstream that this route maps to (e.g. `/api/v1/push`). It is prepended to any trailing path from the client request. |
+| **Tenant** | The tenant this route belongs to. Tenant determines the auth mode and identity header value injected into upstream requests. |
+| **Required Scope** | The scope string a bearer token must have to access this route. Token scopes must contain this exact value (e.g. `metrics-write`). |
 | **Allowed Methods** | Comma-separated list of HTTP methods this route accepts (e.g. `GET,POST`). Requests with other methods are rejected with `405 Method Not Allowed`. Leave empty to allow all methods. |
+| **Health Check Path** | Path on the upstream used for periodic reachability checks (e.g. `/ready`). Leave blank to disable. Latency history is surfaced in the UI. |
 | **Rate Limit RPM** | Maximum requests per minute. `0` disables route-level rate limiting. |
 | **Rate Limit Burst** | Maximum burst above the steady-state rate. Defaults to RPM/10 when left at `0`. |
 | **Allow CIDRs** | Comma-separated CIDR allowlist. If non-empty, only matching client IPs are allowed through. |
 | **Deny CIDRs** | Comma-separated CIDR denylist. Matching client IPs are rejected with `403 Forbidden`. |
 
+### Proxy request flow
+
+```
+/proxy/{slug}/remaining/path
+               │
+               ▼ resolve slug → routeRecord
+               │
+               ▼ check token scope matches route.requiredScope
+               │
+               ▼ IP allow/deny
+               │
+               ▼ rate limiter (route + token)
+               │
+               ▼ circuit breaker
+               │
+               ▼  forward to route.upstreamURL + route.targetPath + /remaining/path
+               │  inject tenant identity header (authMode)
+               ▼
+         upstream service
+```
+
 ---
 
 ## Tokens
 
-Tokens are scoped credentials issued to clients. Each token is associated with a **tenant** (not a route) and carries the scopes needed to use one or more routes.
+Tokens are scoped credentials issued to clients. Each token is associated with a **tenant** and carries one or more **scopes** that grant access to matching routes.
 
 ### Token fields
 
 | Field | Description |
 |---|---|
 | **Name** | Human-readable label for the token. |
-| **Tenant** | The tenant this token can access. |
-| **Scopes** | One or more route slugs. The token can only proxy through routes whose slug matches a granted scope. |
+| **Tenant** | The tenant this token belongs to. |
+| **Scopes** | One or more scope strings. The token can access any route whose `requiredScope` matches a scope in this list. |
 | **Expires At** | Optional expiry timestamp. Expired tokens are rejected automatically. |
 | **Rate Limit RPM** | Per-token rate limit (requests per minute). Applied in addition to any route-level limit. Token-level limit takes precedence when more restrictive. |
 | **Rate Limit Burst** | Per-token burst size. |
@@ -53,6 +78,10 @@ Tokens are sent as:
 ```
 Authorization: Bearer <token-secret>
 ```
+
+### Scope matching
+
+Token scopes are a list of strings (e.g. `["metrics-write", "logs-read"]`). A route has a single `requiredScope` string (e.g. `metrics-write`). The token is allowed through if its scopes array **contains** the route's `requiredScope`.
 
 ---
 
@@ -115,13 +144,24 @@ Allow CIDRs: 198.51.100.0/27
 
 ---
 
-## Auth Modes (Tenant Identity)
+## Tenants
 
-Each tenant can be configured with one of the following modes for how identity is injected into upstream requests:
+A tenant is a logical grouping that defines how JustGate identifies itself to the upstream service. It does **not** own the upstream URL — individual routes do. However, the tenant controls the identity header injected into every request that flows through its routes.
+
+### Tenant fields
+
+| Field | Description |
+|---|---|
+| **Name** | Human-readable label. |
+| **Tenant ID** | Short URL-safe identifier injected as the identity header value. Also used as the two-segment slug prefix. |
+| **Auth Mode** | How identity is injected into upstream requests. See table below. |
+| **Header Name** | Override the default header name (`X-Scope-OrgID`) for this tenant. |
+
+### Auth Modes (Tenant Identity)
 
 | Mode | Description |
 |---|---|
-| `header` | Tenant identity is injected as a plain request header (default). The header name is configured via `JUST_GATE_TENANT_HEADER` (default: `X-Scope-OrgID`). |
+| `header` | Tenant identity is injected as a plain request header (default). The header name is configured via `JUST_GATE_TENANT_HEADER` (default: `X-Scope-OrgID`) or overridden per-tenant. |
 | `jwt` | Tenant identity is injected as a claim inside a signed JWT header. Useful when the upstream expects a signed token rather than a plain string. |
 | `none` | No identity header is injected. The request is forwarded as-is. Useful when the upstream does not need to know the tenant ID. |
 
@@ -129,7 +169,7 @@ Each tenant can be configured with one of the following modes for how identity i
 
 ## Circuit Breaker
 
-Each tenant's upstream is guarded by a circuit breaker. When the upstream returns repeated errors, the circuit opens and JustGate immediately returns `502 Bad Gateway` without forwarding the request (reducing load on the failing upstream). The circuit enters a half-open state periodically to test recovery.
+Each route's upstream is guarded by a circuit breaker. When the upstream returns repeated errors, the circuit opens and JustGate immediately returns `502 Bad Gateway` without forwarding the request (reducing load on the failing upstream). The circuit enters a half-open state periodically to test recovery.
 
 Circuit breaker state is reflected in the [Live Topology Map](Observability#live-topology-map) — failing edges turn red and clear automatically when the upstream recovers.
 
@@ -137,6 +177,9 @@ Circuit breaker state is reflected in the [Live Topology Map](Observability#live
 
 ## Load Balancing
 
-A tenant can have multiple upstream URLs configured with weights and a primary/replica designation. JustGate distributes traffic across the upstream list according to the configured weights. If a primary upstream fails its health check, traffic shifts to replicas automatically.
+Each route can have multiple upstream URLs configured with **weights** and a **primary/replica** designation. JustGate distributes traffic across the upstream pool according to the configured weights. If the primary upstream fails its health check, traffic shifts to replicas automatically.
 
-Configure additional upstream URLs under the **Tenants → Upstreams** section for a given tenant.
+Configure additional upstream URLs under **Routes → Upstreams** for a given route.
+
+> **Note:** Load balancing is per-route, not per-tenant. Each route manages its own upstream pool independently.
+

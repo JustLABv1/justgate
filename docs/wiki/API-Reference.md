@@ -86,6 +86,18 @@ The JWT is minted by the frontend (`JUST_GATE_BACKEND_JWT_SECRET`) and is short-
 
 ---
 
+## Settings
+
+### Traffic Stats Retention
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/v1/admin/settings/retention` | Get current retention settings (`retentionDays`, `autoEnabled`) |
+| `PATCH` | `/api/v1/admin/settings/retention` | Update retention settings — body: `{"retentionDays": 30, "autoEnabled": true}` |
+| `POST` | `/api/v1/admin/settings/retention/purge` | Immediately purge traffic stat buckets older than the configured retention period — returns `{"purged": N}` |
+
+---
+
 ## Topology
 
 | Method | Path | Description |

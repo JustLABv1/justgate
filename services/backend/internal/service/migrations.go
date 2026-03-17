@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -10,6 +11,10 @@ type migration struct {
 	version    int
 	name       string
 	statements []string
+	// fn is an optional programmatic step that runs inside the migration transaction.
+	// Use it when SQL alone cannot express the logic (e.g. conditional DDL).
+	// dialect is "sqlite" or "postgres".
+	fn func(ctx context.Context, tx *sql.Tx, dialect string) error
 }
 
 var schemaMigrations = []migration{
@@ -415,6 +420,208 @@ var schemaMigrations = []migration{
 			`CREATE INDEX IF NOT EXISTS idx_grant_issuances_issued ON grant_issuances (issued_at DESC)`,
 		},
 	},
+	{
+		version: 15,
+		name:    "add_circuit_breaker_locked",
+		statements: []string{
+			`ALTER TABLE circuit_breakers ADD COLUMN locked BOOLEAN NOT NULL DEFAULT FALSE`,
+		},
+	},
+	{
+		version: 16,
+		name:    "create_system_settings",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS system_settings (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+		},
+	},
+	{
+		version: 17,
+		name:    "ensure_circuit_breaker_locked_column",
+		// Migration 15 added this column but may have been recorded as applied on a
+		// different DB file. This migration repairs any DB where the column is missing.
+		fn: func(ctx context.Context, tx *sql.Tx, dialect string) error {
+			if dialect == "postgres" {
+				// Postgres supports ADD COLUMN IF NOT EXISTS directly.
+				_, err := tx.ExecContext(ctx, `ALTER TABLE circuit_breakers ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT FALSE`)
+				return err
+			}
+			// SQLite: check via PRAGMA before attempting ALTER TABLE.
+			rows, err := tx.QueryContext(ctx, `PRAGMA table_info(circuit_breakers)`)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var cid int
+				var name, colType string
+				var notNull int
+				var dflt sql.NullString
+				var pk int
+				if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+					return err
+				}
+				if name == "locked" {
+					return nil // column already present — nothing to do
+				}
+			}
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			_, err = tx.ExecContext(ctx, `ALTER TABLE circuit_breakers ADD COLUMN locked BOOLEAN NOT NULL DEFAULT FALSE`)
+			return err
+		},
+	},
+	{
+		version: 18,
+		name:    "route_level_upstreams",
+		// Upstream URL moves from tenants to routes: tenants become auth-only config,
+		// routes own the upstream they proxy to. Per-route load-balancing replaces the
+		// old per-tenant tenant_upstreams pool. Health-check path also moves to routes.
+		fn: func(ctx context.Context, tx *sql.Tx, dialect string) error {
+			if dialect == "postgres" {
+				// Move health_check_path to routes before dropping it from tenants.
+				if _, err := tx.ExecContext(ctx, `ALTER TABLE routes ADD COLUMN IF NOT EXISTS health_check_path TEXT NOT NULL DEFAULT ''`); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE routes SET health_check_path = (SELECT health_check_path FROM tenants WHERE tenants.tenant_id = routes.tenant_id LIMIT 1)`); err != nil {
+					return err
+				}
+				// Remove upstream from tenants.
+				if _, err := tx.ExecContext(ctx, `ALTER TABLE tenants DROP COLUMN IF EXISTS upstream_url`); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `ALTER TABLE tenants DROP COLUMN IF EXISTS health_check_path`); err != nil {
+					return err
+				}
+				// Add route_upstreams (per-route load-balancing pool, replaces tenant_upstreams).
+				if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS route_upstreams (
+					id TEXT PRIMARY KEY,
+					route_id TEXT NOT NULL,
+					upstream_url TEXT NOT NULL,
+					weight INTEGER NOT NULL DEFAULT 1,
+					is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+					created_at TIMESTAMP NOT NULL
+				)`); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_route_upstreams_route ON route_upstreams (route_id)`); err != nil {
+					return err
+				}
+				// Migrate existing tenant_upstreams → route_upstreams (one entry per matching route).
+				if _, err := tx.ExecContext(ctx, `INSERT INTO route_upstreams (id, route_id, upstream_url, weight, is_primary, created_at)
+					SELECT tu.id || '-' || r.id, r.id, tu.upstream_url, tu.weight, tu.is_primary, tu.created_at
+					FROM tenant_upstreams tu
+					JOIN routes r ON r.tenant_id = tu.tenant_id`); err != nil {
+					return err
+				}
+				// Change upstream_health primary key from tenant_id to route_id.
+				if _, err := tx.ExecContext(ctx, `ALTER TABLE upstream_health RENAME COLUMN tenant_id TO route_id`); err != nil {
+					return err
+				}
+				// Update upstream_health rows to use route.id instead of tenant_id string.
+				if _, err := tx.ExecContext(ctx, `UPDATE upstream_health SET route_id = COALESCE((SELECT r.id FROM routes r WHERE r.tenant_id = upstream_health.route_id LIMIT 1), upstream_health.route_id)`); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS tenant_upstreams`)
+				return err
+			}
+
+			// SQLite: remove upstream_url and health_check_path from tenants (requires table recreate),
+			// add health_check_path to routes, add route_upstreams, migrate data, drop tenant_upstreams.
+			stmts := []string{
+				// Add health_check_path to routes, backfill from tenants.
+				`ALTER TABLE routes ADD COLUMN health_check_path TEXT NOT NULL DEFAULT ''`,
+				`UPDATE routes SET health_check_path = COALESCE((SELECT health_check_path FROM tenants WHERE tenants.tenant_id = routes.tenant_id LIMIT 1), '')`,
+				// Recreate tenants without upstream_url and health_check_path.
+				`CREATE TABLE IF NOT EXISTS tenants_new (
+					id TEXT PRIMARY KEY,
+					name TEXT NOT NULL,
+					tenant_id TEXT NOT NULL UNIQUE,
+					auth_mode TEXT NOT NULL,
+					header_name TEXT NOT NULL,
+					created_at TIMESTAMP NOT NULL,
+					org_id TEXT NOT NULL DEFAULT ''
+				)`,
+				`INSERT INTO tenants_new SELECT id, name, tenant_id, auth_mode, header_name, created_at, org_id FROM tenants`,
+				`DROP TABLE tenants`,
+				`ALTER TABLE tenants_new RENAME TO tenants`,
+				`CREATE INDEX IF NOT EXISTS idx_tenants_org ON tenants (org_id)`,
+				// Add route_upstreams table.
+				`CREATE TABLE IF NOT EXISTS route_upstreams (
+					id TEXT PRIMARY KEY,
+					route_id TEXT NOT NULL,
+					upstream_url TEXT NOT NULL,
+					weight INTEGER NOT NULL DEFAULT 1,
+					is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+					created_at TIMESTAMP NOT NULL
+				)`,
+				`CREATE INDEX IF NOT EXISTS idx_route_upstreams_route ON route_upstreams (route_id)`,
+				// Migrate tenant_upstreams → route_upstreams.
+				`INSERT INTO route_upstreams (id, route_id, upstream_url, weight, is_primary, created_at)
+					SELECT tu.id || '-' || r.id, r.id, tu.upstream_url, tu.weight, tu.is_primary, tu.created_at
+					FROM tenant_upstreams tu
+					JOIN routes r ON r.tenant_id = tu.tenant_id`,
+				// Recreate upstream_health with route_id instead of tenant_id.
+				`CREATE TABLE upstream_health_new (
+					route_id TEXT NOT NULL,
+					upstream_url TEXT NOT NULL DEFAULT '',
+					status TEXT NOT NULL DEFAULT 'unknown',
+					last_checked_at TIMESTAMP NOT NULL,
+					latency_ms INTEGER NOT NULL DEFAULT 0,
+					error TEXT NOT NULL DEFAULT '',
+					PRIMARY KEY (route_id, upstream_url)
+				)`,
+				`INSERT INTO upstream_health_new (route_id, upstream_url, status, last_checked_at, latency_ms, error)
+					SELECT COALESCE((SELECT r.id FROM routes r WHERE r.tenant_id = uh.tenant_id LIMIT 1), uh.tenant_id),
+					       uh.upstream_url, uh.status, uh.last_checked_at, uh.latency_ms, uh.error
+					FROM upstream_health uh`,
+				`DROP TABLE upstream_health`,
+				`ALTER TABLE upstream_health_new RENAME TO upstream_health`,
+				`DROP TABLE IF EXISTS tenant_upstreams`,
+			}
+			for _, stmt := range stmts {
+				if _, err := tx.ExecContext(ctx, stmt); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
+	{
+		version: 19,
+		name:    "fix_health_history_route_id",
+		// upstream_health_history was created with tenant_id; the code expects route_id.
+		// Recreate the table with the correct schema and re-map tenant_id → route_id.
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS upstream_health_history_new (
+				id TEXT PRIMARY KEY,
+				route_id TEXT NOT NULL,
+				status TEXT NOT NULL,
+				latency_ms INTEGER NOT NULL DEFAULT 0,
+				error TEXT NOT NULL DEFAULT '',
+				checked_at TIMESTAMP NOT NULL
+			)`,
+			`INSERT INTO upstream_health_history_new (id, route_id, status, latency_ms, error, checked_at)
+				SELECT h.id,
+				       COALESCE((SELECT r.id FROM routes r WHERE r.tenant_id = h.tenant_id LIMIT 1), h.tenant_id),
+				       h.status, h.latency_ms, h.error, h.checked_at
+				FROM upstream_health_history h`,
+			`DROP TABLE upstream_health_history`,
+			`ALTER TABLE upstream_health_history_new RENAME TO upstream_health_history`,
+			`CREATE INDEX IF NOT EXISTS idx_health_history_route_time ON upstream_health_history (route_id, checked_at DESC)`,
+		},
+	},
+	{
+		version: 20,
+		name:    "oidc_config_admin_group",
+		statements: []string{
+			`ALTER TABLE oidc_config ADD COLUMN admin_group TEXT NOT NULL DEFAULT ''`,
+		},
+	},
 }
 
 func (store *sqlStore) runMigrations(ctx context.Context) error {
@@ -456,6 +663,13 @@ func (store *sqlStore) runMigrations(ctx context.Context) error {
 
 		for _, statement := range migration.statements {
 			if _, err := transaction.ExecContext(ctx, store.rebind(statement)); err != nil {
+				_ = transaction.Rollback()
+				return fmt.Errorf("apply migration %d (%s): %w", migration.version, migration.name, err)
+			}
+		}
+
+		if migration.fn != nil {
+			if err := migration.fn(ctx, transaction, store.dialect); err != nil {
 				_ = transaction.Rollback()
 				return fmt.Errorf("apply migration %d (%s): %w", migration.version, migration.name, err)
 			}

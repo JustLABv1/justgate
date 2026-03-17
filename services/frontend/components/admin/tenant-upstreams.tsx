@@ -1,12 +1,12 @@
 "use client";
 
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
-import type { TenantUpstream } from "@/lib/contracts";
+import type { RouteUpstream } from "@/lib/contracts";
 import { Button, Form, Input, Label, TextField } from "@heroui/react";
 import { Info, Pencil, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState, useTransition } from "react";
 
-interface TenantUpstreamsProps {
+interface RouteUpstreamsProps {
   tenantInternalID: string;
 }
 
@@ -16,8 +16,8 @@ function hostLabel(url: string) {
   try { return new URL(url).host; } catch { return url; }
 }
 
-export function TenantUpstreams({ tenantInternalID }: TenantUpstreamsProps) {
-  const [upstreams, setUpstreams] = useState<TenantUpstream[]>([]);
+export function RouteUpstreams({ tenantInternalID }: RouteUpstreamsProps) {
+  const [upstreams, setUpstreams] = useState<RouteUpstream[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [isAdding, setIsAdding] = useState(false);
@@ -38,7 +38,7 @@ export function TenantUpstreams({ tenantInternalID }: TenantUpstreamsProps) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error || `Error ${res.status}`);
       }
-      setUpstreams((await res.json()) as TenantUpstream[]);
+      setUpstreams((await res.json()) as RouteUpstream[]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load upstreams");
     } finally {
@@ -68,7 +68,7 @@ export function TenantUpstreams({ tenantInternalID }: TenantUpstreamsProps) {
     });
   }
 
-  function startEdit(u: TenantUpstream) {
+  function startEdit(u: RouteUpstream) {
     setEditingID(u.id);
     setEditForm({ upstreamURL: u.upstreamURL, weight: String(u.weight) });
     setEditError(undefined);

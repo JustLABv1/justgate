@@ -23,16 +23,8 @@ export interface TenantSummary {
   id: string;
   name: string;
   tenantID: string;
-  upstreamURL: string;
   authMode: string;
   headerName: string;
-  healthCheckPath?: string;
-  upstreamStatus?: string;
-  upstreamLatencyMs?: number;
-  upstreamLastChecked?: string;
-  upstreamError?: string;
-  /** Additional configured upstream targets with per-URL health status */
-  upstreams?: TenantUpstream[];
 }
 
 export interface RouteSummary {
@@ -40,6 +32,8 @@ export interface RouteSummary {
   slug: string;
   targetPath: string;
   tenantID: string;
+  upstreamURL: string;
+  healthCheckPath?: string;
   requiredScope: string;
   methods: string[];
   rateLimitRPM: number;
@@ -47,6 +41,7 @@ export interface RouteSummary {
   allowCIDRs: string;
   denyCIDRs: string;
   circuitBreakerState?: string;
+  circuitBreakerLocked?: boolean;
 }
 
 export interface TokenSummary {
@@ -88,6 +83,22 @@ export interface QueryResult<T> {
   error?: string;
 }
 
+export interface UpstreamHealthEntry {
+  routeID: string;
+  upstreamURL: string;
+  status: "up" | "down" | string;
+  lastCheckedAt: string;
+  latencyMs: number;
+  error?: string;
+}
+
+export interface RouteUpstreamEntry {
+  id: string;
+  routeID: string;
+  upstreamURL: string;
+  weight: number;
+}
+
 export interface TopologySnapshot {
   generatedAt: string;
   runtime: RuntimeState;
@@ -96,6 +107,8 @@ export interface TopologySnapshot {
   routes: RouteSummary[];
   tokens: TokenSummary[];
   auditEvents: AuditEvent[];
+  upstreamHealth: UpstreamHealthEntry[];
+  routeUpstreams: RouteUpstreamEntry[];
 }
 
 export const fallbackOverview: AdminOverview = {
@@ -129,6 +142,8 @@ export const fallbackTopology: TopologySnapshot = {
   routes: fallbackRoutes,
   tokens: fallbackTokens,
   auditEvents: fallbackAuditEvents,
+  upstreamHealth: [],
+  routeUpstreams: [],
 };
 
 export interface OrgSummary {
@@ -160,6 +175,7 @@ export interface OIDCConfig {
   hasSecret: boolean;
   displayName: string;
   groupsClaim: string;
+  adminGroup: string;
   enabled: boolean;
   updatedAt: string;
   /** True when the values are sourced from environment variables (no DB record yet). */
@@ -256,9 +272,9 @@ export interface HealthHistoryEntry {
   checkedAt: string;
 }
 
-// ── Tenant Upstreams (Load Balancing) ──────────────────────────
+// ── Route Upstreams (Load Balancing) ──────────────────────────
 
-export interface TenantUpstream {
+export interface RouteUpstream {
   id: string;
   upstreamURL: string;
   weight: number;
@@ -288,6 +304,7 @@ export interface CircuitBreakerStatus {
   slug: string;
   tenantID: string;
   state: string;
+  locked: boolean;
   failureCount: number;
   lastFailure: string;
   lastSuccess: string;
@@ -451,6 +468,17 @@ export interface GrantIssuance {
   tokenID: string;
   agentName: string;
   issuedAt: string;
+}
+
+// ── Data Retention ───────────────────────────────────────────────────
+
+export interface RetentionSettings {
+  retentionDays: number;
+  autoEnabled: boolean;
+}
+
+export interface PurgeResult {
+  purged: number;
 }
 
 // ── Org IP Rules ─────────────────────────────────────────────────

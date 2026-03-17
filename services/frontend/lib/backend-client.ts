@@ -29,10 +29,11 @@ import {
     type ProtectedApp,
     type QueryResult,
     type ReplicaInfo,
+    type RetentionSettings,
     type RouteSummary,
+    type RouteUpstream,
     type SearchResults,
     type TenantSummary,
-    type TenantUpstream,
     type TokenSummary,
     type TokenTrafficStat,
     type TopologySnapshot,
@@ -151,34 +152,18 @@ export function getOrgMembers(orgID: string) {
 }
 
 export async function getTopology(): Promise<QueryResult<TopologySnapshot>> {
-  const [overview, tenants, routes, tokens, auditEvents] = await Promise.all([
-    getOverview(),
-    getTenants(),
-    getRoutes(),
-    getTokens(),
-    getAuditEvents(),
-  ]);
-
-  const allLive = [overview, tenants, routes, tokens, auditEvents].every((result) => result.source === "backend");
-  const errors = [overview, tenants, routes, tokens, auditEvents]
-    .map((result) => result.error)
-    .filter(Boolean)
-    .join(" | ");
-
-  return {
-    data: {
-      generatedAt: overview.data.generatedAt,
-      runtime: overview.data.runtime,
-      stats: overview.data.stats,
-      tenants: tenants.data,
-      routes: routes.data,
-      tokens: tokens.data,
-      auditEvents: auditEvents.data,
-    },
-    source: allLive ? "backend" : "fallback",
-    backendUrl,
-    error: errors || undefined,
-  } satisfies QueryResult<TopologySnapshot>;
+  const result = await fetchBackend<TopologySnapshot>("/api/v1/admin/topology", {
+    generatedAt: fallbackOverview.generatedAt,
+    runtime: fallbackOverview.runtime,
+    stats: fallbackOverview.stats,
+    tenants: fallbackTenants,
+    routes: fallbackRoutes,
+    tokens: fallbackTokens,
+    auditEvents: [],
+    upstreamHealth: [],
+    routeUpstreams: [],
+  });
+  return result;
 }
 
 const fallbackOIDCConfig: OIDCConfig = {
@@ -187,12 +172,20 @@ const fallbackOIDCConfig: OIDCConfig = {
   hasSecret: false,
   displayName: "Single Sign-On",
   groupsClaim: "",
+  adminGroup: "",
   enabled: false,
   updatedAt: "",
 };
 
 export function getOIDCConfig() {
   return fetchBackend<OIDCConfig>("/api/v1/admin/settings/oidc", fallbackOIDCConfig);
+}
+
+export function getRetentionSettings() {
+  return fetchBackend<RetentionSettings>("/api/v1/admin/settings/retention", {
+    retentionDays: 30,
+    autoEnabled: false,
+  });
 }
 
 export function getOIDCOrgMappings() {
@@ -234,11 +227,11 @@ export function getHealthHistory(tenantID: string) {
   );
 }
 
-// ── Tenant Upstreams ────────────────────────────────────────────
+// ── Route Upstreams ────────────────────────────────────────────
 
-export function getTenantUpstreams(tenantInternalID: string) {
-  return fetchBackend<TenantUpstream[]>(
-    `/api/v1/admin/tenant-upstreams/${encodeURIComponent(tenantInternalID)}`,
+export function getRouteUpstreams(routeID: string) {
+  return fetchBackend<RouteUpstream[]>(
+    `/api/v1/admin/route-upstreams/${encodeURIComponent(routeID)}`,
     [],
   );
 }

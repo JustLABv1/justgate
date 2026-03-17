@@ -141,9 +141,9 @@ func (s *Service) handleHealthHistory(writer http.ResponseWriter, request *http.
 		return
 	}
 
-	tenantID := request.URL.Query().Get("tenantID")
-	if tenantID == "" {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "tenantID is required"})
+	routeID := request.URL.Query().Get("routeID")
+	if routeID == "" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "routeID is required"})
 		return
 	}
 
@@ -152,7 +152,7 @@ func (s *Service) handleHealthHistory(writer http.ResponseWriter, request *http.
 		limit = 1000
 	}
 
-	history, err := s.store.ListHealthHistory(request.Context(), tenantID, limit)
+	history, err := s.store.ListHealthHistory(request.Context(), routeID, limit)
 	if err != nil {
 		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load health history"})
 		return
@@ -160,7 +160,7 @@ func (s *Service) handleHealthHistory(writer http.ResponseWriter, request *http.
 
 	type historyEvent struct {
 		ID        string `json:"id"`
-		TenantID  string `json:"tenantID"`
+		RouteID   string `json:"routeID"`
 		Status    string `json:"status"`
 		LatencyMs int    `json:"latencyMs"`
 		Error     string `json:"error"`
@@ -171,7 +171,7 @@ func (s *Service) handleHealthHistory(writer http.ResponseWriter, request *http.
 	for _, h := range history {
 		items = append(items, historyEvent{
 			ID:        h.ID,
-			TenantID:  h.TenantID,
+			RouteID:   h.RouteID,
 			Status:    h.Status,
 			LatencyMs: h.LatencyMs,
 			Error:     h.Error,
@@ -182,45 +182,27 @@ func (s *Service) handleHealthHistory(writer http.ResponseWriter, request *http.
 	writeJSON(writer, http.StatusOK, items)
 }
 
-// ── Tenant upstreams (load balancing) ──────────────────────────────────
+// ── Route upstreams (load balancing) ──────────────────────────────────
 
-func (s *Service) handleTenantUpstreams(writer http.ResponseWriter, request *http.Request) {
-	// Extract tenantID from path: /api/v1/admin/tenant-upstreams/{tenantInternalID}
-	tenantInternalID := strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tenant-upstreams/")
-	tenantInternalID = strings.Trim(tenantInternalID, "/")
-	if tenantInternalID == "" || strings.Contains(tenantInternalID, "/") {
-		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "tenant not found"})
-		return
-	}
-
-	// We need to look up the tenant_id (external) from the internal ID
-	tenants, err := s.store.ListTenants(request.Context())
-	if err != nil {
-		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to look up tenant"})
-		return
-	}
-	var tenantID string
-	for _, t := range tenants {
-		if t.ID == tenantInternalID {
-			tenantID = t.TenantID
-			break
-		}
-	}
-	if tenantID == "" {
-		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "tenant not found"})
+func (s *Service) handleRouteUpstreams(writer http.ResponseWriter, request *http.Request) {
+	// Extract routeID from path: /api/v1/admin/route-upstreams/{routeID}
+	routeID := strings.TrimPrefix(request.URL.Path, "/api/v1/admin/route-upstreams/")
+	routeID = strings.Trim(routeID, "/")
+	if routeID == "" || strings.Contains(routeID, "/") {
+		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "route not found"})
 		return
 	}
 
 	switch request.Method {
 	case http.MethodGet:
-		upstreams, err := s.store.ListTenantUpstreams(request.Context(), tenantID)
+		upstreams, err := s.store.ListRouteUpstreams(request.Context(), routeID)
 		if err != nil {
 			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to load upstreams"})
 			return
 		}
-		items := make([]tenantSummaryUpstream, 0, len(upstreams))
+		items := make([]routeSummaryUpstream, 0, len(upstreams))
 		for _, u := range upstreams {
-			items = append(items, tenantSummaryUpstream{
+			items = append(items, routeSummaryUpstream{
 				ID:          u.ID,
 				UpstreamURL: u.UpstreamURL,
 				Weight:      u.Weight,
@@ -246,17 +228,17 @@ func (s *Service) handleTenantUpstreams(writer http.ResponseWriter, request *htt
 		if payload.Weight <= 0 {
 			payload.Weight = 1
 		}
-		upstream := tenantUpstreamRecord{
-			TenantID:    tenantID,
+		upstream := routeUpstreamRecord{
+			RouteID:     routeID,
 			UpstreamURL: payload.UpstreamURL,
 			Weight:      payload.Weight,
 			IsPrimary:   payload.IsPrimary,
 		}
-		if err := s.store.CreateTenantUpstream(request.Context(), upstream); err != nil {
+		if err := s.store.CreateRouteUpstream(request.Context(), upstream); err != nil {
 			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to create upstream"})
 			return
 		}
-		s.recordAdminAction(request.Context(), "create_upstream", "tenant_upstream", tenantID, payload.UpstreamURL)
+		s.recordAdminAction(request.Context(), "create_upstream", "route_upstream", routeID, payload.UpstreamURL)
 		writer.WriteHeader(http.StatusCreated)
 
 	default:
@@ -264,9 +246,9 @@ func (s *Service) handleTenantUpstreams(writer http.ResponseWriter, request *htt
 	}
 }
 
-func (s *Service) handleTenantUpstreamByID(writer http.ResponseWriter, request *http.Request) {
-	// Path: /api/v1/admin/tenant-upstream/{upstreamID}
-	upstreamID := strings.TrimPrefix(request.URL.Path, "/api/v1/admin/tenant-upstream/")
+func (s *Service) handleRouteUpstreamByID(writer http.ResponseWriter, request *http.Request) {
+	// Path: /api/v1/admin/route-upstream/{upstreamID}
+	upstreamID := strings.TrimPrefix(request.URL.Path, "/api/v1/admin/route-upstream/")
 	upstreamID = strings.Trim(upstreamID, "/")
 	if upstreamID == "" || strings.Contains(upstreamID, "/") {
 		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "not found"})
@@ -291,7 +273,7 @@ func (s *Service) handleTenantUpstreamByID(writer http.ResponseWriter, request *
 		if payload.Weight <= 0 {
 			payload.Weight = 1
 		}
-		if err := s.store.UpdateTenantUpstream(request.Context(), upstreamID, payload.UpstreamURL, payload.Weight, payload.IsPrimary); err != nil {
+		if err := s.store.UpdateRouteUpstream(request.Context(), upstreamID, payload.UpstreamURL, payload.Weight, payload.IsPrimary); err != nil {
 			status := http.StatusInternalServerError
 			if err.Error() == "upstream not found" {
 				status = http.StatusNotFound
@@ -299,11 +281,11 @@ func (s *Service) handleTenantUpstreamByID(writer http.ResponseWriter, request *
 			writeJSON(writer, status, map[string]string{"error": err.Error()})
 			return
 		}
-		s.recordAdminAction(request.Context(), "update_upstream", "tenant_upstream", upstreamID, payload.UpstreamURL)
+		s.recordAdminAction(request.Context(), "update_upstream", "route_upstream", upstreamID, payload.UpstreamURL)
 		writer.WriteHeader(http.StatusNoContent)
 
 	case http.MethodDelete:
-		if err := s.store.DeleteTenantUpstream(request.Context(), upstreamID); err != nil {
+		if err := s.store.DeleteRouteUpstream(request.Context(), upstreamID); err != nil {
 			status := http.StatusInternalServerError
 			if err.Error() == "upstream not found" {
 				status = http.StatusNotFound
@@ -311,7 +293,7 @@ func (s *Service) handleTenantUpstreamByID(writer http.ResponseWriter, request *
 			writeJSON(writer, status, map[string]string{"error": err.Error()})
 			return
 		}
-		s.recordAdminAction(request.Context(), "delete_upstream", "tenant_upstream", upstreamID, "")
+		s.recordAdminAction(request.Context(), "delete_upstream", "route_upstream", upstreamID, "")
 		writer.WriteHeader(http.StatusNoContent)
 
 	default:
@@ -369,6 +351,12 @@ func (s *Service) handleSessionRevoke(writer http.ResponseWriter, request *http.
 		return
 	}
 
+	identity := adminIdentityFromContext(request.Context())
+	if identity == nil {
+		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
 	sessionID := strings.TrimPrefix(request.URL.Path, "/api/v1/admin/sessions/")
 	sessionID = strings.TrimSuffix(sessionID, "/revoke")
 	if sessionID == "" {
@@ -376,11 +364,12 @@ func (s *Service) handleSessionRevoke(writer http.ResponseWriter, request *http.
 		return
 	}
 
-	if err := s.store.RevokeAdminSession(request.Context(), sessionID); err != nil {
+	if err := s.store.RevokeAdminSession(request.Context(), identity.Subject, sessionID); err != nil {
 		status := http.StatusInternalServerError
 		if err.Error() == "session not found" {
 			status = http.StatusNotFound
 		}
+		s.logger.Error("failed to revoke session", "session_id", sessionID, "user", identity.Subject, "error", err)
 		writeJSON(writer, status, map[string]string{"error": err.Error()})
 		return
 	}
@@ -494,6 +483,7 @@ func (s *Service) handleCircuitBreakers(writer http.ResponseWriter, request *htt
 		Slug     string `json:"slug"`
 		TenantID string `json:"tenantID"`
 		State    string `json:"state"`
+		Locked   bool   `json:"locked"`
 	}
 
 	items := make([]cbStatus, 0, len(routes))
@@ -503,6 +493,7 @@ func (s *Service) handleCircuitBreakers(writer http.ResponseWriter, request *htt
 			Slug:     r.Slug,
 			TenantID: r.TenantID,
 			State:    s.circuitBreakers.GetState(r.ID),
+			Locked:   s.circuitBreakers.GetLocked(r.ID),
 		})
 	}
 
@@ -557,8 +548,14 @@ func (s *Service) handleCircuitBreakerByID(writer http.ResponseWriter, request *
 		return
 	}
 
-	s.circuitBreakers.ForceState(routeID, payload.State)
-	writeJSON(writer, http.StatusOK, map[string]string{"state": payload.State})
+	if err := s.circuitBreakers.ForceState(request.Context(), routeID, payload.State); err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "failed to persist circuit breaker state"})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"state":  payload.State,
+		"locked": payload.State == cbStateOpen,
+	})
 }
 
 // ── Token expiry / lifecycle ───────────────────────────────────────────
@@ -578,19 +575,29 @@ func (s *Service) handleExpiringTokens(writer http.ResponseWriter, request *http
 		return
 	}
 
-	items := make([]tokenSummary, 0, len(tokens))
+	type expiringTokenItem struct {
+		ID              string   `json:"id"`
+		Name            string   `json:"name"`
+		TenantID        string   `json:"tenantID"`
+		Scopes          []string `json:"scopes"`
+		ExpiresAt       string   `json:"expiresAt"`
+		DaysUntilExpiry int      `json:"daysUntilExpiry"`
+	}
+
+	now := time.Now().UTC()
+	items := make([]expiringTokenItem, 0, len(tokens))
 	for _, t := range tokens {
-		items = append(items, tokenSummary{
-			ID:             t.ID,
-			Name:           t.Name,
-			TenantID:       t.TenantID,
-			Scopes:         t.Scopes,
-			ExpiresAt:      t.ExpiresAt.Format(time.RFC3339),
-			LastUsedAt:     t.LastUsedAt.Format(time.RFC3339),
-			Preview:        t.Preview,
-			Active:         t.Active,
-			RateLimitRPM:   t.RateLimitRPM,
-			RateLimitBurst: t.RateLimitBurst,
+		days := int(t.ExpiresAt.UTC().Sub(now).Hours() / 24)
+		if days < 0 {
+			days = 0
+		}
+		items = append(items, expiringTokenItem{
+			ID:              t.ID,
+			Name:            t.Name,
+			TenantID:        t.TenantID,
+			Scopes:          t.Scopes,
+			ExpiresAt:       t.ExpiresAt.Format(time.RFC3339),
+			DaysUntilExpiry: days,
 		})
 	}
 
@@ -905,13 +912,11 @@ func (s *Service) handleSearch(writer http.ResponseWriter, request *http.Request
 	for _, t := range tenants {
 		if strings.Contains(strings.ToLower(t.Name), lower) || strings.Contains(strings.ToLower(t.TenantID), lower) {
 			out.Tenants = append(out.Tenants, tenantSummary{
-				ID:              t.ID,
-				Name:            t.Name,
-				TenantID:        t.TenantID,
-				Upstream:        t.Upstream,
-				AuthMode:        t.AuthMode,
-				HeaderName:      t.HeaderName,
-				HealthCheckPath: t.HealthCheckPath,
+				ID:         t.ID,
+				Name:       t.Name,
+				TenantID:   t.TenantID,
+				AuthMode:   t.AuthMode,
+				HeaderName: t.HeaderName,
 			})
 		}
 	}
