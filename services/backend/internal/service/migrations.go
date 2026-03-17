@@ -615,6 +615,13 @@ var schemaMigrations = []migration{
 			`CREATE INDEX IF NOT EXISTS idx_health_history_route_time ON upstream_health_history (route_id, checked_at DESC)`,
 		},
 	},
+	{
+		version: 20,
+		name:    "oidc_config_admin_group",
+		statements: []string{
+			`ALTER TABLE oidc_config ADD COLUMN admin_group TEXT NOT NULL DEFAULT ''`,
+		},
+	},
 }
 
 func (store *sqlStore) runMigrations(ctx context.Context) error {

@@ -351,6 +351,12 @@ func (s *Service) handleSessionRevoke(writer http.ResponseWriter, request *http.
 		return
 	}
 
+	identity := adminIdentityFromContext(request.Context())
+	if identity == nil {
+		writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
 	sessionID := strings.TrimPrefix(request.URL.Path, "/api/v1/admin/sessions/")
 	sessionID = strings.TrimSuffix(sessionID, "/revoke")
 	if sessionID == "" {
@@ -358,11 +364,12 @@ func (s *Service) handleSessionRevoke(writer http.ResponseWriter, request *http.
 		return
 	}
 
-	if err := s.store.RevokeAdminSession(request.Context(), sessionID); err != nil {
+	if err := s.store.RevokeAdminSession(request.Context(), identity.Subject, sessionID); err != nil {
 		status := http.StatusInternalServerError
 		if err.Error() == "session not found" {
 			status = http.StatusNotFound
 		}
+		s.logger.Error("failed to revoke session", "session_id", sessionID, "user", identity.Subject, "error", err)
 		writeJSON(writer, status, map[string]string{"error": err.Error()})
 		return
 	}
@@ -568,19 +575,29 @@ func (s *Service) handleExpiringTokens(writer http.ResponseWriter, request *http
 		return
 	}
 
-	items := make([]tokenSummary, 0, len(tokens))
+	type expiringTokenItem struct {
+		ID              string   `json:"id"`
+		Name            string   `json:"name"`
+		TenantID        string   `json:"tenantID"`
+		Scopes          []string `json:"scopes"`
+		ExpiresAt       string   `json:"expiresAt"`
+		DaysUntilExpiry int      `json:"daysUntilExpiry"`
+	}
+
+	now := time.Now().UTC()
+	items := make([]expiringTokenItem, 0, len(tokens))
 	for _, t := range tokens {
-		items = append(items, tokenSummary{
-			ID:             t.ID,
-			Name:           t.Name,
-			TenantID:       t.TenantID,
-			Scopes:         t.Scopes,
-			ExpiresAt:      t.ExpiresAt.Format(time.RFC3339),
-			LastUsedAt:     t.LastUsedAt.Format(time.RFC3339),
-			Preview:        t.Preview,
-			Active:         t.Active,
-			RateLimitRPM:   t.RateLimitRPM,
-			RateLimitBurst: t.RateLimitBurst,
+		days := int(t.ExpiresAt.UTC().Sub(now).Hours() / 24)
+		if days < 0 {
+			days = 0
+		}
+		items = append(items, expiringTokenItem{
+			ID:              t.ID,
+			Name:            t.Name,
+			TenantID:        t.TenantID,
+			Scopes:          t.Scopes,
+			ExpiresAt:       t.ExpiresAt.Format(time.RFC3339),
+			DaysUntilExpiry: days,
 		})
 	}
 

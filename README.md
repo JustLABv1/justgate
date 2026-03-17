@@ -57,14 +57,15 @@ Client (bearer token)
 ## Features
 
 ### Core proxy
-- **Multi-tenancy** — unlimited tenants, each with their own upstream URL and identity header value
+- **Multi-tenancy** — unlimited tenants; each tenant groups related routes and provides a shared identity header value
+- **Per-route upstream URLs** — each route defines its own upstream URL and target path; routes within the same tenant can point to different services
 - **Scoped bearer tokens** — fine-grained scopes per route; expiry, revocation, and per-token rate limits
 - **Slug-based routes** — stable `GET /proxy/{slug}/…` entry points mapped to tenant + upstream path
 - **Method allowlisting** — restrict which HTTP methods a route accepts
 - **IP allow / deny lists** — per-route CIDR allowlists and denylists (IPv4 and IPv6)
 - **Rate limiting** — configurable requests-per-minute (RPM) and burst; defined at route level or token level; Redis-backed or in-memory
 - **Circuit breaker** — automatically stops forwarding to unhealthy upstreams and recovers when they come back
-- **Load balancing** — multiple weighted upstream URLs per tenant with primary/replica designation
+- **Load balancing** — multiple weighted upstream URLs per route with primary/replica designation
 
 ### Observability
 - **Audit log** — every proxied request recorded with method, status, upstream URL, and latency; paginated
@@ -92,6 +93,7 @@ Client (bearer token)
 - **Session management** — view and revoke active admin sessions
 
 ### Operations
+- **First-run setup wizard** — browser-based wizard on first start: create the initial admin account and configure OIDC without any env vars
 - **Persistence** — SQLite (zero-config, default) or PostgreSQL
 - **Zero-downtime schema migrations** — versioned migrations run automatically on startup
 - **Single binary backend** — one Go binary, no external runtime dependencies beyond the database
@@ -177,7 +179,7 @@ EOF
 pnpm dev
 ```
 
-Open `http://localhost:3000` and register the first admin account.
+Open `http://localhost:3000`. The **setup wizard** guides you through creating the first admin account and optionally configuring OIDC — no extra env vars required for those steps.
 
 ### Docker (single container)
 

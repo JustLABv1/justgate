@@ -598,11 +598,15 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
     );
     // Only animate the upstream edge when the request was actually forwarded.
     // Gateway-level rejections (auth 401, IP/scope 403, CB-blocked 503, rate limit 429) never reach the upstream.
-    const hotUpstreamOrigins = new Set(
+    // Key on routeSlug::origin so two upstreams sharing the same hostname (e.g. loki-get vs loki-write)
+    // don't cross-animate each other.
+    const hotUpstreamKeys = new Set(
       activeAudits
         .filter((e) => e.status !== 401 && e.status !== 403 && e.status !== 429 && e.status !== 503 && e.upstreamURL)
         .map((e) => {
-          try { return new URL(e.upstreamURL).origin; } catch { return e.upstreamURL; }
+          let origin = e.upstreamURL;
+          try { origin = new URL(e.upstreamURL).origin; } catch { /* keep full URL */ }
+          return `${e.routeSlug}::${origin}`;
         }),
     );
 
@@ -656,7 +660,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
         from: entry.fromNodeId,
         to: entry.nodeId,
         kind: "upstream" as const,
-        hot: hotUpstreamOrigins.has(upstreamOrigin),
+        hot: hotUpstreamKeys.has(`${entry.routeSlug}::${upstreamOrigin}`),
         error: entry.isDown,
         reachable: entry.isReachable,
         label: entry.routeSlug,

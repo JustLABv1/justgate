@@ -81,6 +81,11 @@ func (store *sqlStore) CreateLocalAdmin(ctx context.Context, account localAdminR
 	return account, nil
 }
 
+func (store *sqlStore) CountLocalAdmins(ctx context.Context) (int, error) {
+	var count int
+	return count, store.queryRowContext(ctx, `SELECT COUNT(*) FROM local_admin_users`).Scan(&count)
+}
+
 func (store *sqlStore) GetLocalAdminByEmail(ctx context.Context, email string) (localAdminRecord, bool, error) {
 	row := store.queryRowContext(ctx, `SELECT id, email, name, password_hash, created_at FROM local_admin_users WHERE email = ? LIMIT 1`, email)
 	var account localAdminRecord
@@ -511,7 +516,6 @@ func (store *sqlStore) RecordAudit(ctx context.Context, audit auditRecord) error
 	return err
 }
 
-
 func (store *sqlStore) execContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	return store.db.ExecContext(ctx, store.rebind(query), args...)
 }
@@ -822,8 +826,8 @@ func generateInviteCode() (string, error) {
 
 func (store *sqlStore) GetOIDCConfig(ctx context.Context) (oidcConfigRecord, bool, error) {
 	var cfg oidcConfigRecord
-	err := store.queryRowContext(ctx, `SELECT id, issuer, client_id, client_secret_encrypted, display_name, groups_claim, enabled, updated_at FROM oidc_config WHERE id = 'global' LIMIT 1`).Scan(
-		&cfg.ID, &cfg.Issuer, &cfg.ClientID, &cfg.ClientSecretEncrypted, &cfg.DisplayName, &cfg.GroupsClaim, &cfg.Enabled, &cfg.UpdatedAt,
+	err := store.queryRowContext(ctx, `SELECT id, issuer, client_id, client_secret_encrypted, display_name, groups_claim, admin_group, enabled, updated_at FROM oidc_config WHERE id = 'global' LIMIT 1`).Scan(
+		&cfg.ID, &cfg.Issuer, &cfg.ClientID, &cfg.ClientSecretEncrypted, &cfg.DisplayName, &cfg.GroupsClaim, &cfg.AdminGroup, &cfg.Enabled, &cfg.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -836,11 +840,11 @@ func (store *sqlStore) GetOIDCConfig(ctx context.Context) (oidcConfigRecord, boo
 
 func (store *sqlStore) UpsertOIDCConfig(ctx context.Context, cfg oidcConfigRecord) error {
 	_, err := store.execContext(ctx,
-		`INSERT INTO oidc_config (id, issuer, client_id, client_secret_encrypted, display_name, groups_claim, enabled, updated_at)
-		 VALUES ('global', ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET issuer=?, client_id=?, client_secret_encrypted=?, display_name=?, groups_claim=?, enabled=?, updated_at=?`,
-		cfg.Issuer, cfg.ClientID, cfg.ClientSecretEncrypted, cfg.DisplayName, cfg.GroupsClaim, cfg.Enabled, cfg.UpdatedAt,
-		cfg.Issuer, cfg.ClientID, cfg.ClientSecretEncrypted, cfg.DisplayName, cfg.GroupsClaim, cfg.Enabled, cfg.UpdatedAt,
+		`INSERT INTO oidc_config (id, issuer, client_id, client_secret_encrypted, display_name, groups_claim, admin_group, enabled, updated_at)
+		 VALUES ('global', ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET issuer=?, client_id=?, client_secret_encrypted=?, display_name=?, groups_claim=?, admin_group=?, enabled=?, updated_at=?`,
+		cfg.Issuer, cfg.ClientID, cfg.ClientSecretEncrypted, cfg.DisplayName, cfg.GroupsClaim, cfg.AdminGroup, cfg.Enabled, cfg.UpdatedAt,
+		cfg.Issuer, cfg.ClientID, cfg.ClientSecretEncrypted, cfg.DisplayName, cfg.GroupsClaim, cfg.AdminGroup, cfg.Enabled, cfg.UpdatedAt,
 	)
 	return err
 }
@@ -1515,8 +1519,8 @@ func (store *sqlStore) UpdateAdminSessionLastSeen(ctx context.Context, sessionID
 	return err
 }
 
-func (store *sqlStore) RevokeAdminSession(ctx context.Context, sessionID string) error {
-	result, err := store.execContext(ctx, `UPDATE admin_sessions SET revoked = ? WHERE id = ?`, true, sessionID)
+func (store *sqlStore) RevokeAdminSession(ctx context.Context, userID string, sessionID string) error {
+	result, err := store.execContext(ctx, `UPDATE admin_sessions SET revoked = TRUE WHERE id = ? AND user_id = ?`, sessionID, userID)
 	if err != nil {
 		return err
 	}
@@ -2119,12 +2123,13 @@ func (store *sqlStore) GetTokenByID(ctx context.Context, tokenID string) (tokenR
 
 func (store *sqlStore) ListTokenTrafficStats(ctx context.Context, tokenID string, from, to time.Time) ([]trafficStatRecord, error) {
 	rows, err := store.queryContext(ctx,
-		`SELECT id, bucket_start, bucket_minutes, route_slug, tenant_id, token_id, org_id,
-		        SUM(request_count), SUM(error_count), ROUND(AVG(avg_latency_ms)),
+		`SELECT MIN(id), bucket_start, MIN(bucket_minutes), '' AS route_slug, MIN(tenant_id), token_id, MIN(org_id),
+		        SUM(request_count), SUM(error_count),
+		        CAST(COALESCE(ROUND(AVG(avg_latency_ms)), 0) AS INTEGER),
 		        SUM(status_2xx), SUM(status_4xx), SUM(status_5xx)
 		 FROM traffic_stats
 		 WHERE token_id = ? AND bucket_start >= ? AND bucket_start <= ?
-		 GROUP BY bucket_start ORDER BY bucket_start ASC`,
+		 GROUP BY token_id, bucket_start ORDER BY bucket_start ASC`,
 		tokenID, from, to)
 	if err != nil {
 		return nil, err

@@ -1,14 +1,30 @@
 import { SignInPanel } from "@/components/auth/signin-panel";
 import { getOIDCDisplayName, isLocalAccountsEnabled, isLocalRegistrationEnabled, isOIDCEnabled } from "@/lib/auth";
+import { getBackendBaseUrl } from "@/lib/backend-server";
 import { ShieldCheck } from "lucide-react";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
+
+async function checkSetupRequired(): Promise<boolean> {
+  try {
+    const res = await fetch(`${getBackendBaseUrl()}/api/v1/setup/status`, { cache: "no-store" });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { setupRequired?: boolean };
+    return data.setupRequired === true;
+  } catch {
+    return false;
+  }
+}
 
 export default async function SignInPage({
   searchParams,
 }: {
   searchParams: Promise<{ callbackUrl?: string }>;
 }) {
+  const setupRequired = await checkSetupRequired();
+  if (setupRequired) redirect("/setup");
+
   const resolvedSearchParams = await searchParams;
   const callbackUrl = resolvedSearchParams.callbackUrl || "/";
 

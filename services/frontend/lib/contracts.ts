@@ -175,6 +175,7 @@ export interface OIDCConfig {
   hasSecret: boolean;
   displayName: string;
   groupsClaim: string;
+  adminGroup: string;
   enabled: boolean;
   updatedAt: string;
   /** True when the values are sourced from environment variables (no DB record yet). */

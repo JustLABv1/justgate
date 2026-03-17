@@ -3,7 +3,7 @@
 import type { OIDCConfig } from "@/lib/contracts";
 import { Button, Input, Label, Switch, TextField } from "@heroui/react";
 import { Save } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface OIDCSettingsFormProps {
   initial: OIDCConfig;
@@ -15,6 +15,7 @@ interface FormState {
   clientSecret: string;
   displayName: string;
   groupsClaim: string;
+  adminGroup: string;
   enabled: boolean;
 }
 
@@ -25,6 +26,7 @@ function initState(initial: OIDCConfig): FormState {
     clientSecret: "",
     displayName: initial.displayName || "Single Sign-On",
     groupsClaim: initial.groupsClaim ?? "",
+    adminGroup: initial.adminGroup ?? "",
     enabled: initial.enabled ?? false,
   };
 }
@@ -39,6 +41,14 @@ export function OIDCSettingsForm({ initial }: OIDCSettingsFormProps) {
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setFields((f) => ({ ...f, [key]: value }));
   }
+
+  // Auto-enable when all required fields are filled and OIDC is currently disabled.
+  // This prevents the common mistake of filling in the form but forgetting the toggle.
+  useEffect(() => {
+    if (!fields.enabled && fields.issuer && fields.clientID && (fields.clientSecret || hasSecret)) {
+      set("enabled", true);
+    }
+  }, [fields.issuer, fields.clientID, fields.clientSecret, hasSecret, fields.enabled]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -85,14 +95,6 @@ export function OIDCSettingsForm({ initial }: OIDCSettingsFormProps) {
           </div>
         )}
         <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="flex items-center gap-3">
-            <Switch
-              isSelected={fields.enabled}
-              onChange={(isSelected) => set("enabled", isSelected)}
-            />
-            <span className="text-sm font-medium text-foreground">{fields.enabled ? "Enabled" : "Disabled"}</span>
-          </div>
-
           <div className="grid gap-5 sm:grid-cols-2">
             <TextField
               value={fields.issuer}
@@ -158,6 +160,45 @@ export function OIDCSettingsForm({ initial }: OIDCSettingsFormProps) {
               The OIDC token claim containing group/realm values for org mapping (e.g. &quot;groups&quot; or &quot;realm_access.roles&quot;).
             </p>
           </TextField>
+
+          <TextField
+            value={fields.adminGroup}
+            onChange={(v) => set("adminGroup", v)}
+            className="w-full sm:w-1/2"
+          >
+            <Label className="text-sm font-medium text-foreground">Platform Admin Group</Label>
+            <Input
+              placeholder="justgate-admins"
+              className="mt-1.5 w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Any OIDC user whose groups claim contains this value is automatically granted platform admin on every sign-in.
+            </p>
+          </TextField>
+
+          <div
+            className={[
+              "flex items-center justify-between rounded-xl border px-4 py-3 transition-colors",
+              fields.enabled
+                ? "border-success/40 bg-success/8"
+                : "border-border bg-panel/40",
+            ].join(" ")}
+          >
+            <div>
+              <p className="text-sm font-semibold text-foreground">
+                {fields.enabled ? "SSO active" : "SSO inactive"}
+              </p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {fields.enabled
+                  ? "The sign-in page will show the SSO button after saving."
+                  : "Enable to show the SSO button on the sign-in page."}
+              </p>
+            </div>
+            <Switch
+              isSelected={fields.enabled}
+              onChange={(isSelected) => set("enabled", isSelected)}
+            />
+          </div>
 
           {error && <p className="text-sm text-danger">{error}</p>}
           {success && <p className="text-sm text-success">{success}</p>}

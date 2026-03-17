@@ -7,23 +7,23 @@ import { UserMenu } from "@/components/admin/user-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@heroui/react";
 import {
-  AppWindow,
-  ChevronDown,
-  History,
-  KeyRound,
-  LayoutDashboard,
-  Lock,
-  Menu,
-  Monitor,
-  Orbit,
-  Settings,
-  Settings2,
-  Share2,
-  Shield,
-  SlidersHorizontal,
-  Users2,
-  UsersRound,
-  X,
+    AppWindow,
+    ChevronDown,
+    History,
+    KeyRound,
+    LayoutDashboard,
+    Lock,
+    Menu,
+    Monitor,
+    Orbit,
+    Settings,
+    Settings2,
+    Share2,
+    Shield,
+    SlidersHorizontal,
+    Users2,
+    UsersRound,
+    X,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
@@ -41,7 +41,7 @@ interface NavItem {
   icon: ElementType;
 }
 
-const authRoutes = new Set(["/signin"]);
+const authRoutes = new Set(["/signin", "/setup"]);
 
 // Direct top-level links
 const directLinks: NavItem[] = [
