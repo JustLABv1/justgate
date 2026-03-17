@@ -3,11 +3,11 @@
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import type { RouteUpstream } from "@/lib/contracts";
 import { Button, Form, Input, Label, TextField } from "@heroui/react";
-import { Info, Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState, useTransition } from "react";
 
 interface RouteUpstreamsProps {
-  tenantInternalID: string;
+  routeID: string;
 }
 
 const COLORS = ["var(--accent)", "var(--success)", "var(--warning)", "var(--muted-foreground)"];
@@ -16,7 +16,7 @@ function hostLabel(url: string) {
   try { return new URL(url).host; } catch { return url; }
 }
 
-export function RouteUpstreams({ tenantInternalID }: RouteUpstreamsProps) {
+export function RouteUpstreams({ routeID }: RouteUpstreamsProps) {
   const [upstreams, setUpstreams] = useState<RouteUpstream[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -33,7 +33,7 @@ export function RouteUpstreams({ tenantInternalID }: RouteUpstreamsProps) {
     setLoading(true);
     setError(undefined);
     try {
-      const res = await fetch(`/api/admin/tenants/${encodeURIComponent(tenantInternalID)}/upstreams`);
+      const res = await fetch(`/api/admin/routes/${encodeURIComponent(routeID)}/upstreams`);
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error || `Error ${res.status}`);
@@ -44,7 +44,7 @@ export function RouteUpstreams({ tenantInternalID }: RouteUpstreamsProps) {
     } finally {
       setLoading(false);
     }
-  }, [tenantInternalID]);
+  }, [routeID]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -52,7 +52,7 @@ export function RouteUpstreams({ tenantInternalID }: RouteUpstreamsProps) {
     event.preventDefault();
     startTransition(async () => {
       setFormError(undefined);
-      const res = await fetch(`/api/admin/tenants/${encodeURIComponent(tenantInternalID)}/upstreams`, {
+      const res = await fetch(`/api/admin/routes/${encodeURIComponent(routeID)}/upstreams`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ upstreamURL: form.upstreamURL.trim(), weight: Number(form.weight) || 1 }),
@@ -79,7 +79,7 @@ export function RouteUpstreams({ tenantInternalID }: RouteUpstreamsProps) {
     if (!editingID) return;
     startEditTransition(async () => {
       setEditError(undefined);
-      const res = await fetch(`/api/admin/tenant-upstream/${encodeURIComponent(editingID)}`, {
+      const res = await fetch(`/api/admin/route-upstream/${encodeURIComponent(editingID)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ upstreamURL: editForm.upstreamURL.trim(), weight: Number(editForm.weight) || 1 }),
@@ -95,7 +95,7 @@ export function RouteUpstreams({ tenantInternalID }: RouteUpstreamsProps) {
   }
 
   async function handleDelete(upstreamID: string) {
-    const res = await fetch(`/api/admin/tenant-upstream/${encodeURIComponent(upstreamID)}`, { method: "DELETE" });
+    const res = await fetch(`/api/admin/route-upstream/${encodeURIComponent(upstreamID)}`, { method: "DELETE" });
     if (res.ok || res.status === 204) {
       if (editingID === upstreamID) setEditingID(null);
       await load();
@@ -123,21 +123,13 @@ export function RouteUpstreams({ tenantInternalID }: RouteUpstreamsProps) {
         </Button>
       </div>
 
-      {/* ── Routing note ────────────────────────────────────────── */}
-      {!loading && upstreams.length > 0 && (
-        <div className="flex items-start gap-1.5 rounded-lg bg-warning/8 px-2.5 py-2 text-[11px] text-warning/80">
-          <Info size={11} className="mt-0.5 shrink-0" />
-          <span>This pool has full routing control. The tenant&apos;s default upstream URL is bypassed while any upstream is configured here.</span>
-        </div>
-      )}
-
       {loading ? (
         <div className="text-[11px] text-muted-foreground/50">Loading…</div>
       ) : error ? (
         <div className="text-[11px] text-danger">{error}</div>
       ) : upstreams.length === 0 && !isAdding ? (
         <div className="rounded-lg border border-dashed border-border/60 px-3 py-3 text-center text-[11px] text-muted-foreground/50">
-          No load-balancing upstreams — default upstream URL is used.
+          No additional upstreams — primary upstream URL is used.
         </div>
       ) : (
         <>
@@ -169,7 +161,6 @@ export function RouteUpstreams({ tenantInternalID }: RouteUpstreamsProps) {
           <div className="overflow-hidden rounded-xl border border-border/70">
             {upstreams.map((u, i) =>
               editingID === u.id ? (
-                /* ── Edit form ──────────────────────────────── */
                 <Form
                   key={u.id}
                   className="grid gap-3 border-b border-border/60 bg-panel px-4 py-3 last:border-b-0"
@@ -205,12 +196,10 @@ export function RouteUpstreams({ tenantInternalID }: RouteUpstreamsProps) {
                   </div>
                 </Form>
               ) : (
-                /* ── View card ──────────────────────────────── */
                 <div
                   key={u.id}
                   className="relative flex items-center gap-3 border-b border-border/60 bg-surface px-4 py-3 last:border-b-0"
                 >
-                  {/* Left color strip */}
                   <div
                     className="absolute bottom-0 left-0 top-0 w-[3px] rounded-l-xl"
                     style={{ background: COLORS[i % COLORS.length] }}

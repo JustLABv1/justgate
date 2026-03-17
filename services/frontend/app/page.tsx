@@ -25,7 +25,8 @@ export default async function Home() {
   };
 
   const isOnline = topology.data.runtime.status === "online";
-  const tenantIDs = topology.data.tenants.map((t) => t.tenantID);
+  const tenants = topology.data.tenants;
+  const tenantIDs = tenants.map((t) => t.tenantID);
 
   const setupSteps = [
     {
@@ -151,7 +152,7 @@ export default async function Home() {
           {/* Quick Actions */}
           <div className="rounded-lg border border-border bg-surface px-5 py-3.5">
             <QuickActions
-                tenantIDs={tenantIDs}
+                tenants={tenants}
                 tenantCount={stats.tenants}
                 routeCount={stats.routes}
                 tokenCount={stats.activeTokens}

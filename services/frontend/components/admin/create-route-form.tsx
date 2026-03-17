@@ -2,6 +2,7 @@
 
 import { AnimatedStep, type StepDef, StepList } from "@/components/admin/modal-stepper";
 import { useToast } from "@/components/toast-provider";
+import type { TenantSummary } from "@/lib/contracts";
 import { Button, Chip, Input, Label, ListBox, Modal, Select, TextField } from "@heroui/react";
 import { motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, ArrowUpRight, Plus } from "lucide-react";
@@ -9,9 +10,12 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
 
+const SLUG_NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
+
 interface CreateRouteFormProps {
   existingCount: number;
-  tenantIDs: string[];
+  existingSlugs?: string[];
+  tenants: TenantSummary[];
   disabled?: boolean;
   isOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -24,6 +28,8 @@ function toFormState(initialTenantID = "") {
   return {
     slug: "",
     tenantID: initialTenantID,
+    upstreamURL: "",
+    healthCheckPath: "",
     targetPath: "/",
     requiredScope: "",
     methods: "POST",
@@ -42,7 +48,8 @@ const STEPS: StepDef[] = [
 
 export function CreateRouteForm({
   existingCount,
-  tenantIDs,
+  existingSlugs = [],
+  tenants,
   disabled = false,
   isOpen: controlledIsOpen,
   onOpenChange: controlledOnOpenChange,
@@ -55,6 +62,7 @@ export function CreateRouteForm({
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
   const [formState, setFormState] = useState(() => toFormState(initialTenantID));
+  const [slugName, setSlugName] = useState(""); // the part after tenantID/
   const [currentStep, setCurrentStep] = useState(0);
   const [direction, setDirection] = useState(1);
   const [internalOpen, setInternalOpen] = useState(false);
@@ -65,6 +73,7 @@ export function CreateRouteForm({
   function handleOpenChange(open: boolean) {
     if (open) {
       setFormState(toFormState(initialTenantID));
+      setSlugName("");
       setError(undefined);
       setCurrentStep(0);
       setDirection(1);
@@ -89,8 +98,10 @@ export function CreateRouteForm({
     startTransition(async () => {
       setError(undefined);
       const payload = {
-        slug: formState.slug,
+        slug: fullSlug,
         tenantID: formState.tenantID,
+        upstreamURL: formState.upstreamURL,
+        healthCheckPath: formState.healthCheckPath || undefined,
         targetPath: formState.targetPath,
         requiredScope: formState.requiredScope,
         methods: formState.methods,
@@ -120,7 +131,22 @@ export function CreateRouteForm({
     });
   }
 
-  const showPreview = Boolean(formState.slug || formState.tenantID);
+  const selectedTenant = tenants.find((t) => t.tenantID === formState.tenantID);
+
+  // Full slug is always tenantID/slugName when tenant is selected
+  const fullSlug = formState.tenantID && slugName ? `${formState.tenantID}/${slugName}` : slugName;
+
+  // Slug validation
+  const slugNameInvalid = slugName.length > 0 && !SLUG_NAME_RE.test(slugName);
+  const slugTaken = slugName.length > 0 && existingSlugs.includes(fullSlug);
+  const slugError = slugNameInvalid
+    ? "Only lowercase letters, numbers, hyphens and underscores allowed."
+    : slugTaken
+    ? "This slug is already taken."
+    : undefined;
+  const slugValid = slugName.length > 0 && !slugNameInvalid && !slugTaken;
+
+  const showPreview = Boolean(fullSlug || formState.tenantID);
 
   return (
     <Modal isOpen={isOpen} onOpenChange={handleOpenChange}>
@@ -151,9 +177,9 @@ export function CreateRouteForm({
                   className="mt-4 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 font-mono text-[13px]"
                 >
                   <span className="text-muted-foreground">{(formState.methods.split(",")[0] ?? "GET").trim()} </span>
-                  <span className="text-accent">/proxy/{formState.slug || "…"}</span>
-                  {formState.tenantID && (
-                    <span className="text-muted-foreground"> → {formState.tenantID}</span>
+                  <span className="text-accent">/proxy/{fullSlug || "…"}</span>
+                  {selectedTenant && (
+                    <span className="text-muted-foreground"> → {selectedTenant.name} ({selectedTenant.tenantID})</span>
                   )}
                   {formState.targetPath && formState.targetPath !== "/" && (
                     <span className="text-muted-foreground">{formState.targetPath}</span>
@@ -172,46 +198,72 @@ export function CreateRouteForm({
                 {currentStep === 0 && (
                   <div className="space-y-5">
                     <div className="enterprise-panel grid items-start gap-4 p-4 md:grid-cols-2">
-                      <TextField className="grid gap-2">
-                        <Label>Proxy slug</Label>
-                        <Input
-                          placeholder="metrics-ingest"
-                          required
-                          value={formState.slug}
-                          onChange={(e) => setFormState((s) => ({ ...s, slug: e.target.value }))}
-                        />
-                        <div className="enterprise-note">Stable operator-facing path segment. No slashes.</div>
-                      </TextField>
                       <Select
                         className="w-full"
                         isRequired
                         placeholder="Select tenant"
                         value={formState.tenantID}
                         variant="secondary"
-                        onChange={(value) => setFormState((s) => ({ ...s, tenantID: String(value) }))}
+                        onChange={(value) => {
+                          setFormState((s) => ({ ...s, tenantID: String(value) }));
+                          setSlugName("");
+                        }}
                       >
-                        <Label>Tenant ID</Label>
+                        <Label>Tenant</Label>
                         <Select.Trigger>
                           <Select.Value />
                           <Select.Indicator />
                         </Select.Trigger>
                         <Select.Popover>
                           <ListBox>
-                            {tenantIDs.map((tid) => (
-                              <ListBox.Item key={tid} id={tid} textValue={tid}>
-                                {tid}
+                            {tenants.map((tenant) => (
+                              <ListBox.Item key={tenant.tenantID} id={tenant.tenantID} textValue={tenant.name}>
+                                <span>{tenant.name}</span>
+                                <span className="ml-1 text-muted-foreground text-xs">({tenant.tenantID})</span>
                                 <ListBox.ItemIndicator />
                               </ListBox.Item>
                             ))}
                           </ListBox>
                         </Select.Popover>
                       </Select>
-                      <div className="enterprise-note md:col-span-2">The route is bound to exactly one tenant inventory record.</div>
+
+                      <TextField className="grid gap-2" isInvalid={!!slugError} isDisabled={!formState.tenantID}>
+                        <Label>Route name</Label>
+                        <div className="flex items-stretch overflow-hidden rounded-xl border border-border bg-surface focus-within:border-foreground/40 focus-within:ring-1 focus-within:ring-foreground/20 transition-all">
+                          {formState.tenantID && (
+                            <span className="flex items-center border-r border-border bg-panel px-2.5 font-mono text-[12px] text-muted-foreground select-none whitespace-nowrap">
+                              {formState.tenantID}/
+                            </span>
+                          )}
+                          <input
+                            autoFocus={!!formState.tenantID}
+                            className="min-w-0 flex-1 bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground outline-none placeholder:text-muted-foreground/40"
+                            placeholder={formState.tenantID ? "loki-write" : "Select a tenant first"}
+                            value={slugName}
+                            disabled={!formState.tenantID}
+                            onChange={(e) => setSlugName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+                          />
+                          {slugValid && (
+                            <span className="flex items-center pr-2.5 text-success text-[11px]">✓</span>
+                          )}
+                        </div>
+                        {slugError ? (
+                          <div className="text-[11px] text-danger">{slugError}</div>
+                        ) : (
+                          <div className="enterprise-note">
+                            {formState.tenantID
+                              ? `URL will be /proxy/${formState.tenantID}/${slugName || "…"}`
+                              : "Select a tenant to set the slug prefix."}
+                          </div>
+                        )}
+                      </TextField>
+
+                      <div className="enterprise-note md:col-span-2">The route is bound to exactly one tenant boundary.</div>
                     </div>
                     <div className="flex justify-end">
                       <Button
                         className="bg-foreground text-background"
-                        isDisabled={!formState.slug.trim() || !formState.tenantID}
+                        isDisabled={!slugValid || !formState.tenantID}
                         onPress={goNext}
                       >
                         Continue
@@ -223,16 +275,37 @@ export function CreateRouteForm({
                 {currentStep === 1 && (
                   <div className="space-y-5">
                     <div className="enterprise-panel grid gap-4 p-4">
-                      <TextField className="grid gap-2">
-                        <Label>Target path</Label>
-                        <Input
-                          placeholder="/api/v1/push"
-                          required
-                          value={formState.targetPath}
-                          onChange={(e) => setFormState((s) => ({ ...s, targetPath: e.target.value }))}
-                        />
-                        <div className="enterprise-note">Appended to the tenant upstream URL.</div>
-                      </TextField>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <TextField className="grid gap-2 md:col-span-2">
+                          <Label>Upstream URL</Label>
+                          <Input
+                            placeholder="https://loki.internal:3100"
+                            required
+                            value={formState.upstreamURL}
+                            onChange={(e) => setFormState((s) => ({ ...s, upstreamURL: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Base URL of the upstream service for this route.</div>
+                        </TextField>
+                        <TextField className="grid gap-2">
+                          <Label>Target path</Label>
+                          <Input
+                            placeholder="/api/v1/push"
+                            required
+                            value={formState.targetPath}
+                            onChange={(e) => setFormState((s) => ({ ...s, targetPath: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Path appended to the upstream URL.</div>
+                        </TextField>
+                        <TextField className="grid gap-2">
+                          <Label>Health check path</Label>
+                          <Input
+                            placeholder="/ready"
+                            value={formState.healthCheckPath}
+                            onChange={(e) => setFormState((s) => ({ ...s, healthCheckPath: e.target.value }))}
+                          />
+                          <div className="enterprise-note">Optional probe path for upstream health checks.</div>
+                        </TextField>
+                      </div>
                       <div className="grid gap-4 md:grid-cols-2">
                         <TextField className="grid gap-2">
                           <Label>Required scope</Label>
@@ -263,7 +336,7 @@ export function CreateRouteForm({
                       </Button>
                       <Button
                         className="bg-foreground text-background"
-                        isDisabled={!formState.targetPath.trim() || !formState.requiredScope.trim() || !formState.methods.trim()}
+                        isDisabled={!formState.upstreamURL.trim() || !formState.targetPath.trim() || !formState.requiredScope.trim() || !formState.methods.trim()}
                         onPress={goNext}
                       >
                         Continue

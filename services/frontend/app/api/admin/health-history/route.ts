@@ -8,9 +8,9 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const tenantID = searchParams.get("tenantID") || "";
+  const routeID = searchParams.get("routeID") || "";
   const response = await fetch(
-    `${getBackendBaseUrl()}/api/v1/admin/health-history?tenantID=${encodeURIComponent(tenantID)}`,
+    `${getBackendBaseUrl()}/api/v1/admin/health-history?routeID=${encodeURIComponent(routeID)}`,
     { headers, cache: "no-store" },
   );
 
