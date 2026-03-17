@@ -535,7 +535,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
       if (lbPool && lbPool.length > 0) {
         // Expand into one node per LB pool member
         const totalWeight = lbPool.reduce((s, u) => s + u.weight, 0) || 1;
-        lbPool.forEach((u, i) => {
+        lbPool.forEach((u, _) => {
           const pct = Math.round((u.weight / totalWeight) * 100);
           const weightLabel = `${pct}% · w${u.weight}`;
           const { tone, isDown, healthStatus } = upstreamTone(route.id, u.upstreamURL, cbOpen);
