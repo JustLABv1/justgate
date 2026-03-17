@@ -40,7 +40,7 @@ export function getPublicBackendUrl() {
   );
 }
 
-export async function getAdminRequestHeaders(): Promise<HeadersInit> {
+export async function getAdminRequestHeaders(incomingHeaders?: Headers | Record<string, string>): Promise<HeadersInit> {
   const session = await auth();
   if (!session?.user?.id) {
     return {};
@@ -53,6 +53,22 @@ export async function getAdminRequestHeaders(): Promise<HeadersInit> {
   if (session.activeOrgId) {
     headers["X-Org-ID"] = session.activeOrgId;
   }
+
+  // Forward the real browser IP and User-Agent so the Go backend records
+  // the actual client info in admin sessions rather than the Next.js server's.
+  try {
+    const { headers: nextHeaders } = await import("next/headers");
+    const reqHeaders = incomingHeaders ? (incomingHeaders instanceof Headers ? incomingHeaders : new Headers(incomingHeaders)) : await nextHeaders();
+    const ua = reqHeaders.get("user-agent");
+    const xff = reqHeaders.get("x-forwarded-for");
+    const realIp = reqHeaders.get("x-real-ip");
+    if (ua) headers["X-Forwarded-User-Agent"] = ua;
+    if (xff) headers["X-Forwarded-For"] = xff;
+    else if (realIp) headers["X-Forwarded-For"] = realIp;
+  } catch {
+    // Not in a request context (e.g. build time) — skip header forwarding.
+  }
+
   return headers;
 }
 

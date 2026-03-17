@@ -257,7 +257,7 @@ async function buildAuthOptions(): Promise<NextAuthOptions> {
     pages: { signIn: "/signin" },
     session: { strategy: "jwt" },
     callbacks: {
-      async jwt({ token, user, account, trigger, session }) {
+      async jwt({ token, user, account, profile, trigger, session }) {
         if (user) {
           token.sub = user.id;
           token.email = user.email;
@@ -286,6 +286,21 @@ async function buildAuthOptions(): Promise<NextAuthOptions> {
         if (account?.provider) {
           token.provider = account.provider;
         }
+        // Extract OIDC group claims from the raw ID-token profile so the backend
+        // JWT can carry them for automatic platform-admin grants.
+        if (account?.provider === "oidc" && profile) {
+          const cfg = await getResolvedOIDC();
+          if (cfg?.groupsClaim) {
+            const parts = cfg.groupsClaim.split(".");
+            let val: unknown = profile as Record<string, unknown>;
+            for (const part of parts) {
+              val = val && typeof val === "object" ? (val as Record<string, unknown>)[part] : undefined;
+            }
+            if (Array.isArray(val)) {
+              token.groups = (val as unknown[]).filter((g): g is string => typeof g === "string");
+            }
+          }
+        }
         if (trigger === "update" && session?.activeOrgId !== undefined) {
           token.activeOrgId = session.activeOrgId as string;
         }
@@ -303,6 +318,7 @@ async function buildAuthOptions(): Promise<NextAuthOptions> {
         session.activeOrgId = (token.activeOrgId as string | undefined) ?? undefined;
         session.isPlatformAdmin = (token.isPlatformAdmin as boolean | undefined) ?? false;
         session.provider = (token.provider as string | undefined) ?? undefined;
+        session.groups = (token.groups as string[] | undefined) ?? undefined;
         return session;
       },
     },

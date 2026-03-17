@@ -66,14 +66,17 @@ export function DataRetentionPanel({ initial }: DataRetentionPanelProps) {
       </div>
       <div className="px-5 py-5 space-y-5">
         <div className="grid gap-4 sm:grid-cols-2">
-          <TextField className="grid gap-2">
-            <Label>Retention period (days)</Label>
+          <TextField
+            value={retentionDays}
+            onChange={(v) => setRetentionDays(v)}
+            className="w-full"
+          >
+            <Label className="text-sm font-medium text-foreground">Retention period (days)</Label>
             <Input
               type="number"
               min={1}
-              value={retentionDays}
-              onChange={(e) => setRetentionDays(e.target.value)}
               placeholder="30"
+              className="mt-1.5 w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
             />
           </TextField>
 

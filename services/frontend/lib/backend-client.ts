@@ -29,17 +29,17 @@ import {
     type ProtectedApp,
     type QueryResult,
     type ReplicaInfo,
+    type RetentionSettings,
     type RouteSummary,
+    type RouteUpstream,
     type SearchResults,
     type TenantSummary,
-    type RouteUpstream,
     type TokenSummary,
     type TokenTrafficStat,
     type TopologySnapshot,
     type TrafficOverview,
     type TrafficStat,
-    type UserAdminSummary,
-    type RetentionSettings
+    type UserAdminSummary
 } from "@/lib/contracts";
 
 const backendUrl = getBackendBaseUrl();
@@ -172,6 +172,7 @@ const fallbackOIDCConfig: OIDCConfig = {
   hasSecret: false,
   displayName: "Single Sign-On",
   groupsClaim: "",
+  adminGroup: "",
   enabled: false,
   updatedAt: "",
 };

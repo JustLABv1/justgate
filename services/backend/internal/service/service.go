@@ -67,6 +67,7 @@ type dataStore interface {
 	GetOrgWithMemberCount(ctx context.Context, orgID string) (orgRecord, int, error)
 	CreateLocalAdmin(ctx context.Context, account localAdminRecord) (localAdminRecord, error)
 	GetLocalAdminByEmail(ctx context.Context, email string) (localAdminRecord, bool, error)
+	CountLocalAdmins(ctx context.Context) (int, error)
 	CreateTenant(ctx context.Context, payload createTenantRequest) (tenantRecord, error)
 	UpdateTenant(ctx context.Context, tenantID string, payload createTenantRequest) (tenantRecord, error)
 	DeleteTenant(ctx context.Context, tenantID string) error
@@ -125,7 +126,7 @@ type dataStore interface {
 	CreateAdminSession(ctx context.Context, session adminSessionRecord) error
 	ListAdminSessions(ctx context.Context, userID string) ([]adminSessionRecord, error)
 	UpdateAdminSessionLastSeen(ctx context.Context, sessionID string, lastSeen time.Time) error
-	RevokeAdminSession(ctx context.Context, sessionID string) error
+	RevokeAdminSession(ctx context.Context, userID string, sessionID string) error
 	IsSessionRevoked(ctx context.Context, sessionID string) (bool, error)
 	// Multi-region
 	UpsertInstanceHeartbeat(ctx context.Context, hb instanceHeartbeatRecord) error
@@ -319,14 +320,14 @@ type routeUpstreamSummary struct {
 }
 
 type topologyResponse struct {
-	GeneratedAt    string                `json:"generatedAt"`
-	Runtime        runtimeState          `json:"runtime"`
-	Stats          stats                 `json:"stats"`
-	Tenants        []tenantSummary       `json:"tenants"`
-	Routes         []routeSummary        `json:"routes"`
-	Tokens         []tokenSummary        `json:"tokens"`
-	AuditEvents    []auditEvent          `json:"auditEvents"`
-	UpstreamHealth []upstreamHealthItem  `json:"upstreamHealth"`
+	GeneratedAt    string                 `json:"generatedAt"`
+	Runtime        runtimeState           `json:"runtime"`
+	Stats          stats                  `json:"stats"`
+	Tenants        []tenantSummary        `json:"tenants"`
+	Routes         []routeSummary         `json:"routes"`
+	Tokens         []tokenSummary         `json:"tokens"`
+	AuditEvents    []auditEvent           `json:"auditEvents"`
+	UpstreamHealth []upstreamHealthItem   `json:"upstreamHealth"`
 	RouteUpstreams []routeUpstreamSummary `json:"routeUpstreams"`
 }
 
@@ -531,6 +532,7 @@ type oidcConfigRecord struct {
 	ClientSecretEncrypted string
 	DisplayName           string
 	GroupsClaim           string
+	AdminGroup            string
 	Enabled               bool
 	UpdatedAt             time.Time
 }
@@ -920,6 +922,7 @@ func New(config Config) (*Service, error) {
 
 	service.circuitBreakers.LoadFromStore(context.Background())
 
+	go service.autoCompleteSetupForExistingDeployments()
 	go service.runHealthChecker()
 	go service.runHeartbeat()
 	go service.runRetentionPurge()
@@ -930,6 +933,9 @@ func New(config Config) (*Service, error) {
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
+	// Setup wizard — no auth required; handler enforces it can only run once.
+	mux.HandleFunc("/api/v1/setup/status", s.handleSetupStatus)
+	mux.HandleFunc("/api/v1/setup/complete", s.handleSetupComplete)
 	mux.HandleFunc("/api/v1/auth/local/register", s.handleRegisterLocalAdmin)
 	mux.HandleFunc("/api/v1/auth/local/verify", s.handleVerifyLocalAdmin)
 	mux.HandleFunc("/api/v1/admin/overview", s.withAdminAuth(s.withOptionalOrgContext(s.handleOverview)))
@@ -1056,8 +1062,26 @@ func (s *Service) withAdminAuth(next http.HandlerFunc) http.HandlerFunc {
 				}
 			}
 		}
+		// If the identity carries OIDC groups and a platform-admin group is
+		// configured, auto-grant platform admin so OIDC-only deployments work
+		// without requiring a manually created local admin.
+		if len(identity.Groups) > 0 {
+			if oidcCfg, ok, err := s.store.GetOIDCConfig(request.Context()); err == nil && ok && oidcCfg.AdminGroup != "" {
+				for _, g := range identity.Groups {
+					if g == oidcCfg.AdminGroup {
+						_ = s.store.GrantPlatformAdmin(request.Context(), identity.Subject, "oidc-group")
+						break
+					}
+				}
+			}
+		}
 		ip := clientAddress(request)
 		ua := request.Header.Get("User-Agent")
+		// When the request is proxied through Next.js, the browser's real
+		// User-Agent is forwarded in X-Forwarded-User-Agent.
+		if forwarded := strings.TrimSpace(request.Header.Get("X-Forwarded-User-Agent")); forwarded != "" {
+			ua = forwarded
+		}
 		fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(identity.Subject+"|"+ip+"|"+ua)))
 		_ = s.store.CreateAdminSession(request.Context(), adminSessionRecord{
 			ID:         fingerprint,

@@ -8,10 +8,15 @@ JustGate supports OIDC-based single sign-on on top of (or instead of) local acco
 
 | Method | When it takes effect | Suitable for |
 |---|---|---|
-| **Helm values / env vars** | On pod start (static) | GitOps, initial bootstrap |
+| **Setup wizard** (`/setup`) | Immediately on first run | Initial bootstrap |
 | **Admin UI** (Settings → OIDC) | Immediately (stored in DB) | Runtime changes, secret rotation |
+| **Helm values / env vars** | On pod start (static) | GitOps, CI/CD pipelines |
 
-The Admin UI configuration takes precedence over env vars when an enabled OIDC config is found in the database.
+The Admin UI (DB) configuration takes precedence over env vars when an enabled OIDC record is stored in the database.
+
+### Enabled toggle
+
+When configuring OIDC via the Admin UI, make sure the **SSO active** toggle is on before saving. The sign-in page only shows the SSO button when the stored config has `enabled = true`. The toggle auto-activates as soon as you fill in all three required fields (issuer, client ID, client secret).
 
 ---
 
@@ -125,8 +130,7 @@ JUST_GATE_OIDC_NAME="Login with Keycloak"
 ## Option B — Admin UI (Dynamic)
 
 1. Sign in as an admin and navigate to **Settings → OIDC**.
-2. Toggle **Enabled**.
-3. Fill in the fields:
+2. Fill in the fields:
 
 | Field | Description |
 |---|---|
@@ -136,9 +140,10 @@ JUST_GATE_OIDC_NAME="Login with Keycloak"
 | **Button Label** | Text shown on the sign-in page (default: `Single Sign-On`). |
 | **Groups Claim** | JWT claim containing groups/roles for org mapping (e.g. `groups` or `realm_access.roles`). Optional. |
 
+3. The **SSO active** toggle (at the bottom of the form) must be **on** for the sign-in button to appear. It activates automatically once the issuer, client ID, and client secret are all filled in — you rarely need to touch it manually.
 4. Click **Save**. Changes take effect on the next sign-in request — no restart needed.
 
-> The client secret is AES-encrypted before being written to the database.
+> The client secret is AES-256-GCM encrypted before being written to the database.
 
 ---
 

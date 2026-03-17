@@ -57,4 +57,19 @@ Before going to production, ensure you have set:
 - [ ] `JUST_GATE_BACKEND_JWT_SECRET` — same strong random value on both frontend and backend
 - [ ] `JUST_GATE_DATABASE_URL` — PostgreSQL recommended for production
 - [ ] `JUST_GATE_LOCAL_REGISTRATION_ENABLED=false` — unless you want open self-registration
-- [ ] `JUSTGATE_INITIAL_ADMIN_EMAIL` — set for first-time bootstrap, then can be left as-is
+- [ ] `JUSTGATE_INITIAL_ADMIN_EMAIL` — set for first-time bootstrap (optional if using the setup wizard)
+
+---
+
+## First-Run Setup Wizard
+
+On a fresh installation with no existing admin accounts, JustGate shows a guided setup wizard at `/setup`. The wizard lets you create the first admin account and optionally configure OIDC — no environment variables required for these steps.
+
+After completing the wizard, the following env vars become optional (though they continue to work if set):
+
+| Env var | Replaced by |
+|---|---|
+| `JUSTGATE_INITIAL_ADMIN_EMAIL` | Wizard admin account step |
+| `JUST_GATE_OIDC_*` | Wizard OIDC step (or Settings → OIDC) |
+
+Existing deployments (with at least one admin account) are not affected — the wizard is skipped automatically.

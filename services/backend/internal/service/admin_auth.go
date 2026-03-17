@@ -15,6 +15,7 @@ type adminIdentity struct {
 	Roles   []string
 	Scope   string
 	Source  string
+	Groups  []string
 }
 
 type adminClaims struct {
@@ -23,6 +24,7 @@ type adminClaims struct {
 	Roles  []string `json:"roles"`
 	Scope  string   `json:"scope"`
 	Source string   `json:"source"`
+	Groups []string `json:"groups,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -63,6 +65,7 @@ func validateAdminToken(rawToken, secret string) (adminIdentity, error) {
 		Roles:   claims.Roles,
 		Scope:   claims.Scope,
 		Source:  claims.Source,
+		Groups:  claims.Groups,
 	}, nil
 }
 
