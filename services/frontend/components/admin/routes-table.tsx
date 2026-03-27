@@ -7,7 +7,7 @@ import { RouteTester } from "@/components/admin/route-tester";
 import { RouteUpstreams } from "@/components/admin/route-upstreams";
 import { UpdateRouteForm } from "@/components/admin/update-route-form";
 import type { RouteSummary, TenantSummary, TokenSummary } from "@/lib/contracts";
-import { Button } from "@heroui/react";
+import { Button, Checkbox, Input } from "@heroui/react";
 import {
   AlertCircle,
   ArrowRight,
@@ -23,6 +23,7 @@ import {
   Trash2,
   Waypoints,
 } from "lucide-react";
+
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -217,13 +218,13 @@ export function RoutesTable({
         <div className="relative w-56">
           <Search
             size={13}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none z-10"
           />
-          <input
+          <Input
             placeholder="Search routes…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-7 w-full rounded-md border border-border bg-surface pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-accent"
+            className="h-7 w-full pl-8 text-xs"
           />
         </div>
         <span className="text-[11px] text-muted-foreground">
@@ -273,13 +274,16 @@ export function RoutesTable({
 
       {/* Column headers — double as sort controls */}
       <div className="flex items-center gap-4 border-b border-border/40 px-4 py-1.5">
-        <input
-          type="checkbox"
-          className="h-3.5 w-3.5 rounded"
-          checked={selectedIDs.size === filtered.length && filtered.length > 0}
-          onChange={toggleSelectAll}
+        <Checkbox
+          isSelected={selectedIDs.size === filtered.length && filtered.length > 0}
+          isIndeterminate={selectedIDs.size > 0 && selectedIDs.size < filtered.length}
+          onChange={() => toggleSelectAll()}
           aria-label="Select all routes"
-        />
+        >
+          <Checkbox.Control className="h-3.5 w-3.5">
+            <Checkbox.Indicator />
+          </Checkbox.Control>
+        </Checkbox>
         <ColHeader
           col="slug"
           label="Route"
@@ -340,13 +344,15 @@ export function RoutesTable({
             >
               {/* ── Main row ───────────────────────────────────────────── */}
               <div className="flex items-start justify-between gap-4 px-4 py-3.5 hover:bg-surface/40">
-                <input
-                  type="checkbox"
-                  className="mt-1 h-3.5 w-3.5 rounded"
-                  checked={isSelected}
+                <Checkbox
+                  isSelected={isSelected}
                   onChange={() => toggleSelect(route.id)}
                   aria-label={`Select route ${route.slug}`}
-                />
+                >
+                  <Checkbox.Control className="mt-1 h-3.5 w-3.5">
+                    <Checkbox.Indicator />
+                  </Checkbox.Control>
+                </Checkbox>
 
                 {/* Left: slug + URL + details */}
                 <div className="min-w-0 flex-1 space-y-1.5">

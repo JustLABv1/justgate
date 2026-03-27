@@ -2,9 +2,23 @@
 
 import { AuditTable } from "@/components/admin/audit-table";
 import type { AuditEvent } from "@/lib/contracts";
+import { DateField, DateRangePicker, Input, RangeCalendar } from "@heroui/react";
+import { type DateValue, parseDateTime } from "@internationalized/date";
 import { ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+type DateRange = { start: DateValue; end: DateValue };
+
+function parseDateFilter(str: string): DateValue | null {
+  if (!str) return null;
+  try {
+    // datetime-local format: "2024-01-15T14:30" — parseDateTime needs seconds
+    return parseDateTime(str.length === 16 ? `${str}:00` : str);
+  } catch {
+    return null;
+  }
+}
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -158,8 +172,7 @@ export function AuditView({
         </div>
 
         {/* Tenant filter (text input – server-side LIKE search) */}
-        <input
-          type="text"
+        <Input
           placeholder="Filter by tenant…"
           value={tenantFilter}
           onChange={(e) => setTenantFilter(e.target.value)}
@@ -171,8 +184,7 @@ export function AuditView({
         />
 
         {/* Route slug search */}
-        <input
-          type="text"
+        <Input
           placeholder="Filter by route…"
           value={routeFilter}
           onChange={(e) => setRouteFilter(e.target.value)}
@@ -184,27 +196,62 @@ export function AuditView({
         />
 
         {/* Date range */}
-        <input
-          type="datetime-local"
-          value={fromFilter}
-          onChange={(e) => {
-            setFromFilter(e.target.value);
-            applyFilter("from", e.target.value);
+        <DateRangePicker
+          granularity="minute"
+          hideTimeZone
+          value={(() => {
+            const start = parseDateFilter(fromFilter);
+            const end = parseDateFilter(toFilter);
+            return start && end ? { start, end } : null;
+          })()}
+          onChange={(range: DateRange | null) => {
+            const fromStr = range ? range.start.toString().slice(0, 16) : "";
+            const toStr = range ? range.end.toString().slice(0, 16) : "";
+            setFromFilter(fromStr);
+            setToFilter(toStr);
+            router.push(`?${buildParams({ from: fromStr, to: toStr })}`);
           }}
-          className="h-8 rounded-lg border border-border bg-panel px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
-          title="From date"
-        />
-        <span className="text-[11px] text-muted-foreground">–</span>
-        <input
-          type="datetime-local"
-          value={toFilter}
-          onChange={(e) => {
-            setToFilter(e.target.value);
-            applyFilter("to", e.target.value);
-          }}
-          className="h-8 rounded-lg border border-border bg-panel px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
-          title="To date"
-        />
+        >
+          <DateField.Group className="flex h-8 items-center gap-1 rounded-lg border border-border bg-panel px-2.5 text-[12px] text-foreground">
+            <DateField.Input slot="start">
+              {(segment) => <DateField.Segment segment={segment} />}
+            </DateField.Input>
+            <DateRangePicker.RangeSeparator />
+            <DateField.Input slot="end">
+              {(segment) => <DateField.Segment segment={segment} />}
+            </DateField.Input>
+            <DateField.Suffix>
+              <DateRangePicker.Trigger className="text-muted-foreground hover:text-foreground">
+                <DateRangePicker.TriggerIndicator />
+              </DateRangePicker.Trigger>
+            </DateField.Suffix>
+          </DateField.Group>
+          <DateRangePicker.Popover>
+            <RangeCalendar aria-label="Date range">
+              <RangeCalendar.Header>
+                <RangeCalendar.YearPickerTrigger>
+                  <RangeCalendar.YearPickerTriggerHeading />
+                  <RangeCalendar.YearPickerTriggerIndicator />
+                </RangeCalendar.YearPickerTrigger>
+                <RangeCalendar.NavButton slot="previous" />
+                <RangeCalendar.NavButton slot="next" />
+              </RangeCalendar.Header>
+              <RangeCalendar.Grid>
+                <RangeCalendar.GridHeader>
+                  {(day) => <RangeCalendar.HeaderCell>{day}</RangeCalendar.HeaderCell>}
+                </RangeCalendar.GridHeader>
+                <RangeCalendar.GridBody>
+                  {(date) => <RangeCalendar.Cell date={date} />}
+                </RangeCalendar.GridBody>
+              </RangeCalendar.Grid>
+              <RangeCalendar.YearPickerGrid>
+                <RangeCalendar.YearPickerGridBody>
+                  {({ year }) => <RangeCalendar.YearPickerCell year={year} />}
+                </RangeCalendar.YearPickerGridBody>
+              </RangeCalendar.YearPickerGrid>
+            </RangeCalendar>
+          </DateRangePicker.Popover>
+        </DateRangePicker>
 
         {/* Clear filters */}
         {hasFilters && (

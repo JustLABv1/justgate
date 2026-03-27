@@ -2,7 +2,7 @@
 
 import { useToast } from "@/components/toast-provider";
 import type { ProtectedApp } from "@/lib/contracts";
-import { Button, Input, Label, Modal, TextField } from "@heroui/react";
+import { Button, Input, Label, Modal, TextArea, TextField } from "@heroui/react";
 import { Pencil, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -57,13 +57,13 @@ function HeaderInjectionEditor({
       {rules.map((rule, i) => (
         <div key={i} className="flex gap-2 items-start">
           <div className="flex-1 grid grid-cols-2 gap-2">
-            <input
+            <Input
               className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
               placeholder="Header name (e.g. X-Remote-User)"
               value={rule.name}
               onChange={(e) => updateRule(i, "name", e.target.value)}
             />
-            <input
+            <Input
               className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none font-mono"
               placeholder="Value or $user.email"
               value={rule.value}
@@ -136,7 +136,7 @@ function StripHeadersEditor({
         ))}
       </div>
       <div className="flex gap-2">
-        <input
+        <Input
           className="flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent focus:outline-none"
           placeholder="Header to strip (e.g. X-Real-IP)"
           value={input}
@@ -418,7 +418,7 @@ export function EditAppModal({ app, disabled = false }: EditAppModalProps) {
                     Extra CA certificate{" "}
                     <span className="text-muted-foreground font-normal">(optional)</span>
                   </Label>
-                  <textarea
+                  <TextArea
                     className="w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-[12px] font-mono text-muted-foreground placeholder:text-muted-foreground/50 focus:border-accent focus:outline-none resize-y"
                     rows={4}
                     placeholder={"-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"}

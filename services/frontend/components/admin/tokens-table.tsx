@@ -7,7 +7,7 @@ import { RevokeTokenButton } from "@/components/admin/revoke-token-button";
 import { RotateTokenButton } from "@/components/admin/rotate-token-button";
 import { TokenStatsPanel } from "@/components/admin/token-stats-panel";
 import type { TokenSummary } from "@/lib/contracts";
-import { Button, Input } from "@heroui/react";
+import { Button, Checkbox, Input } from "@heroui/react";
 import {
     Activity,
     ArrowUpRight,
@@ -248,13 +248,16 @@ export function TokensTable({ tokens, actionsDisabled = false, expiryWarningDays
 
       {/* Column header */}
       <div className="flex items-center gap-4 border-b border-border/40 px-4 py-1.5 text-[11px] text-muted-foreground">
-        <input
-          type="checkbox"
-          className="h-3.5 w-3.5 rounded"
-          checked={selectedIDs.size === filtered.length && filtered.length > 0}
-          onChange={toggleSelectAll}
+        <Checkbox
+          isSelected={selectedIDs.size === filtered.length && filtered.length > 0}
+          isIndeterminate={selectedIDs.size > 0 && selectedIDs.size < filtered.length}
+          onChange={() => toggleSelectAll()}
           aria-label="Select all tokens"
-        />
+        >
+          <Checkbox.Control className="h-3.5 w-3.5">
+            <Checkbox.Indicator />
+          </Checkbox.Control>
+        </Checkbox>
         <span className="flex-1">Token</span>
         <span className="w-24">Actions</span>
       </div>
@@ -274,13 +277,15 @@ export function TokensTable({ tokens, actionsDisabled = false, expiryWarningDays
               style={{ animationDelay: `${Math.min(idx * 30, 300)}ms` }}
             >
             <div className="group flex items-start justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-panel/50">
-              <input
-                type="checkbox"
-                className="mt-1 h-3.5 w-3.5 rounded"
-                checked={isSelected}
+              <Checkbox
+                isSelected={isSelected}
                 onChange={() => toggleSelect(token.id)}
                 aria-label={`Select token ${token.name}`}
-              />
+              >
+                <Checkbox.Control className="mt-1 h-3.5 w-3.5">
+                  <Checkbox.Indicator />
+                </Checkbox.Control>
+              </Checkbox>
               <div className="min-w-0 flex-1 space-y-1.5">
                 {/* Row 1: status dot, name, preview, expiry warning */}
                 <div className="flex flex-wrap items-center gap-2">

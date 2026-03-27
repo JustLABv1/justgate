@@ -1,6 +1,7 @@
 "use client";
 
 import type { AuditEvent } from "@/lib/contracts";
+import { Input, ListBox, Select } from "@heroui/react";
 import { Filter, Radio, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -112,32 +113,45 @@ export function LiveAuditStream() {
       {/* Filter bar */}
       <div className="flex items-center gap-2 border-b border-border/60 px-4 py-2">
         <Filter size={11} className="shrink-0 text-muted-foreground/50" />
-        <input
-          type="text"
+        <Input
           value={filterRoute}
           onChange={(e) => setFilterRoute(e.target.value)}
           placeholder="Route…"
           className="h-6 w-28 rounded border border-border bg-panel px-2 text-[11px] text-foreground placeholder:text-muted-foreground/50 outline-none"
         />
-        <select
-          value={filterMethod}
-          onChange={(e) => setFilterMethod(e.target.value)}
-          className="h-6 rounded border border-border bg-panel px-1 text-[11px] text-foreground outline-none"
+        <Select
+          value={filterMethod || undefined}
+          onChange={(key) => setFilterMethod(String(key ?? ""))}
         >
-          <option value="">Method</option>
-          {["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
-        <select
+          <Select.Trigger className="h-6 rounded border border-border bg-panel px-2 text-[11px] text-foreground">
+            <Select.Value>{filterMethod || "Method"}</Select.Value>
+            <Select.Indicator />
+          </Select.Trigger>
+          <Select.Popover>
+            <ListBox>
+              <ListBox.Item id="" textValue="Method">Method<ListBox.ItemIndicator /></ListBox.Item>
+              {["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => (
+                <ListBox.Item key={m} id={m} textValue={m}>{m}<ListBox.ItemIndicator /></ListBox.Item>
+              ))}
+            </ListBox>
+          </Select.Popover>
+        </Select>
+        <Select
           value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value as "all" | "success" | "error")}
-          className="h-6 rounded border border-border bg-panel px-1 text-[11px] text-foreground outline-none"
+          onChange={(key) => setFilterStatus((key ?? "all") as "all" | "success" | "error")}
         >
-          <option value="all">All</option>
-          <option value="success">2xx / 3xx</option>
-          <option value="error">4xx / 5xx</option>
-        </select>
+          <Select.Trigger className="h-6 rounded border border-border bg-panel px-2 text-[11px] text-foreground">
+            <Select.Value />
+            <Select.Indicator />
+          </Select.Trigger>
+          <Select.Popover>
+            <ListBox>
+              <ListBox.Item id="all" textValue="All">All<ListBox.ItemIndicator /></ListBox.Item>
+              <ListBox.Item id="success" textValue="2xx / 3xx">2xx / 3xx<ListBox.ItemIndicator /></ListBox.Item>
+              <ListBox.Item id="error" textValue="4xx / 5xx">4xx / 5xx<ListBox.ItemIndicator /></ListBox.Item>
+            </ListBox>
+          </Select.Popover>
+        </Select>
         {(filterRoute || filterMethod || filterStatus !== "all") && (
           <button
             type="button"
