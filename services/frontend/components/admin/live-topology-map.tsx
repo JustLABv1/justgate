@@ -179,6 +179,9 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>(null);
   const [streamStatus, setStreamStatus] = useState<"connecting" | "live" | "retrying" | "offline">("connecting");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(
+    initialTopology.data.generatedAt ? new Date(initialTopology.data.generatedAt) : null,
+  );
   const [camera, setCamera] = useState<CameraState>({ scale: 0.8, x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [isCreateTenantOpen, setIsCreateTenantOpen] = useState(false);
@@ -258,6 +261,7 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
 
       const next = (await response.json()) as QueryResult<TopologySnapshot>;
       setSnapshot(next);
+      setLastRefreshedAt(new Date());
     } finally {
       setIsRefreshing(false);
     }
@@ -1061,10 +1065,19 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Chip className={chipClassName}>{chipLabel}</Chip>
-            <Button className="h-9 rounded-full px-3" isDisabled={isRefreshing} size="sm" variant="ghost" onPress={() => void pollTopology()}>
-              <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
-              Refresh
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button className="h-9 rounded-full px-3" isDisabled={isRefreshing} size="sm" variant="ghost" onPress={() => void pollTopology()}>
+                <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+                Refresh
+              </Button>
+              {lastRefreshedAt && (
+                <span className="text-[11px] text-muted-foreground/50">
+                  {isRefreshing
+                    ? "Refreshing…"
+                    : `Updated ${lastRefreshedAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`}
+                </span>
+              )}
+            </div>
             <Button className="h-9 rounded-full px-3" size="sm" variant="ghost" onPress={() => {
               const viewport = viewportRef.current;
               if (!viewport) {

@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { DeleteTokenButton } from "@/components/admin/delete-token-button";
 import { RateLimitGauge } from "@/components/admin/rate-limit-gauge";
 import { RevokeTokenButton } from "@/components/admin/revoke-token-button";
@@ -22,13 +23,13 @@ import {
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
-const EXPIRY_WARNING_DAYS = 7;
+const DEFAULT_EXPIRY_WARNING_DAYS = 7;
 
-function expiryStatus(expiresAt: string): { label: string; urgent: boolean } | null {
+function expiryStatus(expiresAt: string, warningDays: number): { label: string; urgent: boolean } | null {
   const ms = new Date(expiresAt).getTime() - Date.now();
   const days = Math.ceil(ms / (1000 * 60 * 60 * 24));
   if (ms < 0) return { label: "Expired", urgent: true };
-  if (days <= EXPIRY_WARNING_DAYS) return { label: `Expires in ${days}d`, urgent: days <= 2 };
+  if (days <= warningDays) return { label: `Expires in ${days}d`, urgent: days <= 2 };
   return null;
 }
 
@@ -50,9 +51,10 @@ type SortDir = "asc" | "desc";
 interface TokensTableProps {
   tokens: TokenSummary[];
   actionsDisabled?: boolean;
+  expiryWarningDays?: number;
 }
 
-export function TokensTable({ tokens, actionsDisabled = false }: TokensTableProps) {
+export function TokensTable({ tokens, actionsDisabled = false, expiryWarningDays = DEFAULT_EXPIRY_WARNING_DAYS }: TokensTableProps) {
   const router = useRouter();
   const [expandedID, setExpandedID] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -110,7 +112,6 @@ export function TokensTable({ tokens, actionsDisabled = false }: TokensTableProp
 
   async function handleBulkRevoke() {
     if (selectedIDs.size === 0) return;
-    if (!confirm(`Revoke ${selectedIDs.size} token(s)?`)) return;
     setBulkRevoking(true);
     try {
       await Promise.all(
@@ -131,7 +132,6 @@ export function TokensTable({ tokens, actionsDisabled = false }: TokensTableProp
 
   async function handleBulkDelete() {
     if (selectedIDs.size === 0) return;
-    if (!confirm(`Delete ${selectedIDs.size} token(s)? This cannot be undone.`)) return;
     setBulkDeleting(true);
     try {
       await Promise.all(
@@ -201,28 +201,47 @@ export function TokensTable({ tokens, actionsDisabled = false }: TokensTableProp
         {selectedIDs.size > 0 && (
           <div className="ml-auto flex items-center gap-2">
             <span className="text-[12px] text-muted-foreground">{selectedIDs.size} selected</span>
-            <Button
-              size="sm"
-              color="warning"
-              variant="flat"
-              isLoading={bulkRevoking}
-              isDisabled={actionsDisabled || bulkRevoking}
-              onPress={handleBulkRevoke}
-              startContent={<XCircle size={12} />}
-            >
-              Revoke
-            </Button>
-            <Button
-              size="sm"
-              color="danger"
-              variant="flat"
-              isLoading={bulkDeleting}
-              isDisabled={actionsDisabled || bulkDeleting}
-              onPress={handleBulkDelete}
-              startContent={<Trash2 size={12} />}
-            >
-              Delete
-            </Button>
+            <ConfirmDialog
+              variant="warning"
+              trigger={(open) => (
+                <Button
+                  size="sm"
+                  color="warning"
+                  variant="flat"
+                  isLoading={bulkRevoking}
+                  isDisabled={actionsDisabled || bulkRevoking}
+                  onPress={open}
+                  startContent={<XCircle size={12} />}
+                >
+                  Revoke
+                </Button>
+              )}
+              title={`Revoke ${selectedIDs.size} token${selectedIDs.size !== 1 ? "s" : ""}?`}
+              description="Revoked tokens will immediately stop authorizing requests. This can be undone by re-activating the tokens individually."
+              confirmLabel={`Revoke ${selectedIDs.size} token${selectedIDs.size !== 1 ? "s" : ""}`}
+              isPending={bulkRevoking}
+              onConfirm={() => void handleBulkRevoke()}
+            />
+            <ConfirmDialog
+              trigger={(open) => (
+                <Button
+                  size="sm"
+                  color="danger"
+                  variant="flat"
+                  isLoading={bulkDeleting}
+                  isDisabled={actionsDisabled || bulkDeleting}
+                  onPress={open}
+                  startContent={<Trash2 size={12} />}
+                >
+                  Delete
+                </Button>
+              )}
+              title={`Delete ${selectedIDs.size} token${selectedIDs.size !== 1 ? "s" : ""}?`}
+              description="This cannot be undone. All selected tokens will be permanently deleted and will immediately stop authorizing requests."
+              confirmLabel={`Delete ${selectedIDs.size} token${selectedIDs.size !== 1 ? "s" : ""}`}
+              isPending={bulkDeleting}
+              onConfirm={() => void handleBulkDelete()}
+            />
           </div>
         )}
       </div>
@@ -242,7 +261,7 @@ export function TokensTable({ tokens, actionsDisabled = false }: TokensTableProp
 
       <div className="divide-y divide-border">
         {filtered.map((token, idx) => {
-          const expiry = expiryStatus(token.expiresAt);
+          const expiry = expiryStatus(token.expiresAt, expiryWarningDays);
           const lastUsed = lastUsedLabel(token.lastUsedAt);
           const neverUsed = lastUsed === "Never used";
           const isExpanded = expandedID === token.id;
@@ -252,7 +271,7 @@ export function TokensTable({ tokens, actionsDisabled = false }: TokensTableProp
             <div
               key={token.id}
               className={`animate-in fade-in duration-300 fill-mode-both ${isSelected ? "bg-primary/5" : ""}`}
-              style={{ animationDelay: `${idx * 30}ms` }}
+              style={{ animationDelay: `${Math.min(idx * 30, 300)}ms` }}
             >
             <div className="group flex items-start justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-panel/50">
               <input

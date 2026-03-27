@@ -29,7 +29,7 @@ export default async function RoutesPage() {
         </div>
 
         <div className="rounded-lg border border-border bg-surface">
-          <RoutesTable actionsDisabled={result.source !== "backend"} routes={result.data} tenants={tenants.data} backendBaseUrl={backendBaseUrl} />
+          <RoutesTable actionsDisabled={result.source !== "backend"} routes={result.data} tenants={tenants.data} tokens={tokens.data} backendBaseUrl={backendBaseUrl} />
         </div>
 
         {result.source !== "backend" && (

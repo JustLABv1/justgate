@@ -175,21 +175,53 @@ export function OrgConfigExportImport() {
 
         {/* Preview */}
         {preview && (
-          <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
-            <p className="text-xs font-medium text-foreground">Preview</p>
-            <div className="flex items-center gap-4 text-sm">
-              <span className="text-muted-foreground">
-                <span className="font-semibold text-foreground">{preview.tenants.length}</span> tenant{preview.tenants.length !== 1 ? "s" : ""}
-              </span>
-              <span className="text-muted-foreground">
-                <span className="font-semibold text-foreground">{preview.routes.length}</span> route{preview.routes.length !== 1 ? "s" : ""}
-              </span>
+          <div className="rounded-lg border border-border bg-surface p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-foreground">Import preview — review before confirming</p>
               {preview.exportedAt && (
-                <span className="text-muted-foreground/60 text-xs">
+                <span className="text-[11px] text-muted-foreground/60">
                   Exported {new Date(preview.exportedAt).toLocaleDateString()}
                 </span>
               )}
             </div>
+
+            {/* Tenants list */}
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+                {preview.tenants.length} Tenant{preview.tenants.length !== 1 ? "s" : ""}
+              </p>
+              <div className="overflow-hidden rounded-lg border border-border/60 divide-y divide-border/40">
+                {preview.tenants.map((t) => (
+                  <div key={t.tenantID} className="flex items-center gap-2 bg-panel/50 px-3 py-1.5 text-xs">
+                    <span className="font-medium text-foreground">{t.name}</span>
+                    <span className="font-mono text-[10px] text-muted-foreground/60">{t.tenantID}</span>
+                    <span className="ml-auto rounded-md border border-border/50 bg-surface px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/70">
+                      {t.authMode}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Routes list */}
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+                {preview.routes.length} Route{preview.routes.length !== 1 ? "s" : ""}
+              </p>
+              <div className="overflow-hidden rounded-lg border border-border/60 divide-y divide-border/40">
+                {preview.routes.map((r) => (
+                  <div key={r.slug} className="flex items-center gap-2 bg-panel/50 px-3 py-1.5 text-xs">
+                    <span className="font-mono font-medium text-foreground/90">/{r.slug}</span>
+                    <span className="text-muted-foreground/40">→</span>
+                    <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/70">
+                      {r.upstreamURL}
+                    </span>
+                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/50">{r.tenantID}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <button
               type="button"
               onClick={handleImport}

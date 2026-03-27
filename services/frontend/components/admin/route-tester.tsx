@@ -8,11 +8,13 @@ interface RouteTesterProps {
   routes: RouteSummary[];
   tokens: TokenSummary[];
   backendBaseUrl: string;
+  defaultOpen?: boolean;
+  defaultRouteID?: string;
 }
 
-export function RouteTester({ routes, tokens, backendBaseUrl }: RouteTesterProps) {
-  const [open, setOpen] = useState(false);
-  const [selectedRouteID, setSelectedRouteID] = useState("");
+export function RouteTester({ routes, tokens, backendBaseUrl, defaultOpen = false, defaultRouteID = "" }: RouteTesterProps) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [selectedRouteID, setSelectedRouteID] = useState(defaultRouteID);
   const [tokenSecret, setTokenSecret] = useState("");
   const [method, setMethod] = useState("GET");
   const [url, setUrl] = useState("");
