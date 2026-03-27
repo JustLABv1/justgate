@@ -3,15 +3,17 @@
 import { DeleteTenantButton } from "@/components/admin/delete-tenant-button";
 import { UpdateTenantForm } from "@/components/admin/update-tenant-form";
 import type { TenantSummary } from "@/lib/contracts";
-import { Shield } from "lucide-react";
+import { KeyRound, Route, Shield } from "lucide-react";
 
 interface TenantCardProps {
   tenant: TenantSummary;
   disabled?: boolean;
   animationDelay?: number;
+  routeCount?: number;
+  tokenCount?: number;
 }
 
-export function TenantCard({ tenant, disabled, animationDelay = 0 }: TenantCardProps) {
+export function TenantCard({ tenant, disabled, animationDelay = 0, routeCount = 0, tokenCount = 0 }: TenantCardProps) {
   return (
     <div
       className="animate-in fade-in duration-300 fill-mode-both"
@@ -36,6 +38,14 @@ export function TenantCard({ tenant, disabled, animationDelay = 0 }: TenantCardP
           </span>
           <span className="rounded-full border border-border bg-panel px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
             {tenant.authMode}
+          </span>
+          <span className="flex items-center gap-1 rounded-full border border-border bg-panel px-2 py-0.5 text-[10px] font-medium text-muted-foreground" title="Routes">
+            <Route size={9} className="text-muted-foreground/50" />
+            {routeCount}
+          </span>
+          <span className="flex items-center gap-1 rounded-full border border-border bg-panel px-2 py-0.5 text-[10px] font-medium text-muted-foreground" title="Tokens">
+            <KeyRound size={9} className="text-muted-foreground/50" />
+            {tokenCount}
           </span>
         </div>
 

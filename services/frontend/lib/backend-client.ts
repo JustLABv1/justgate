@@ -12,15 +12,19 @@ import {
     type BulkTokenResponse,
     type CircuitBreakerStatus,
     type ExpiringToken,
+    type ExportedOrgConfig,
     type GrantIssuance,
     type GrantSummary,
     type HealthHistoryEntry,
+    type ImportResult,
+    type InvitePreview,
     type IssuedGrant,
     type IssuedToken,
     type MemberSummary,
     type OIDCConfig,
     type OIDCOrgMapping,
     type OrgAdminSummary,
+    type OrgInvite,
     type OrgIPRule,
     type OrgSummary,
     type PaginatedAdminAuditResponse,
@@ -400,4 +404,87 @@ export async function bulkCreateTokens(payload: {
     cache: "no-store",
   });
   return response.json() as Promise<BulkTokenResponse | { error: string }>;
+}
+
+// ── Org Invites ──────────────────────────────────────────────────
+
+export function getOrgInvites(orgID: string) {
+  return fetchBackend<OrgInvite[]>(
+    `/api/v1/admin/orgs/${encodeURIComponent(orgID)}/invites`,
+    [],
+  );
+}
+
+export async function deleteOrgInvite(orgID: string, inviteID: string): Promise<void> {
+  const headers = await getAdminRequestHeaders();
+  await fetch(`${backendUrl}/api/v1/admin/orgs/${encodeURIComponent(orgID)}/invites/${encodeURIComponent(inviteID)}`, {
+    method: "DELETE",
+    headers,
+    cache: "no-store",
+  });
+}
+
+export async function getInvitePreview(code: string): Promise<InvitePreview | { error: string }> {
+  const response = await fetch(`${backendUrl}/api/v1/invite-preview?code=${encodeURIComponent(code)}`, {
+    cache: "no-store",
+  });
+  return response.json() as Promise<InvitePreview | { error: string }>;
+}
+
+export async function changeMemberRole(orgID: string, userID: string, role: string): Promise<{ role: string } | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/orgs/${encodeURIComponent(orgID)}/members/${encodeURIComponent(userID)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify({ role }),
+    cache: "no-store",
+  });
+  return response.json() as Promise<{ role: string } | { error: string }>;
+}
+
+// ── Token Extend ─────────────────────────────────────────────────
+
+export async function extendToken(tokenID: string, newExpiresAt: string): Promise<TokenSummary | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/tokens/${encodeURIComponent(tokenID)}/extend`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify({ newExpiresAt }),
+    cache: "no-store",
+  });
+  return response.json() as Promise<TokenSummary | { error: string }>;
+}
+
+// ── Route Duplicate ──────────────────────────────────────────────
+
+export async function duplicateRoute(routeID: string): Promise<RouteSummary | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/routes/${encodeURIComponent(routeID)}/duplicate`, {
+    method: "POST",
+    headers,
+    cache: "no-store",
+  });
+  return response.json() as Promise<RouteSummary | { error: string }>;
+}
+
+// ── Org Config Export / Import ────────────────────────────────────
+
+export function getOrgExport() {
+  return fetchBackend<ExportedOrgConfig>("/api/v1/admin/export", {
+    exportedAt: "",
+    version: "1",
+    tenants: [],
+    routes: [],
+  });
+}
+
+export async function importOrgConfig(config: { tenants: unknown[]; routes: unknown[] }): Promise<ImportResult | { error: string }> {
+  const headers = await getAdminRequestHeaders();
+  const response = await fetch(`${backendUrl}/api/v1/admin/import`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(config),
+    cache: "no-store",
+  });
+  return response.json() as Promise<ImportResult | { error: string }>;
 }

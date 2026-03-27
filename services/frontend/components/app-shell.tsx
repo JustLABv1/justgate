@@ -1,7 +1,9 @@
 "use client";
 
+import { Breadcrumbs } from "@/components/admin/breadcrumbs";
 import { GlobalSearch } from "@/components/admin/global-search";
 import { AdminNav } from "@/components/admin/nav";
+import { NotificationCenter } from "@/components/admin/notification-center";
 import { OrgSwitcher } from "@/components/admin/org-switcher";
 import { UserMenu } from "@/components/admin/user-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -205,7 +207,7 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                  className={`relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
                     active
                       ? "bg-surface text-foreground"
                       : "text-muted-foreground hover:bg-surface/60 hover:text-foreground"
@@ -216,6 +218,9 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
                     className={active ? "text-accent" : "text-muted-foreground/70"}
                   />
                   {item.label}
+                  {active && (
+                    <span className="absolute bottom-0 left-1/2 -translate-x-1/2 h-0.5 w-4 rounded-full bg-accent" />
+                  )}
                 </Link>
               );
             })}
@@ -237,6 +242,7 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
           {/* Right controls */}
           <div className="ml-auto flex items-center gap-2">
             <GlobalSearch />
+            <NotificationCenter />
             {signedInUser ? <UserMenu user={signedInUser} /> : <ThemeToggle />}
           </div>
 
@@ -259,6 +265,8 @@ export function AppShell({ children, signedInUser }: AppShellProps) {
           <AdminNav onNavigate={() => setMobileNavOpen(false)} />
         </div>
       )}
+
+      <Breadcrumbs />
 
       <main className="mx-auto w-full max-w-[1800px] px-6 py-6 lg:px-10 lg:py-8">
         {children}

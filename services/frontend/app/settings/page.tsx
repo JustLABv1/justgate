@@ -2,7 +2,9 @@ import { DataRetentionPanel } from "@/components/admin/data-retention-panel";
 import { OIDCOrgMappings } from "@/components/admin/oidc-org-mappings";
 import { OIDCProviderDocs } from "@/components/admin/oidc-provider-docs";
 import { OIDCSettingsForm } from "@/components/admin/oidc-settings-form";
+import { OrgConfigExportImport } from "@/components/admin/org-config-export-import";
 import { SectionPage } from "@/components/admin/section-page";
+import { SettingsTabs } from "@/components/admin/settings-tabs";
 import { auth } from "@/lib/auth";
 import { getOIDCConfig, getOIDCOrgMappings, getRetentionSettings } from "@/lib/backend-client";
 import { redirect } from "next/navigation";
@@ -27,12 +29,13 @@ export default async function SettingsPage() {
       source={oidcResult.source}
       error={oidcResult.error}
     >
-      <div className="space-y-6">
-        <OIDCSettingsForm initial={oidcResult.data} />
-        <OIDCProviderDocs />
-        <OIDCOrgMappings initialMappings={mappingsResult.data} />
-        <DataRetentionPanel initial={retentionResult.data} />
-      </div>
+      <SettingsTabs
+        oidcForm={<OIDCSettingsForm initial={oidcResult.data} />}
+        providerDocs={<OIDCProviderDocs />}
+        orgMappings={<OIDCOrgMappings initialMappings={mappingsResult.data} />}
+        dataRetention={<DataRetentionPanel initial={retentionResult.data} />}
+        exportImport={<OrgConfigExportImport />}
+      />
     </SectionPage>
   );
 }

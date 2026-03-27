@@ -19,6 +19,8 @@ interface AuditViewProps {
   initialStatusFilter?: string;
   initialTenantFilter?: string;
   initialRouteFilter?: string;
+  initialFrom?: string;
+  initialTo?: string;
 }
 
 export function AuditView({
@@ -30,6 +32,8 @@ export function AuditView({
   initialStatusFilter = "all",
   initialTenantFilter = "",
   initialRouteFilter = "",
+  initialFrom = "",
+  initialTo = "",
 }: AuditViewProps) {
   const router = useRouter();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
@@ -37,13 +41,15 @@ export function AuditView({
   );
   const [tenantFilter, setTenantFilter] = useState(initialTenantFilter);
   const [routeFilter, setRouteFilter] = useState(initialRouteFilter);
+  const [fromFilter, setFromFilter] = useState(initialFrom);
+  const [toFilter, setToFilter] = useState(initialTo);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function buildParams(overrides: Record<string, string> = {}) {
     const params = new URLSearchParams(window.location.search);
-    const merged = { status: statusFilter, tenant: tenantFilter, route: routeFilter, ...overrides };
+    const merged = { status: statusFilter, tenant: tenantFilter, route: routeFilter, from: fromFilter, to: toFilter, ...overrides };
     params.set("page", "1");
     if (merged.status && merged.status !== "all") {
       params.set("status", merged.status);
@@ -59,6 +65,16 @@ export function AuditView({
       params.set("route", merged.route);
     } else {
       params.delete("route");
+    }
+    if (merged.from) {
+      params.set("from", merged.from);
+    } else {
+      params.delete("from");
+    }
+    if (merged.to) {
+      params.set("to", merged.to);
+    } else {
+      params.delete("to");
     }
     return params.toString();
   }
@@ -87,16 +103,20 @@ export function AuditView({
     };
   }, [refresh]);
 
-  const hasFilters = statusFilter !== "all" || tenantFilter !== "" || routeFilter !== "";
+  const hasFilters = statusFilter !== "all" || tenantFilter !== "" || routeFilter !== "" || fromFilter !== "" || toFilter !== "";
 
   function clearFilters() {
     setStatusFilter("all");
     setTenantFilter("");
     setRouteFilter("");
+    setFromFilter("");
+    setToFilter("");
     const params = new URLSearchParams(window.location.search);
     params.delete("status");
     params.delete("tenant");
     params.delete("route");
+    params.delete("from");
+    params.delete("to");
     params.set("page", "1");
     router.push(`?${params.toString()}`);
   }
@@ -161,6 +181,29 @@ export function AuditView({
           }}
           onBlur={() => applyFilter("route", routeFilter)}
           className="h-8 rounded-lg border border-border bg-panel px-2.5 text-[12px] text-foreground placeholder:text-muted-foreground outline-none focus:border-accent"
+        />
+
+        {/* Date range */}
+        <input
+          type="datetime-local"
+          value={fromFilter}
+          onChange={(e) => {
+            setFromFilter(e.target.value);
+            applyFilter("from", e.target.value);
+          }}
+          className="h-8 rounded-lg border border-border bg-panel px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
+          title="From date"
+        />
+        <span className="text-[11px] text-muted-foreground">–</span>
+        <input
+          type="datetime-local"
+          value={toFilter}
+          onChange={(e) => {
+            setToFilter(e.target.value);
+            applyFilter("to", e.target.value);
+          }}
+          className="h-8 rounded-lg border border-border bg-panel px-2.5 text-[12px] text-foreground outline-none focus:border-accent"
+          title="To date"
         />
 
         {/* Clear filters */}

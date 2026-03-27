@@ -9,6 +9,7 @@ import { UpdateTenantForm } from "@/components/admin/update-tenant-form";
 import type { QueryResult, TopologySnapshot } from "@/lib/contracts";
 import { Button, Card, Chip, Surface } from "@heroui/react";
 import { Activity, ArrowRight, KeyRound, LocateFixed, Maximize2, Minimize2, Move, Plus, RefreshCw, Route, Sparkles, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 interface LiveTopologyMapProps {
@@ -172,6 +173,7 @@ function fitCamera(viewportWidth: number, viewportHeight: number, sceneHeight: n
 }
 
 export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps) {
+  const router = useRouter();
   const [snapshot, setSnapshot] = useState(initialTopology);
   const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>(null);
@@ -962,6 +964,13 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
     }
   }
 
+  function handleNodeDoubleClick(node: GraphNode) {
+    const [kind] = node.id.split(":");
+    if (kind === "route") router.push("/routes");
+    else if (kind === "tenant") router.push("/tenants");
+    else if (kind === "token") router.push("/tokens");
+  }
+
   const graphEdges = [...graph.tokenEdges, ...graph.tenantEdges, ...graph.upstreamEdges, ...draftGraph.draftEdges];
   const graphNodes = [...graph.nodes, ...draftGraph.draftNodes];
   const isLive = snapshot.source === "backend";
@@ -1328,6 +1337,8 @@ export function LiveTopologyMap({ initialTopology, orgId }: LiveTopologyMapProps
                     type="button"
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => handleNodeSelect(node)}
+                    onDoubleClick={() => handleNodeDoubleClick(node)}
+                    title={node.kind !== "draft" && node.kind !== "upstream" ? `Double-click to open ${node.kind}s page` : undefined}
                   >
                     {showPulse && (
                       <div

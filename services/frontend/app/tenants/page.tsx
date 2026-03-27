@@ -1,12 +1,25 @@
 import { CreateTenantForm } from "@/components/admin/create-tenant-form";
 import { SectionPage } from "@/components/admin/section-page";
 import { TenantCard } from "@/components/admin/tenant-card";
-import { getTenants } from "@/lib/backend-client";
+import { getRoutes, getTenants, getTokens } from "@/lib/backend-client";
 import { ArrowRight, Building2 } from "lucide-react";
 import Link from "next/link";
 
 export default async function TenantsPage() {
-  const result = await getTenants();
+  const [result, routesResult, tokensResult] = await Promise.all([
+    getTenants(),
+    getRoutes(),
+    getTokens(),
+  ]);
+
+  const routeCountByTenant: Record<string, number> = {};
+  const tokenCountByTenant: Record<string, number> = {};
+  for (const r of routesResult.data) {
+    routeCountByTenant[r.tenantID] = (routeCountByTenant[r.tenantID] ?? 0) + 1;
+  }
+  for (const t of tokensResult.data) {
+    tokenCountByTenant[t.tenantID] = (tokenCountByTenant[t.tenantID] ?? 0) + 1;
+  }
 
   return (
     <SectionPage
@@ -41,6 +54,8 @@ export default async function TenantsPage() {
                 tenant={tenant}
                 disabled={result.source !== "backend"}
                 animationDelay={idx * 30}
+                routeCount={routeCountByTenant[tenant.tenantID] ?? 0}
+                tokenCount={tokenCountByTenant[tenant.tenantID] ?? 0}
               />
             ))}
           </div>
