@@ -93,6 +93,12 @@ type dataStore interface {
 	CreateOrgInvite(ctx context.Context, orgID, createdBy string, expiresAt time.Time, maxUses int) (orgInviteRecord, error)
 	GetOrgInviteByCode(ctx context.Context, code string) (orgInviteRecord, bool, error)
 	ConsumeOrgInvite(ctx context.Context, code, userID string) (string, error)
+	ListOrgInvites(ctx context.Context, orgID string) ([]orgInviteRecord, error)
+	DeleteOrgInvite(ctx context.Context, orgID, inviteID string) error
+	GetOrgByID(ctx context.Context, orgID string) (orgRecord, bool, error)
+	UpdateOrgMemberRole(ctx context.Context, orgID, userID, role string) error
+	ExtendTokenExpiry(ctx context.Context, tokenID string, newExpiry time.Time) error
+	GetRouteByID(ctx context.Context, routeID string) (routeRecord, bool, error)
 	// OIDC config
 	GetOIDCConfig(ctx context.Context) (oidcConfigRecord, bool, error)
 	UpsertOIDCConfig(ctx context.Context, cfg oidcConfigRecord) error
@@ -257,6 +263,7 @@ type tenantSummary struct {
 	TenantID   string `json:"tenantID"`
 	AuthMode   string `json:"authMode"`
 	HeaderName string `json:"headerName"`
+	OrgID      string `json:"orgID"`
 }
 
 type routeSummary struct {
@@ -1001,6 +1008,11 @@ func (s *Service) Handler() http.Handler {
 	// Org IP allowlist
 	mux.HandleFunc("/api/v1/admin/org-ip-rules", s.withAdminAuth(s.withOrgContext(s.handleOrgIPRules)))
 	mux.HandleFunc("/api/v1/admin/org-ip-rules/", s.withAdminAuth(s.withOrgContext(s.handleOrgIPRuleByID)))
+	// Org config export / import
+	mux.HandleFunc("/api/v1/admin/export", s.withAdminAuth(s.withOrgContext(s.handleExportOrgConfig)))
+	mux.HandleFunc("/api/v1/admin/import", s.withAdminAuth(s.withOrgContext(s.handleImportOrgConfig)))
+	// Public invite preview (no auth)
+	mux.HandleFunc("/api/v1/invite-preview", s.handleInvitePreview)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		startedAt := time.Now()
@@ -1320,6 +1332,7 @@ func (s *Service) handleTenants(writer http.ResponseWriter, request *http.Reques
 			TenantID:   tenant.TenantID,
 			AuthMode:   tenant.AuthMode,
 			HeaderName: tenant.HeaderName,
+			OrgID:      tenant.OrgID,
 		})
 	}
 
@@ -1532,6 +1545,7 @@ func (s *Service) buildTopologyResponse(ctx context.Context) (topologyResponse, 
 			TenantID:   tenant.TenantID,
 			AuthMode:   tenant.AuthMode,
 			HeaderName: tenant.HeaderName,
+			OrgID:      tenant.OrgID,
 		})
 	}
 
@@ -1812,6 +1826,7 @@ func (s *Service) handleCreateTenant(writer http.ResponseWriter, request *http.R
 		TenantID:   tenant.TenantID,
 		AuthMode:   tenant.AuthMode,
 		HeaderName: tenant.HeaderName,
+		OrgID:      tenant.OrgID,
 	})
 }
 
@@ -1850,6 +1865,7 @@ func (s *Service) handleTenantByID(writer http.ResponseWriter, request *http.Req
 			TenantID:   tenant.TenantID,
 			AuthMode:   tenant.AuthMode,
 			HeaderName: tenant.HeaderName,
+			OrgID:      tenant.OrgID,
 		})
 	case http.MethodDelete:
 		if err := s.store.DeleteTenant(request.Context(), tenantID); err != nil {
@@ -1993,8 +2009,21 @@ func (s *Service) handleCreateToken(writer http.ResponseWriter, request *http.Re
 }
 
 func (s *Service) handleRouteByID(writer http.ResponseWriter, request *http.Request) {
-	routeID := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/routes/"), "/")
-	if routeID == "" || strings.Contains(routeID, "/") {
+	path := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/admin/routes/"), "/")
+	// Sub-resource routing: /api/v1/admin/routes/{id}/duplicate
+	if idx := strings.Index(path, "/"); idx != -1 {
+		routeID := path[:idx]
+		sub := path[idx+1:]
+		switch sub {
+		case "duplicate":
+			s.handleDuplicateRoute(writer, request, routeID)
+		default:
+			writeJSON(writer, http.StatusNotFound, map[string]string{"error": "not found"})
+		}
+		return
+	}
+	routeID := path
+	if routeID == "" {
 		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "route not found"})
 		return
 	}
@@ -2090,6 +2119,8 @@ func (s *Service) handleTokenByID(writer http.ResponseWriter, request *http.Requ
 			s.handleTokenStats(writer, request)
 		case "rotate":
 			s.handleRotateToken(writer, request)
+		case "extend":
+			s.handleExtendToken(writer, request, tokenID)
 		default:
 			writeJSON(writer, http.StatusNotFound, map[string]string{"error": "not found"})
 		}

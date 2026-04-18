@@ -1,24 +1,25 @@
 import { AddMemberModal } from "@/components/admin/add-member-modal";
 import { InviteModal } from "@/components/admin/invite-modal";
+import { PendingInvitesList } from "@/components/admin/pending-invites-list";
 import { SectionPage } from "@/components/admin/section-page";
 import { TeamMembersTable } from "@/components/admin/team-members-table";
 import { auth } from "@/lib/auth";
-import { getOrgMembers, getOrgs } from "@/lib/backend-client";
+import { getOrgInvites, getOrgMembers, getOrgs } from "@/lib/backend-client";
 import { redirect } from "next/navigation";
 
 export default async function TeamPage() {
   const session = await auth();
 
   if (!session?.activeOrgId) {
-    // No org selected — send to home where onboarding modal will guide setup
     redirect("/");
   }
 
   const orgID = session.activeOrgId;
 
-  const [orgsResult, membersResult] = await Promise.all([
+  const [orgsResult, membersResult, invitesResult] = await Promise.all([
     getOrgs(),
     getOrgMembers(orgID),
+    getOrgInvites(orgID),
   ]);
 
   const activeOrg = orgsResult.data.find((o) => o.id === orgID);
@@ -51,6 +52,10 @@ export default async function TeamPage() {
           currentUserID={currentUserID}
           isOwner={isOwner ?? false}
         />
+
+        {isOwner && invitesResult.data.length > 0 && (
+          <PendingInvitesList invites={invitesResult.data} orgID={orgID} />
+        )}
       </div>
     </SectionPage>
   );

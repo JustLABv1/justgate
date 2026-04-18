@@ -2289,6 +2289,94 @@ func (store *sqlStore) PurgeTrafficStats(ctx context.Context, olderThan time.Tim
 	return result.RowsAffected()
 }
 
+// ── New methods added for v3 feature set ──────────────────────────────
+
+func (store *sqlStore) ListOrgInvites(ctx context.Context, orgID string) ([]orgInviteRecord, error) {
+	rows, err := store.queryContext(ctx,
+		`SELECT id, org_id, code, created_by, expires_at, max_uses, use_count, created_at
+		 FROM org_invites WHERE org_id = ? ORDER BY created_at DESC`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []orgInviteRecord
+	for rows.Next() {
+		var inv orgInviteRecord
+		if err := rows.Scan(&inv.ID, &inv.OrgID, &inv.Code, &inv.CreatedBy, &inv.ExpiresAt, &inv.MaxUses, &inv.UseCount, &inv.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, inv)
+	}
+	return items, rows.Err()
+}
+
+func (store *sqlStore) DeleteOrgInvite(ctx context.Context, orgID, inviteID string) error {
+	result, err := store.execContext(ctx,
+		`DELETE FROM org_invites WHERE id = ? AND org_id = ?`, inviteID, orgID)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("invite not found")
+	}
+	return nil
+}
+
+func (store *sqlStore) GetOrgByID(ctx context.Context, orgID string) (orgRecord, bool, error) {
+	var o orgRecord
+	err := store.queryRowContext(ctx,
+		`SELECT id, name, created_by, created_at FROM organizations WHERE id = ? LIMIT 1`, orgID).
+		Scan(&o.ID, &o.Name, &o.CreatedBy, &o.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return orgRecord{}, false, nil
+	}
+	if err != nil {
+		return orgRecord{}, false, err
+	}
+	return o, true, nil
+}
+
+func (store *sqlStore) UpdateOrgMemberRole(ctx context.Context, orgID, userID, role string) error {
+	result, err := store.execContext(ctx,
+		`UPDATE org_memberships SET role = ? WHERE org_id = ? AND user_id = ?`, role, orgID, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("member not found")
+	}
+	return nil
+}
+
+func (store *sqlStore) ExtendTokenExpiry(ctx context.Context, tokenID string, newExpiry time.Time) error {
+	result, err := store.execContext(ctx,
+		`UPDATE tokens SET expires_at = ? WHERE id = ?`, newExpiry, tokenID)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("token not found")
+	}
+	return nil
+}
+
+func (store *sqlStore) GetRouteByID(ctx context.Context, routeID string) (routeRecord, bool, error) {
+	row := store.queryRowContext(ctx,
+		`SELECT id, slug, target_path, tenant_id, required_scope, methods_json, upstream_url, rate_limit_rpm, rate_limit_burst, allow_cidrs, deny_cidrs, health_check_path
+		 FROM routes WHERE id = ? LIMIT 1`, routeID)
+	route, err := scanRoute(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return routeRecord{}, false, nil
+	}
+	if err != nil {
+		return routeRecord{}, false, err
+	}
+	return route, true, nil
+}
+
 func scanGrant(scanner interface{ Scan(dest ...any) error }) (provisioningGrantRecord, error) {
 	var g provisioningGrantRecord
 	var scopesJSON string

@@ -2,9 +2,23 @@
 
 import { AuditTable } from "@/components/admin/audit-table";
 import type { AuditEvent } from "@/lib/contracts";
+import { DateField, DateRangePicker, Input, RangeCalendar } from "@heroui/react";
+import { parseDateTime } from "@internationalized/date";
 import { ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
+
+type DateRange = NonNullable<ComponentProps<typeof DateRangePicker>["value"]>;
+
+function parseDateFilter(str: string) {
+  if (!str) return null;
+  try {
+    // datetime-local format: "2024-01-15T14:30" — parseDateTime needs seconds
+    return parseDateTime(str.length === 16 ? `${str}:00` : str);
+  } catch {
+    return null;
+  }
+}
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -19,6 +33,8 @@ interface AuditViewProps {
   initialStatusFilter?: string;
   initialTenantFilter?: string;
   initialRouteFilter?: string;
+  initialFrom?: string;
+  initialTo?: string;
 }
 
 export function AuditView({
@@ -30,6 +46,8 @@ export function AuditView({
   initialStatusFilter = "all",
   initialTenantFilter = "",
   initialRouteFilter = "",
+  initialFrom = "",
+  initialTo = "",
 }: AuditViewProps) {
   const router = useRouter();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
@@ -37,13 +55,15 @@ export function AuditView({
   );
   const [tenantFilter, setTenantFilter] = useState(initialTenantFilter);
   const [routeFilter, setRouteFilter] = useState(initialRouteFilter);
+  const [fromFilter, setFromFilter] = useState(initialFrom);
+  const [toFilter, setToFilter] = useState(initialTo);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function buildParams(overrides: Record<string, string> = {}) {
     const params = new URLSearchParams(window.location.search);
-    const merged = { status: statusFilter, tenant: tenantFilter, route: routeFilter, ...overrides };
+    const merged = { status: statusFilter, tenant: tenantFilter, route: routeFilter, from: fromFilter, to: toFilter, ...overrides };
     params.set("page", "1");
     if (merged.status && merged.status !== "all") {
       params.set("status", merged.status);
@@ -59,6 +79,16 @@ export function AuditView({
       params.set("route", merged.route);
     } else {
       params.delete("route");
+    }
+    if (merged.from) {
+      params.set("from", merged.from);
+    } else {
+      params.delete("from");
+    }
+    if (merged.to) {
+      params.set("to", merged.to);
+    } else {
+      params.delete("to");
     }
     return params.toString();
   }
@@ -87,16 +117,20 @@ export function AuditView({
     };
   }, [refresh]);
 
-  const hasFilters = statusFilter !== "all" || tenantFilter !== "" || routeFilter !== "";
+  const hasFilters = statusFilter !== "all" || tenantFilter !== "" || routeFilter !== "" || fromFilter !== "" || toFilter !== "";
 
   function clearFilters() {
     setStatusFilter("all");
     setTenantFilter("");
     setRouteFilter("");
+    setFromFilter("");
+    setToFilter("");
     const params = new URLSearchParams(window.location.search);
     params.delete("status");
     params.delete("tenant");
     params.delete("route");
+    params.delete("from");
+    params.delete("to");
     params.set("page", "1");
     router.push(`?${params.toString()}`);
   }
@@ -138,8 +172,7 @@ export function AuditView({
         </div>
 
         {/* Tenant filter (text input – server-side LIKE search) */}
-        <input
-          type="text"
+        <Input
           placeholder="Filter by tenant…"
           value={tenantFilter}
           onChange={(e) => setTenantFilter(e.target.value)}
@@ -151,8 +184,7 @@ export function AuditView({
         />
 
         {/* Route slug search */}
-        <input
-          type="text"
+        <Input
           placeholder="Filter by route…"
           value={routeFilter}
           onChange={(e) => setRouteFilter(e.target.value)}
@@ -162,6 +194,64 @@ export function AuditView({
           onBlur={() => applyFilter("route", routeFilter)}
           className="h-8 rounded-lg border border-border bg-panel px-2.5 text-[12px] text-foreground placeholder:text-muted-foreground outline-none focus:border-accent"
         />
+
+        {/* Date range */}
+        <DateRangePicker
+          granularity="minute"
+          hideTimeZone
+          value={(() => {
+            const start = parseDateFilter(fromFilter);
+            const end = parseDateFilter(toFilter);
+            return start && end ? ({ start, end } as unknown as DateRange) : null;
+          })()}
+          onChange={(range) => {
+            const fromStr = range ? range.start.toString().slice(0, 16) : "";
+            const toStr = range ? range.end.toString().slice(0, 16) : "";
+            setFromFilter(fromStr);
+            setToFilter(toStr);
+            router.push(`?${buildParams({ from: fromStr, to: toStr })}`);
+          }}
+        >
+          <DateField.Group className="flex h-8 items-center gap-1 rounded-lg border border-border bg-panel px-2.5 text-[12px] text-foreground">
+            <DateField.Input slot="start">
+              {(segment) => <DateField.Segment segment={segment} />}
+            </DateField.Input>
+            <DateRangePicker.RangeSeparator />
+            <DateField.Input slot="end">
+              {(segment) => <DateField.Segment segment={segment} />}
+            </DateField.Input>
+            <DateField.Suffix>
+              <DateRangePicker.Trigger className="text-muted-foreground hover:text-foreground">
+                <DateRangePicker.TriggerIndicator />
+              </DateRangePicker.Trigger>
+            </DateField.Suffix>
+          </DateField.Group>
+          <DateRangePicker.Popover>
+            <RangeCalendar aria-label="Date range">
+              <RangeCalendar.Header>
+                <RangeCalendar.YearPickerTrigger>
+                  <RangeCalendar.YearPickerTriggerHeading />
+                  <RangeCalendar.YearPickerTriggerIndicator />
+                </RangeCalendar.YearPickerTrigger>
+                <RangeCalendar.NavButton slot="previous" />
+                <RangeCalendar.NavButton slot="next" />
+              </RangeCalendar.Header>
+              <RangeCalendar.Grid>
+                <RangeCalendar.GridHeader>
+                  {(day) => <RangeCalendar.HeaderCell>{day}</RangeCalendar.HeaderCell>}
+                </RangeCalendar.GridHeader>
+                <RangeCalendar.GridBody>
+                  {(date) => <RangeCalendar.Cell date={date} />}
+                </RangeCalendar.GridBody>
+              </RangeCalendar.Grid>
+              <RangeCalendar.YearPickerGrid>
+                <RangeCalendar.YearPickerGridBody>
+                  {({ year }) => <RangeCalendar.YearPickerCell year={year} />}
+                </RangeCalendar.YearPickerGridBody>
+              </RangeCalendar.YearPickerGrid>
+            </RangeCalendar>
+          </DateRangePicker.Popover>
+        </DateRangePicker>
 
         {/* Clear filters */}
         {hasFilters && (
