@@ -6,7 +6,7 @@ import { EditAppModal } from "@/components/admin/edit-app-modal";
 import { useToast } from "@/components/toast-provider";
 import type { ProtectedApp } from "@/lib/contracts";
 import { Button } from "@heroui/react";
-import { AppWindow, ExternalLink, Trash2 } from "lucide-react";
+import { AppWindow, ExternalLink, KeyRound, MonitorCheck, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
@@ -14,6 +14,8 @@ import { useTransition } from "react";
 interface ProtectedAppsTableProps {
   apps: ProtectedApp[];
   actionsDisabled?: boolean;
+  sessionCountByApp?: Record<string, number>;
+  tokenCountByApp?: Record<string, number>;
 }
 
 function AuthModeBadge({ mode }: { mode: string }) {
@@ -76,7 +78,7 @@ function DeleteAppButton({ appID, disabled }: { appID: string; disabled?: boolea
   );
 }
 
-export function ProtectedAppsTable({ apps, actionsDisabled }: ProtectedAppsTableProps) {
+export function ProtectedAppsTable({ apps, actionsDisabled, sessionCountByApp = {}, tokenCountByApp = {} }: ProtectedAppsTableProps) {
   if (apps.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 px-8 py-16 text-center">
@@ -98,6 +100,7 @@ export function ProtectedAppsTable({ apps, actionsDisabled }: ProtectedAppsTable
           <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Name / Slug</th>
           <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Upstream</th>
           <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Auth</th>
+          <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Usage</th>
           <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Rate limit</th>
           <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">Actions</th>
         </tr>
@@ -122,6 +125,25 @@ export function ProtectedAppsTable({ apps, actionsDisabled }: ProtectedAppsTable
             <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{app.upstreamURL}</td>
             <td className="px-4 py-3">
               <AuthModeBadge mode={app.authMode} />
+            </td>
+            <td className="px-4 py-3">
+              <div className="flex items-center gap-2">
+                {(sessionCountByApp[app.id] ?? 0) > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-medium text-accent">
+                    <MonitorCheck size={10} />
+                    {sessionCountByApp[app.id]} session{sessionCountByApp[app.id] !== 1 ? "s" : ""}
+                  </span>
+                )}
+                {(tokenCountByApp[app.id] ?? 0) > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success">
+                    <KeyRound size={10} />
+                    {tokenCountByApp[app.id]} token{tokenCountByApp[app.id] !== 1 ? "s" : ""}
+                  </span>
+                )}
+                {(sessionCountByApp[app.id] ?? 0) === 0 && (tokenCountByApp[app.id] ?? 0) === 0 && (
+                  <span className="text-xs text-muted-foreground/40">—</span>
+                )}
+              </div>
             </td>
             <td className="px-4 py-3 text-xs text-muted-foreground">
               {app.rateLimitRPM > 0 ? `${app.rateLimitRPM} RPM / ${app.rateLimitPer}` : "—"}

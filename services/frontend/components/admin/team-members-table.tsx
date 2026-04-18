@@ -27,6 +27,17 @@ export function TeamMembersTable({ members, orgID, currentUserID, isOwner }: Tea
     }
   }
 
+  async function handleRoleChange(userID: string, newRole: string) {
+    const res = await fetch(`/api/admin/orgs/${encodeURIComponent(orgID)}/members/${encodeURIComponent(userID)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: newRole }),
+    });
+    if (res.ok) {
+      startTransition(() => router.refresh());
+    }
+  }
+
   if (members.length === 0) {
     return (
       <div className="flex min-h-[120px] items-center justify-center rounded-lg border border-border bg-surface">
@@ -55,13 +66,25 @@ export function TeamMembersTable({ members, orgID, currentUserID, isOwner }: Tea
               <td className="px-4 py-3 font-medium text-foreground">{m.userName || "—"}</td>
               <td className="px-4 py-3 text-muted-foreground">{m.userEmail}</td>
               <td className="px-4 py-3">
-                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                  m.role === "owner"
-                    ? "bg-primary/10 text-primary"
-                    : "bg-muted text-muted-foreground"
-                }`}>
-                  {m.role}
-                </span>
+                {isOwner && m.userID !== currentUserID ? (
+                  <select
+                    value={m.role}
+                    disabled={isPending}
+                    onChange={(e) => handleRoleChange(m.userID, e.target.value)}
+                    className="rounded-md border border-border bg-panel px-2 py-0.5 text-[11px] font-semibold text-foreground outline-none focus:border-accent disabled:opacity-50"
+                  >
+                    <option value="member">member</option>
+                    <option value="owner">owner</option>
+                  </select>
+                ) : (
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                    m.role === "owner"
+                      ? "bg-primary/10 text-primary"
+                      : "bg-muted text-muted-foreground"
+                  }`}>
+                    {m.role}
+                  </span>
+                )}
               </td>
               <td className="px-4 py-3 text-muted-foreground">
                 {new Date(m.joinedAt).toLocaleDateString()}

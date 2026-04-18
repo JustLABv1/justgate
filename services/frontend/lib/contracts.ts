@@ -25,6 +25,7 @@ export interface TenantSummary {
   tenantID: string;
   authMode: string;
   headerName: string;
+  orgID?: string;
 }
 
 export interface RouteSummary {
@@ -489,4 +490,39 @@ export interface OrgIPRule {
   description: string;
   createdAt: string;
   createdBy: string;
+}
+
+// ── Org Invites ──────────────────────────────────────────────────
+
+export interface OrgInvite {
+  id: string;
+  code: string;
+  expiresAt: string;
+  maxUses: number;
+  useCount: number;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface InvitePreview {
+  orgID: string;
+  orgName: string;
+  expiresAt: string;
+  maxUses: number;
+  useCount: number;
+}
+
+// ── Org Config Export / Import ───────────────────────────────────
+
+export interface ExportedOrgConfig {
+  exportedAt: string;
+  version: string;
+  tenants: TenantSummary[];
+  routes: RouteSummary[];
+}
+
+export interface ImportResult {
+  tenantsCreated: number;
+  routesCreated: number;
+  errors: string[];
 }

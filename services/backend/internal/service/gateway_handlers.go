@@ -917,6 +917,7 @@ func (s *Service) handleSearch(writer http.ResponseWriter, request *http.Request
 				TenantID:   t.TenantID,
 				AuthMode:   t.AuthMode,
 				HeaderName: t.HeaderName,
+				OrgID:      t.OrgID,
 			})
 		}
 	}

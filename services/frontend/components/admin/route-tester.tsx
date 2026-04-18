@@ -1,18 +1,21 @@
 "use client";
 
 import type { RouteSummary, RouteTestResult, TokenSummary } from "@/lib/contracts";
-import { ChevronDown, Copy, Play, X } from "lucide-react";
+import { Input, ListBox, Select, TextArea } from "@heroui/react";
+import { Copy, Play, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface RouteTesterProps {
   routes: RouteSummary[];
   tokens: TokenSummary[];
   backendBaseUrl: string;
+  defaultOpen?: boolean;
+  defaultRouteID?: string;
 }
 
-export function RouteTester({ routes, tokens, backendBaseUrl }: RouteTesterProps) {
-  const [open, setOpen] = useState(false);
-  const [selectedRouteID, setSelectedRouteID] = useState("");
+export function RouteTester({ routes, tokens, backendBaseUrl, defaultOpen = false, defaultRouteID = "" }: RouteTesterProps) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [selectedRouteID, setSelectedRouteID] = useState(defaultRouteID);
   const [tokenSecret, setTokenSecret] = useState("");
   const [method, setMethod] = useState("GET");
   const [url, setUrl] = useState("");
@@ -30,8 +33,7 @@ export function RouteTester({ routes, tokens, backendBaseUrl }: RouteTesterProps
     ? tokens.filter((t) => t.tenantID === selectedRoute.tenantID && t.active)
     : tokens.filter((t) => t.active);
 
-  // Resolve the effective base URL — fall back to the current browser origin when
-  // NEXTAUTH_URL is not configured and backendBaseUrl arrives as an empty string.
+  // Resolve the effective base URL
   const effectiveBaseUrl = backendBaseUrl || (typeof window !== "undefined" ? window.location.origin : "");
 
   // When route changes, update URL and default method
@@ -148,21 +150,26 @@ export function RouteTester({ routes, tokens, backendBaseUrl }: RouteTesterProps
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Route</label>
-          <div className="relative">
-            <select
-              value={selectedRouteID}
-              onChange={(e) => setSelectedRouteID(e.target.value)}
-              className="h-9 w-full appearance-none rounded-lg border border-border bg-panel pl-3 pr-8 text-xs text-foreground outline-none focus:border-accent"
-            >
-              <option value="">— pick a route or enter URL manually —</option>
-              {routes.map((r) => (
-                <option key={r.id} value={r.id}>
-                  /{r.slug}  ({r.tenantID})
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={12} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          </div>
+          <Select
+            placeholder="— pick a route or enter URL manually —"
+            value={selectedRouteID || undefined}
+            onChange={(key) => setSelectedRouteID(String(key ?? ""))}
+          >
+            <Select.Trigger className="h-9 w-full rounded-lg border border-border bg-panel pl-3 pr-8 text-xs text-foreground">
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox>
+                {routes.map((r) => (
+                  <ListBox.Item key={r.id} id={r.id} textValue={`/${r.slug}`}>
+                    /{r.slug} ({r.tenantID})
+                    <ListBox.ItemIndicator />
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            </Select.Popover>
+          </Select>
           {selectedRoute && (
             <p className="mt-1 text-[10px] text-muted-foreground/60">
               {selectedRoute.methods.join(", ")} · scope: {selectedRoute.requiredScope || "none"}
@@ -180,12 +187,11 @@ export function RouteTester({ routes, tokens, backendBaseUrl }: RouteTesterProps
               </span>
             )}
           </label>
-          <input
-            type="text"
+          <Input
             value={tokenSecret}
             onChange={(e) => setTokenSecret(e.target.value)}
             placeholder="Paste full token secret…"
-            className="h-9 w-full rounded-lg border border-border bg-panel px-3 font-mono text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-accent"
+            className="h-9 w-full rounded-lg border border-border bg-panel px-3 font-mono text-xs"
           />
           {compatibleTokens.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
@@ -201,21 +207,30 @@ export function RouteTester({ routes, tokens, backendBaseUrl }: RouteTesterProps
 
       {/* Method + URL */}
       <div className="flex gap-2">
-        <select
+        <Select
           value={method}
-          onChange={(e) => setMethod(e.target.value)}
-          className="h-9 shrink-0 rounded-lg border border-border bg-panel px-2.5 text-xs font-medium text-foreground outline-none"
+          onChange={(key) => setMethod(String(key ?? "GET"))}
         >
-          {allowedMethods.map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
-        <input
-          type="text"
+          <Select.Trigger className="h-9 shrink-0 rounded-lg border border-border bg-panel px-2.5 text-xs font-medium text-foreground">
+            <Select.Value />
+            <Select.Indicator />
+          </Select.Trigger>
+          <Select.Popover>
+            <ListBox>
+              {allowedMethods.map((m) => (
+                <ListBox.Item key={m} id={m} textValue={m}>
+                  {m}
+                  <ListBox.ItemIndicator />
+                </ListBox.Item>
+              ))}
+            </ListBox>
+          </Select.Popover>
+        </Select>
+        <Input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder={`${backendBaseUrl}/proxy/{route-slug}`}
-          className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-panel px-3 font-mono text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-accent"
+          className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-panel px-3 font-mono text-xs"
         />
         <button
           type="button"
@@ -234,22 +249,22 @@ export function RouteTester({ routes, tokens, backendBaseUrl }: RouteTesterProps
           <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
             Extra headers <span className="text-muted-foreground/40">(Key: Value, one per line)</span>
           </label>
-          <textarea
+          <TextArea
             value={extraHeaders}
             onChange={(e) => setExtraHeaders(e.target.value)}
             rows={3}
-            className="w-full rounded-lg border border-border bg-panel px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-accent"
             placeholder={"X-Custom-Header: value"}
+            className="w-full rounded-lg border border-border bg-panel px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-accent"
           />
         </div>
         <div>
           <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Request body</label>
-          <textarea
+          <TextArea
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={3}
-            className="w-full rounded-lg border border-border bg-panel px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-accent"
             placeholder={'{"key": "value"}'}
+            className="w-full rounded-lg border border-border bg-panel px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-accent"
           />
         </div>
       </div>
@@ -312,4 +327,3 @@ export function RouteTester({ routes, tokens, backendBaseUrl }: RouteTesterProps
     </div>
   );
 }
-

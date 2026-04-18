@@ -96,9 +96,19 @@ func (s *Service) handleOrgByID(writer http.ResponseWriter, request *http.Reques
 
 	switch subPath {
 	case "members":
-		s.handleOrgMembers(writer, request, orgID, subID, membership.Role)
+		if request.Method == http.MethodPatch && subID != "" {
+			s.handleChangeMemberRole(writer, request, orgID, subID, membership.Role)
+		} else {
+			s.handleOrgMembers(writer, request, orgID, subID, membership.Role)
+		}
 	case "invites":
-		s.handleOrgInvites(writer, request, orgID, adminID, membership.Role)
+		if request.Method == http.MethodGet {
+			s.handleListOrgInvites(writer, request, orgID, membership.Role)
+		} else if request.Method == http.MethodDelete && subID != "" {
+			s.handleDeleteOrgInvite(writer, request, orgID, subID, membership.Role)
+		} else {
+			s.handleOrgInvites(writer, request, orgID, adminID, membership.Role)
+		}
 	default:
 		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "not found"})
 	}
