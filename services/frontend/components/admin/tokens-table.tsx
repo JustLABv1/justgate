@@ -183,14 +183,16 @@ export function TokensTable({ tokens, actionsDisabled = false, expiryWarningDays
     <div>
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border/40 px-4 py-2.5">
-        <Input
-          placeholder="Search tokens…"
-          value={search}
-          onValueChange={setSearch}
-          startContent={<Search size={13} className="text-muted-foreground" />}
-          classNames={{ base: "w-56", inputWrapper: "h-7 min-h-7 text-xs" }}
-          size="sm"
-        />
+        <div className="relative w-56">
+          <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search tokens…"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            variant="secondary"
+            className="h-7 w-full rounded-lg border border-border bg-background pl-7 pr-2 text-xs"
+          />
+        </div>
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
           <span>Sort:</span>
           <SortBtn col="name" label="Name" />
@@ -206,13 +208,13 @@ export function TokensTable({ tokens, actionsDisabled = false, expiryWarningDays
               trigger={(open) => (
                 <Button
                   size="sm"
-                  color="warning"
-                  variant="flat"
-                  isLoading={bulkRevoking}
+                  variant="secondary"
+                  isPending={bulkRevoking}
                   isDisabled={actionsDisabled || bulkRevoking}
                   onPress={open}
-                  startContent={<XCircle size={12} />}
+                  className="text-warning"
                 >
+                  <XCircle size={12} />
                   Revoke
                 </Button>
               )}
@@ -226,13 +228,12 @@ export function TokensTable({ tokens, actionsDisabled = false, expiryWarningDays
               trigger={(open) => (
                 <Button
                   size="sm"
-                  color="danger"
-                  variant="flat"
-                  isLoading={bulkDeleting}
+                  variant="danger-soft"
+                  isPending={bulkDeleting}
                   isDisabled={actionsDisabled || bulkDeleting}
                   onPress={open}
-                  startContent={<Trash2 size={12} />}
                 >
+                  <Trash2 size={12} />
                   Delete
                 </Button>
               )}

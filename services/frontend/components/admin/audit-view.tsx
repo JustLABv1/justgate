@@ -3,14 +3,14 @@
 import { AuditTable } from "@/components/admin/audit-table";
 import type { AuditEvent } from "@/lib/contracts";
 import { DateField, DateRangePicker, Input, RangeCalendar } from "@heroui/react";
-import { type DateValue, parseDateTime } from "@internationalized/date";
+import { parseDateTime } from "@internationalized/date";
 import { ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
 
-type DateRange = { start: DateValue; end: DateValue };
+type DateRange = NonNullable<ComponentProps<typeof DateRangePicker>["value"]>;
 
-function parseDateFilter(str: string): DateValue | null {
+function parseDateFilter(str: string) {
   if (!str) return null;
   try {
     // datetime-local format: "2024-01-15T14:30" — parseDateTime needs seconds
@@ -202,9 +202,9 @@ export function AuditView({
           value={(() => {
             const start = parseDateFilter(fromFilter);
             const end = parseDateFilter(toFilter);
-            return start && end ? { start, end } : null;
+            return start && end ? ({ start, end } as unknown as DateRange) : null;
           })()}
-          onChange={(range: DateRange | null) => {
+          onChange={(range) => {
             const fromStr = range ? range.start.toString().slice(0, 16) : "";
             const toStr = range ? range.end.toString().slice(0, 16) : "";
             setFromFilter(fromStr);

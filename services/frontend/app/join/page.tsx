@@ -140,7 +140,7 @@ function JoinPageInner() {
           <>
             <div className="text-destructive text-4xl">✗</div>
             <p className="font-semibold text-foreground">Invite failed</p>
-            <p className="text-sm text-muted-foreground">{message || previewError}</p>
+            <p className="text-sm text-muted-foreground">{message || "Invalid or expired invite."}</p>
             <button
               type="button"
               onClick={() => router.replace("/")}

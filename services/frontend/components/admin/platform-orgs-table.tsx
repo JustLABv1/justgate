@@ -80,14 +80,16 @@ export function PlatformOrgsTable({ orgs, tenantCountByOrg = {}, routeCountByOrg
   return (
     <div className="rounded-lg border border-border bg-surface overflow-hidden">
       <div className="flex items-center gap-2 border-b border-border/40 px-3 py-2">
-        <Input
-          placeholder="Search orgs…"
-          value={search}
-          onValueChange={setSearch}
-          startContent={<Search size={12} className="text-muted-foreground" />}
-          classNames={{ base: "w-52", inputWrapper: "h-7 min-h-7 text-xs" }}
-          size="sm"
-        />
+        <div className="relative w-52">
+          <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search orgs…"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            variant="secondary"
+            className="h-7 w-full rounded-lg border border-border bg-background pl-7 pr-2 text-xs"
+          />
+        </div>
       </div>
       <table className="w-full text-sm">
         <thead>
