@@ -25,7 +25,7 @@ func main() {
 	databaseURL := os.Getenv("JUST_GATE_DATABASE_URL")
 
 	svc, err := service.New(service.Config{
-		Version:                   "1.2.0",
+		Version:                   "1.3.0",
 		AdminJWTSecret:            adminJWTSecret,
 		DatabaseURL:               databaseURL,
 		TenantHeaderName:          tenantHeaderName,
@@ -34,7 +34,7 @@ func main() {
 		OIDCClientSecret:          os.Getenv("JUST_GATE_OIDC_CLIENT_SECRET"),
 		OIDCDisplayName:           os.Getenv("JUST_GATE_OIDC_NAME"),
 		ExtraCAFile:               os.Getenv("JUST_GATE_EXTRA_CA_FILE"),
-		InitialPlatformAdminEmail: os.Getenv("JUSTGATE_INITIAL_ADMIN_EMAIL"),
+		InitialPlatformAdminEmail: os.Getenv("JUST_GATE_INITIAL_ADMIN_EMAIL"),
 		RedisURL:                  os.Getenv("JUST_GATE_REDIS_URL"),
 		InstanceID:                os.Getenv("JUST_GATE_INSTANCE_ID"),
 		Region:                    os.Getenv("JUST_GATE_REGION"),
