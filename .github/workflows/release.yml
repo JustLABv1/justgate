@@ -59,7 +59,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build and push (combined)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -82,7 +82,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build and push (backend)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./services/backend
           file: ./services/backend/Dockerfile
@@ -105,7 +105,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build and push (frontend)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./services/frontend
           file: ./services/frontend/Dockerfile
