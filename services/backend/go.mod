@@ -1,13 +1,13 @@
 module justgate/backend
 
-go 1.25.0
+go 1.26.3
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
-	golang.org/x/crypto v0.50.0
-	modernc.org/sqlite v1.48.2
+	golang.org/x/crypto v0.51.0
+	modernc.org/sqlite v1.50.1
 )
 
 require (
@@ -19,9 +19,9 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
-	modernc.org/libc v1.70.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
+	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
