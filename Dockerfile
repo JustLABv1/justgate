@@ -21,7 +21,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # ── Build: Frontend ───────────────────────────────────────────────────────────
 FROM cgr.dev/chainguard/node:latest-dev AS frontend-builder
 USER root
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN npm install -g pnpm
 WORKDIR /build
 
 COPY services/frontend/package.json \

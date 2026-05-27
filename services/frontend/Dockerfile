@@ -1,7 +1,7 @@
 # ── Base ──────────────────────────────────────────────────────────────────────
 FROM cgr.dev/chainguard/node:latest-dev AS base
 USER root
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN npm install -g pnpm
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 FROM base AS deps
